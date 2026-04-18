@@ -30,7 +30,7 @@
     { "name": "P(F major) = F minor",     "input": [65, 69, 72], "op": "P", "expected_pcs": [0, 5, 8] },
     { "name": "L(G major) = B minor",     "input": [67, 71, 74], "op": "L", "expected_pcs": [2, 6, 11] },
     { "name": "R(E minor) = G major",     "input": [64, 67, 71], "op": "R", "expected_pcs": [2, 7, 11] },
-    { "name": "R(A minor) = C major",     "input": [57, 60, 64], "op": "R", "expected_pcs": [0, 4, 9] },
+    { "name": "R(A minor) = C major",     "input": [57, 60, 64], "op": "R", "expected_pcs": [0, 4, 7] },
 
     { "name": "P on first inversion C major", "input": [64, 67, 72], "op": "P", "expected_pcs": [0, 3, 7] },
     { "name": "L on second inversion C major", "input": [67, 72, 76], "op": "L", "expected_pcs": [4, 7, 11] }

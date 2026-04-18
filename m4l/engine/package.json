@@ -1,0 +1,6 @@
+{
+  "name": "oedipa-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tonnetz engine for Oedipa (M4L target). Runs in Node.js for tests and in Max for Live jsui for the device."
+}
