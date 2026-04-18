@@ -6,7 +6,7 @@
 
 ## Context
 
-[ADR 001](001-tonnetz-engine-interface.md) defines a pure, stateless Tonnetz
+[ADR 001](archive/001-tonnetz-engine-interface.md) defines a pure, stateless Tonnetz
 engine. The engine lives in [`m4l/engine/tonnetz.ts`](../../../m4l/engine/tonnetz.ts)
 and is compiled to `dist/tonnetz.js` for use outside Node.
 

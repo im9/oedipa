@@ -27,7 +27,7 @@ only when relevant to the current task.
 
 | #   | Title | Status | Notes |
 |-----|-------|--------|-------|
-| 001 | [Tonnetz Engine Interface](001-tonnetz-engine-interface.md) | Proposed | Pure-function API for all targets; P/L/R semantics, voicing, walk state, shared test vectors |
+| 001 | [Tonnetz Engine Interface](archive/001-tonnetz-engine-interface.md) | Implemented | Pure-function API; P/L/R semantics, voicing, walk state, shared test vectors. Reference impl in m4l |
 
 ## M4L
 

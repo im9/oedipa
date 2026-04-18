@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Cross-target conformance test vectors for the Tonnetz engine (see docs/ai/adr/001-tonnetz-engine-interface.md). All target implementations (m4l, vst, app) must pass these. Binding assertion: pitch-class set of output equals expected_pcs (order-independent). Realized octaves may vary by integer multiples of 12 due to target-specific boundary behavior in buildTriad; pitch-class identity is the contract.",
+  "description": "Cross-target conformance test vectors for the Tonnetz engine (see docs/ai/adr/archive/001-tonnetz-engine-interface.md). All target implementations (m4l, vst, app) must pass these. Binding assertion: pitch-class set of output equals expected_pcs (order-independent). Realized octaves may vary by integer multiples of 12 due to target-specific boundary behavior in buildTriad; pitch-class identity is the contract.",
   "conventions": {
     "triad": "[a, b, c] MIDI note numbers. For inputs in close position, a=root, b=root+3 or +4, c=root+7. identify_triad cases also include inversions.",
     "pitch_classes": "integer 0..11 (C=0, ..., B=11), sorted ascending for set equality",

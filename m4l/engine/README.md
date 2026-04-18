@@ -14,7 +14,7 @@ runtime.
 | `dist/` | Generated output. Gitignored — regenerate with `npm run build`. |
 
 Engine semantics are specified in
-[`../../docs/ai/adr/001-tonnetz-engine-interface.md`](../../docs/ai/adr/001-tonnetz-engine-interface.md).
+[`../../docs/ai/adr/archive/001-tonnetz-engine-interface.md`](../../docs/ai/adr/archive/001-tonnetz-engine-interface.md).
 Do not edit `tonnetz.ts` without reading that ADR first.
 
 ## Dev

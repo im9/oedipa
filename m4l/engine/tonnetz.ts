@@ -1,5 +1,5 @@
 // Tonnetz engine for Oedipa.
-// Spec: docs/ai/adr/001-tonnetz-engine-interface.md
+// Spec: docs/ai/adr/archive/001-tonnetz-engine-interface.md
 //
 // Emitted as an ES module (see tsconfig.json, package.json "type": "module")
 // and consumed in two environments:

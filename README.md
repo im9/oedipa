@@ -70,5 +70,5 @@ only when the relevant area is being touched.
 
 Key docs:
 - [`docs/ai/concept.md`](docs/ai/concept.md) — shared musical model
-- [`docs/ai/adr/001-tonnetz-engine-interface.md`](docs/ai/adr/001-tonnetz-engine-interface.md) — engine contract, cross-target semantics
+- [`docs/ai/adr/archive/001-tonnetz-engine-interface.md`](docs/ai/adr/archive/001-tonnetz-engine-interface.md) — engine contract, cross-target semantics (Implemented)
 - [`docs/ai/adr/002-m4l-device-architecture.md`](docs/ai/adr/002-m4l-device-architecture.md) — M4L device layering

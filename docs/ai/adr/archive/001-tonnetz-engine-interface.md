@@ -1,8 +1,14 @@
 # ADR 001: Tonnetz Engine Interface
 
-## Status: Proposed
+## Status: Implemented
 
 **Created**: 2026-04-18
+**Implemented**: 2026-04-18 (m4l reference port; test vectors consumed by [m4l/engine/tonnetz.test.ts](../../../m4l/engine/tonnetz.test.ts))
+
+This ADR defines only the interface contract and shared test vectors. It is
+"Implemented" once a reference implementation (m4l) passes the vectors — not
+once every target has shipped. Each target's engine implementation is tracked
+in its own ADR (see *Scope* below).
 
 ## Context
 
@@ -209,14 +215,23 @@ flexible (see Determinism requirement above).
 - MIDI I/O (target-specific)
 - UI / lattice visualization (target-specific)
 - Sequencer state persistence format (target-specific)
+- **Per-target engine implementations** — each future target's Tonnetz engine
+  gets its own ADR. This ADR covers only the shared contract and cross-target
+  conformance vectors. The m4l reference implementation is an exception: it
+  lives alongside this ADR because its existence is what promotes this ADR to
+  *Implemented*.
 
-## Per-target implementation notes
+## Reference implementation (m4l)
 
-- **m4l (JS)**: Reference port from inboil's `generative.ts` (functions
-  `identifyTriad`, `buildFromPc`, `applyTonnetzOp`, `applyVoicing`,
-  `addSeventh`). Semantics verified against inboil before writing tests.
-- **vst (C++)**: New implementation in `vst/Source/Tonnetz.{h,cpp}`. Tests in
-  `vst/tests/test_Tonnetz.cpp` (Catch2). Header-only core preferred for
-  reuse by `app/` later.
-- **app (C++, future)**: Reuses `vst/` implementation via shared source or
-  submodule; does not fork.
+m4l is the current primary target (see [ADR 002](002-m4l-device-architecture.md)),
+so its engine serves as the reference implementation for this ADR.
+
+- [m4l/engine/tonnetz.ts](../../../m4l/engine/tonnetz.ts) — ported from
+  inboil's `generative.ts` (`identifyTriad`, `buildFromPc`, `applyTonnetzOp`,
+  `applyVoicing`, `addSeventh`). Semantics verified against inboil before
+  writing tests.
+- [m4l/engine/tonnetz.test.ts](../../../m4l/engine/tonnetz.test.ts) — consumes
+  [tonnetz-test-vectors.json](../tonnetz-test-vectors.json) for conformance.
+
+Other targets (vst, app) are not yet scoped; when they are picked up, each
+will get its own implementation ADR that references this contract.
