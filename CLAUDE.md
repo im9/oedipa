@@ -39,7 +39,12 @@ no code ported directly, but musical logic and parameter design carry over.
 ## Layout
 
 ```
-m4l/                 — Max for Live device (.amxd, jsui/*.js)
+m4l/                 — Max for Live device
+  engine/            — Tonnetz engine (TypeScript)
+    tonnetz.ts       — pure logic, ES module
+    tonnetz.test.ts  — node:test suite
+    dist/tonnetz.js  — compiled CJS output (loaded by jsui)
+    tsconfig.json, package.json
 vst/                 — VST3/AU plugin (C++17/JUCE)
   Source/            — Plugin source
     PluginProcessor.*  — MIDI processing, Tonnetz engine
@@ -48,14 +53,23 @@ vst/                 — VST3/AU plugin (C++17/JUCE)
   tests/             — Catch2 unit tests
   CMakeLists.txt, Makefile
 app/                 — iOS app (future)
-docs/ai/             — shared design docs, ADRs
+docs/ai/             — shared design docs, ADRs, test vectors
 ```
 
 ## Build
 
 ### m4l/
 
-Open `.amxd` in Max for Live. No build step.
+```bash
+cd m4l/engine
+npm install          # first time only
+npm test             # run tests against TS source
+npm run build        # compile dist/tonnetz.js for jsui
+npm run typecheck    # type-check without emit
+```
+
+Open `.amxd` in Max for Live to use the device. The device loads
+`dist/tonnetz.js`, so run `npm run build` after engine changes.
 
 ### vst/
 
@@ -92,7 +106,7 @@ Before writing any code:
 per target:
 
 - `vst/` — update `vst/tests/*` before editing `vst/Source/*`
-- `m4l/` — update `m4l/engine/*.test.js` before editing `m4l/engine/*.js`
+- `m4l/` — update `m4l/engine/*.test.ts` before editing `m4l/engine/*.ts`
 - `app/` — same rule once implementation begins
 
 Applicable cases:
@@ -124,9 +138,10 @@ reads model state and is not unit-tested.
   public JUCE API (`mouseDown` / `mouseDrag` / `mouseUp` / `keyPressed`), and
   assert against parameter values and internal state. Expose minimal
   `getXxxForTest()` inspection methods only when state is otherwise private.
-- **m4l/ (jsui)**: Keep logic functions as pure exported JS runnable in Node
-  (hit testing, coordinate math, state transitions). The jsui-specific drawing
-  and event callbacks live in a thin wrapper that calls into the pure logic.
+- **m4l/ (jsui)**: Keep logic functions as pure exported TypeScript runnable
+  in Node (hit testing, coordinate math, state transitions). Compile to
+  `dist/tonnetz.js` for jsui consumption. The jsui-specific drawing and event
+  callbacks live in a thin wrapper that calls into the pure logic.
 - Do not snapshot-test pixel output. Font rendering and environment differences
   make image hashing brittle.
 
@@ -148,8 +163,11 @@ Now edit implementation files. Keep changes minimal and focused.
 Run the target's test command:
 
 - `vst/` — `cd vst && make test`
-- `m4l/` — `node --test m4l/engine/`
+- `m4l/` — `cd m4l/engine && npm test` (runs `node --test` on TS source)
 - `app/` — (TBD when target is added)
+
+For m4l, also run `npm run build` to refresh `dist/tonnetz.js` before loading
+the device in Live. `npm run typecheck` checks types without emitting.
 
 All tests must pass. Do not proceed with failing tests.
 
