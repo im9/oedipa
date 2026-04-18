@@ -33,6 +33,7 @@ only when relevant to the current task.
 
 | #   | Title | Status | Notes |
 |-----|-------|--------|-------|
+| 002 | [M4L Device Architecture](002-m4l-device-architecture.md) | Proposed | Patch / host.js / lattice.js / engine layering; engine loading; MIDI I/O; state ownership |
 
 ## VST
 
