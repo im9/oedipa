@@ -130,10 +130,22 @@ detail, not an ADR-level decision.
 
 ### Build artifact placement
 
-`dist/tonnetz.js` is committed to the repo (not `.gitignore`'d) because the
-`.amxd` needs to load it at device-instantiation time, before any `npm run
-build` could run on the end-user's machine. The engine's build step is a
-developer-time tool, not an install-time step.
+`dist/` is `.gitignore`'d. `dist/tonnetz.js` is a generated artifact whose
+source of truth is `tonnetz.ts`; committing it would double every engine
+diff and risk drift when a contributor edits the source without rebuilding.
+
+Two consumption paths:
+
+- **Development** — a contributor runs `npm install && npm run build` once
+  after clone (standard onboarding), and again after any `tonnetz.ts` change.
+  The `.amxd` references `dist/tonnetz.js` via a relative path during editing.
+- **Distribution** — ship the `.amxd` with Max for Live's *Freeze Device*
+  applied. Freezing embeds referenced resources (including `dist/tonnetz.js`)
+  into the `.amxd` itself, so end users never see the `dist/` directory.
+
+If it turns out Freeze is not used for distribution (e.g. the device ends up
+published via the Max Package format with external resources), this decision
+can be revisited — but the default is ignore + rebuild + freeze.
 
 ### Engine build follow-up
 

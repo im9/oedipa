@@ -1,3 +1,6 @@
 build/
 .DS_Store
 *.user
+
+# m4l/engine build output — regenerate with `npm run build`
+m4l/engine/dist/
