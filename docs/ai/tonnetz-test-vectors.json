@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "description": "Cross-target conformance test vectors for the Tonnetz engine (see docs/ai/adr/001-tonnetz-engine-interface.md). All target implementations (m4l, vst, app) must pass these. Binding assertion: pitch-class set of output equals expected_pcs (order-independent). Realized octaves may vary by integer multiples of 12 due to target-specific boundary behavior in buildTriad; pitch-class identity is the contract.",
+  "conventions": {
+    "triad": "[a, b, c] MIDI note numbers. For inputs in close position, a=root, b=root+3 or +4, c=root+7. identify_triad cases also include inversions.",
+    "pitch_classes": "integer 0..11 (C=0, ..., B=11), sorted ascending for set equality",
+    "transforms": "P | L | R. Sequences of single-char strings.",
+    "voicings": "close | spread | drop2",
+    "anchor": "{ step: int, triad: [a, b, c] } — step is absolute position in the walk"
+  },
+
+  "identify_triad": [
+    { "name": "C major root position", "input": [60, 64, 67], "expected": { "root_pc": 0, "quality": "major" } },
+    { "name": "C major first inversion", "input": [64, 67, 72], "expected": { "root_pc": 0, "quality": "major" } },
+    { "name": "C major second inversion", "input": [67, 72, 76], "expected": { "root_pc": 0, "quality": "major" } },
+    { "name": "C minor root position", "input": [60, 63, 67], "expected": { "root_pc": 0, "quality": "minor" } },
+    { "name": "A minor root position", "input": [57, 60, 64], "expected": { "root_pc": 9, "quality": "minor" } },
+    { "name": "E minor root position", "input": [64, 67, 71], "expected": { "root_pc": 4, "quality": "minor" } },
+    { "name": "F# major root position", "input": [66, 70, 73], "expected": { "root_pc": 6, "quality": "major" } }
+  ],
+
+  "apply_transform": [
+    { "name": "P(C major) = C minor",     "input": [60, 64, 67], "op": "P", "expected_pcs": [0, 3, 7] },
+    { "name": "P(C minor) = C major",     "input": [60, 63, 67], "op": "P", "expected_pcs": [0, 4, 7] },
+    { "name": "L(C major) = E minor",     "input": [60, 64, 67], "op": "L", "expected_pcs": [4, 7, 11] },
+    { "name": "L(C minor) = Ab major",    "input": [60, 63, 67], "op": "L", "expected_pcs": [0, 3, 8] },
+    { "name": "R(C major) = A minor",     "input": [60, 64, 67], "op": "R", "expected_pcs": [0, 4, 9] },
+    { "name": "R(C minor) = Eb major",    "input": [60, 63, 67], "op": "R", "expected_pcs": [3, 7, 10] },
+
+    { "name": "P(F major) = F minor",     "input": [65, 69, 72], "op": "P", "expected_pcs": [0, 5, 8] },
+    { "name": "L(G major) = B minor",     "input": [67, 71, 74], "op": "L", "expected_pcs": [2, 6, 11] },
+    { "name": "R(E minor) = G major",     "input": [64, 67, 71], "op": "R", "expected_pcs": [2, 7, 11] },
+    { "name": "R(A minor) = C major",     "input": [57, 60, 64], "op": "R", "expected_pcs": [0, 4, 9] },
+
+    { "name": "P on first inversion C major", "input": [64, 67, 72], "op": "P", "expected_pcs": [0, 3, 7] },
+    { "name": "L on second inversion C major", "input": [67, 72, 76], "op": "L", "expected_pcs": [4, 7, 11] }
+  ],
+
+  "roundtrip": [
+    { "name": "P∘P(C major) = C major", "input": [60, 64, 67], "ops": ["P", "P"], "expected_pcs": [0, 4, 7] },
+    { "name": "L∘L(C major) = C major", "input": [60, 64, 67], "ops": ["L", "L"], "expected_pcs": [0, 4, 7] },
+    { "name": "R∘R(C major) = C major", "input": [60, 64, 67], "ops": ["R", "R"], "expected_pcs": [0, 4, 7] },
+    { "name": "P∘P(A minor) = A minor", "input": [57, 60, 64], "ops": ["P", "P"], "expected_pcs": [0, 4, 9] },
+    { "name": "L∘L(E minor) = E minor", "input": [64, 67, 71], "ops": ["L", "L"], "expected_pcs": [4, 7, 11] },
+    { "name": "R∘R(F major) = F major", "input": [65, 69, 72], "ops": ["R", "R"], "expected_pcs": [0, 5, 9] }
+  ],
+
+  "voicing": [
+    { "name": "close C major",  "input": [60, 64, 67], "mode": "close",  "expected": [60, 64, 67] },
+    { "name": "spread C major", "input": [60, 64, 67], "mode": "spread", "expected": [60, 76, 67] },
+    { "name": "drop2 C major",  "input": [60, 64, 67], "mode": "drop2",  "expected": [60, 67, 76] },
+    { "name": "close C minor",  "input": [60, 63, 67], "mode": "close",  "expected": [60, 63, 67] },
+    { "name": "spread C minor", "input": [60, 63, 67], "mode": "spread", "expected": [60, 75, 67] },
+    { "name": "drop2 C minor",  "input": [60, 63, 67], "mode": "drop2",  "expected": [60, 67, 75] }
+  ],
+
+  "seventh": [
+    { "name": "C major + maj7 (close)",  "voiced": [60, 64, 67],     "triad": [60, 64, 67], "expected": [60, 64, 67, 71] },
+    { "name": "C minor + min7 (close)",  "voiced": [60, 63, 67],     "triad": [60, 63, 67], "expected": [60, 63, 67, 70] },
+    { "name": "C major + maj7 (spread)", "voiced": [60, 76, 67],     "triad": [60, 64, 67], "expected": [60, 76, 67, 71] },
+    { "name": "C major + maj7 (drop2)",  "voiced": [60, 67, 76],     "triad": [60, 64, 67], "expected": [60, 67, 76, 71] },
+    { "name": "F major + maj7",          "voiced": [65, 69, 72],     "triad": [65, 69, 72], "expected": [65, 69, 72, 76] },
+    { "name": "A minor + min7",          "voiced": [57, 60, 64],     "triad": [57, 60, 64], "expected": [57, 60, 64, 67] }
+  ],
+
+  "walk": [
+    {
+      "name": "simple walk, stepsPerTransform=1, no anchors",
+      "state": {
+        "startChord": [60, 64, 67],
+        "sequence": ["P", "L", "R"],
+        "stepsPerTransform": 1,
+        "anchors": []
+      },
+      "samples": [
+        { "pos": 0, "expected_pcs": [0, 4, 7],  "note": "startChord (C major)" },
+        { "pos": 1, "expected_pcs": [0, 3, 7],  "note": "after P: C minor" },
+        { "pos": 2, "expected_pcs": [0, 3, 8],  "note": "after L: Ab major" },
+        { "pos": 3, "expected_pcs": [0, 5, 8],  "note": "after R: F minor" },
+        { "pos": 4, "expected_pcs": [0, 5, 9],  "note": "after P (cycle wraparound, seq[0]): F major" },
+        { "pos": 5, "expected_pcs": [0, 4, 9],  "note": "after L (seq[1]): A minor" }
+      ]
+    },
+    {
+      "name": "chord held for multiple steps, stepsPerTransform=2",
+      "state": {
+        "startChord": [60, 64, 67],
+        "sequence": ["P", "L"],
+        "stepsPerTransform": 2,
+        "anchors": []
+      },
+      "samples": [
+        { "pos": 0, "expected_pcs": [0, 4, 7], "note": "startChord" },
+        { "pos": 1, "expected_pcs": [0, 4, 7], "note": "not a boundary, unchanged" },
+        { "pos": 2, "expected_pcs": [0, 3, 7], "note": "boundary, apply P" },
+        { "pos": 3, "expected_pcs": [0, 3, 7], "note": "not a boundary, unchanged" },
+        { "pos": 4, "expected_pcs": [0, 3, 8], "note": "boundary, apply L" }
+      ]
+    },
+    {
+      "name": "walk with anchor reset (Oedipa semantics)",
+      "description": "Anchor at step 3 resets the transform counter. Post-anchor walk begins from sequence[0] regardless of how far the counter had advanced. This distinguishes Oedipa's reset semantics from inboil's skip-in-place semantics.",
+      "state": {
+        "startChord": [60, 64, 67],
+        "sequence": ["P", "L", "R"],
+        "stepsPerTransform": 1,
+        "anchors": [
+          { "step": 3, "triad": [55, 59, 62] }
+        ]
+      },
+      "samples": [
+        { "pos": 0, "expected_pcs": [0, 4, 7],  "note": "startChord (C major)" },
+        { "pos": 1, "expected_pcs": [0, 3, 7],  "note": "P: C minor" },
+        { "pos": 2, "expected_pcs": [0, 3, 8],  "note": "L: Ab major" },
+        { "pos": 3, "expected_pcs": [2, 7, 11], "note": "ANCHOR: G major. Counter resets." },
+        { "pos": 4, "expected_pcs": [2, 7, 10], "note": "After reset, seq[0]=P applied: G minor. (Skip-in-place would give seq[2]=R → E minor [4, 7, 11])" },
+        { "pos": 5, "expected_pcs": [3, 7, 10], "note": "seq[1]=L: Eb major" }
+      ]
+    },
+    {
+      "name": "anchor at step 0 (start-replacing)",
+      "description": "Anchor at step 0 should override startChord. Transform counter begins at 0 regardless.",
+      "state": {
+        "startChord": [60, 64, 67],
+        "sequence": ["P"],
+        "stepsPerTransform": 1,
+        "anchors": [
+          { "step": 0, "triad": [65, 69, 72] }
+        ]
+      },
+      "samples": [
+        { "pos": 0, "expected_pcs": [0, 5, 9], "note": "ANCHOR overrides startChord: F major" },
+        { "pos": 1, "expected_pcs": [0, 5, 8], "note": "P: F minor" }
+      ]
+    },
+    {
+      "name": "multiple anchors",
+      "description": "Two anchors. Each resets the counter independently.",
+      "state": {
+        "startChord": [60, 64, 67],
+        "sequence": ["P", "L"],
+        "stepsPerTransform": 1,
+        "anchors": [
+          { "step": 2, "triad": [62, 66, 69] },
+          { "step": 5, "triad": [67, 71, 74] }
+        ]
+      },
+      "samples": [
+        { "pos": 0, "expected_pcs": [0, 4, 7],  "note": "startChord C major" },
+        { "pos": 1, "expected_pcs": [0, 3, 7],  "note": "P: C minor" },
+        { "pos": 2, "expected_pcs": [2, 6, 9],  "note": "ANCHOR: D major, counter reset" },
+        { "pos": 3, "expected_pcs": [2, 5, 9],  "note": "seq[0]=P: D minor" },
+        { "pos": 4, "expected_pcs": [2, 5, 10], "note": "seq[1]=L: Bb major" },
+        { "pos": 5, "expected_pcs": [2, 7, 11], "note": "ANCHOR: G major, counter reset" },
+        { "pos": 6, "expected_pcs": [2, 7, 10], "note": "seq[0]=P: G minor" }
+      ]
+    }
+  ]
+}

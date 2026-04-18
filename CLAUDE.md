@@ -88,15 +88,56 @@ Before writing any code:
 
 ### Gate 1 — Tests first (TDD)
 
-**Write or update tests BEFORE editing implementation files.**
+**Write or update tests BEFORE editing any implementation file.** This applies
+per target:
 
-Applies to all targets where a test harness exists (currently `vst/tests/`).
-For `m4l/`, follow the same discipline where practical (e.g. pure JS logic
-modules in `m4l/jsui/` should have tests).
+- `vst/` — update `vst/tests/*` before editing `vst/Source/*`
+- `m4l/` — update `m4l/engine/*.test.js` before editing `m4l/engine/*.js`
+- `app/` — same rule once implementation begins
+
+Applicable cases:
 
 - New feature → write tests that describe the expected behavior
 - Bug fix → write a test that reproduces the bug
 - Refactor → verify existing tests cover the behavior, add if not
+- Constant/enum changes that propagate across files → write a consistency test
+  that asserts the new count and accesses all indices
+
+#### Shared test vectors
+
+Cross-target Tonnetz engine semantics are captured in
+[`docs/ai/tonnetz-test-vectors.json`](docs/ai/tonnetz-test-vectors.json).
+Each target's test suite reads this JSON and iterates the cases. When adding a
+new semantic case, add it to the JSON — do not duplicate the data in per-target
+test code. See ADR 001.
+
+#### GUI / UI components
+
+UI work cannot be unit-tested the way pure logic can — visual quality,
+interaction feel, and host loading behavior require human eyes and a real DAW.
+Split UI components into a **logic layer** (parameter mapping, state machines,
+hit testing, drag-to-value math, lattice position calculations) and a
+**renderer** (the actual drawing). Tests target the logic layer; the renderer
+reads model state and is not unit-tested.
+
+- **vst/ (JUCE)**: Instantiate the component in the test, simulate input via the
+  public JUCE API (`mouseDown` / `mouseDrag` / `mouseUp` / `keyPressed`), and
+  assert against parameter values and internal state. Expose minimal
+  `getXxxForTest()` inspection methods only when state is otherwise private.
+- **m4l/ (jsui)**: Keep logic functions as pure exported JS runnable in Node
+  (hit testing, coordinate math, state transitions). The jsui-specific drawing
+  and event callbacks live in a thin wrapper that calls into the pure logic.
+- Do not snapshot-test pixel output. Font rendering and environment differences
+  make image hashing brittle.
+
+What stays manual (not covered by Gate 1 tests):
+
+- Visual quality — does the lattice look right, does the animation feel good
+- Interaction feel — tap / drag / pinch in the real host
+- Host compatibility — load in Ableton (m4l, vst), load in Logic (vst/app),
+  edit, save, reopen, verify no crash
+
+These manual checks are part of pre-release verification, not optional polish.
 
 ### Gate 2 — Implement
 
@@ -104,12 +145,18 @@ Now edit implementation files. Keep changes minimal and focused.
 
 ### Gate 3 — Build and test
 
-Run the target's test command (e.g. `make test` in `vst/`).
+Run the target's test command:
+
+- `vst/` — `cd vst && make test`
+- `m4l/` — `node --test m4l/engine/`
+- `app/` — (TBD when target is added)
+
 All tests must pass. Do not proceed with failing tests.
 
 ### Gate 4 — Commit (only with explicit approval)
 
-**Never commit or push without explicit user approval.**
+**Never commit or push without explicit user approval.** Even after `/commit`,
+confirm before creating a commit.
 
 ## Conventions
 

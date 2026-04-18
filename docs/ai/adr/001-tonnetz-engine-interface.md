@@ -150,19 +150,49 @@ This algorithm is a **reference**, not part of the interface. Targets MAY
 optimize (incremental update, caching) as long as output matches the reference
 for all `(WalkState, pos)` pairs.
 
+### Anchor semantics: deliberate divergence from inboil
+
+The `applied = 0` reset at anchor positions is a **deliberate divergence from
+inboil's implementation** (`generative.ts` `computeWalkPath` / `tonnetzGenerate`).
+inboil treats anchors as skip-in-place overrides: `seqIdx` is not reset, so the
+sequence continues from wherever it paused when the anchor fired.
+
+Oedipa resets the counter at anchors because its target is DAW usage, where:
+
+- Anchors typically align to structural boundaries (bar 1, 5, 9, …) and users
+  expect each section to start predictably from `sequence[0]` rather than
+  inherit walk state from the previous section.
+- Editing the sequence after anchors are placed should have local effects per
+  section, not phase-shift across anchor boundaries in non-obvious ways.
+- Ableton Session view playback jumps between clips; each clip entry is a
+  natural reset point.
+
+inboil's skip-in-place semantics are valid for continuous generative walks
+(the context inboil targets); Oedipa's reset semantics are valid for
+compositional structure. Both are musically legitimate — the choice is
+intentional.
+
 ## Test vectors
 
-A shared JSON file `docs/ai/tonnetz-test-vectors.json` (to be authored in a
-follow-up) will enumerate:
+The shared JSON file [`docs/ai/tonnetz-test-vectors.json`](../tonnetz-test-vectors.json)
+enumerates conformance cases across:
 
-- `applyTransform` cases: input triad + op → expected output pitch classes
-- Round-trip cases: `(t, op, op)` returns to `t`
-- Voice-leading cases: distances between adjacent triads bounded as expected
-- Walk cases: `WalkState + pos` → expected triad
-- Anchor override cases
+- `identify_triad` — triads in all inversions
+- `apply_transform` — single P/L/R on major and minor from multiple roots, plus
+  inversion handling
+- `roundtrip` — involution property for each transform
+- `voicing` — close / spread / drop2 on major and minor
+- `seventh` — maj7 / min7 addition on each voicing
+- `walk` — end-to-end walks including `stepsPerTransform > 1`, anchor reset,
+  anchor at step 0, and multiple anchors
 
-Each target's test suite consumes this JSON. This is the mechanism for
-cross-target conformance.
+Each target's test suite consumes this JSON. Adding a target-specific test that
+reads and iterates the cases is the primary conformance mechanism. New cases
+are added to the JSON, not duplicated per target.
+
+Binding assertion: the pitch-class set of each result equals the expected
+pitch-class set (order-independent). Realized MIDI octaves are implementation-
+flexible (see Determinism requirement above).
 
 ## Scope
 
