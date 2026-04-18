@@ -1,10 +1,10 @@
 // Tonnetz engine for Oedipa.
 // Spec: docs/ai/adr/001-tonnetz-engine-interface.md
 //
-// Compiled to CommonJS (see tsconfig.json) and consumed in two environments:
+// Emitted as an ES module (see tsconfig.json, package.json "type": "module")
+// and consumed in two environments:
 // - Node.js tests via `node --test` (types stripped at runtime)
-// - Max for Live jsui via dist/tonnetz.js (small prelude in the jsui script
-//   provides a `module`/`exports` shim)
+// - Max for Live [node.script] via dist/tonnetz.js (standard `import`)
 
 export type PitchClass = number
 export type MidiNote = number

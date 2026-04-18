@@ -1,22 +1,14 @@
-"use strict";
 // Tonnetz engine for Oedipa.
 // Spec: docs/ai/adr/001-tonnetz-engine-interface.md
 //
-// Compiled to CommonJS (see tsconfig.json) and consumed in two environments:
+// Emitted as an ES module (see tsconfig.json, package.json "type": "module")
+// and consumed in two environments:
 // - Node.js tests via `node --test` (types stripped at runtime)
-// - Max for Live jsui via dist/tonnetz.js (small prelude in the jsui script
-//   provides a `module`/`exports` shim)
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.identifyTriad = identifyTriad;
-exports.buildTriad = buildTriad;
-exports.applyTransform = applyTransform;
-exports.applyVoicing = applyVoicing;
-exports.addSeventh = addSeventh;
-exports.walk = walk;
+// - Max for Live [node.script] via dist/tonnetz.js (standard `import`)
 function mod12(n) {
     return ((n % 12) + 12) % 12;
 }
-function identifyTriad(triad) {
+export function identifyTriad(triad) {
     const pcs = triad.map(mod12);
     for (const pc of pcs) {
         const ints = pcs.map(p => mod12(p - pc)).sort((a, b) => a - b);
@@ -29,7 +21,7 @@ function identifyTriad(triad) {
     }
     throw new Error('identifyTriad: input is not a major or minor triad');
 }
-function buildTriad(rootPc, quality, reference) {
+export function buildTriad(rootPc, quality, reference) {
     let root = Math.floor(reference / 12) * 12 + rootPc;
     if (root - reference > 6)
         root -= 12;
@@ -43,7 +35,7 @@ function buildTriad(rootPc, quality, reference) {
     const fifth = root + 7;
     return [root, third, fifth];
 }
-function applyTransform(triad, op) {
+export function applyTransform(triad, op) {
     const { rootPc, quality } = identifyTriad(triad);
     let newRootPc;
     const newQuality = quality === 'major' ? 'minor' : 'major';
@@ -62,7 +54,7 @@ function applyTransform(triad, op) {
     }
     return buildTriad(newRootPc, newQuality, triad[0]);
 }
-function applyVoicing(triad, mode) {
+export function applyVoicing(triad, mode) {
     const [a, b, c] = triad;
     if (mode === 'close')
         return [a, b, c];
@@ -73,16 +65,15 @@ function applyVoicing(triad, mode) {
     const _exhaustive = mode;
     throw new Error('applyVoicing: unknown mode ' + _exhaustive);
 }
-function addSeventh(voiced, triad) {
+export function addSeventh(voiced, triad) {
     const isMajor = mod12(triad[1] - triad[0]) === 4;
     const seventh = triad[0] + (isMajor ? 11 : 10);
     return voiced.concat([seventh]);
 }
-function walk(state, pos) {
-    var _a;
+export function walk(state, pos) {
     const spt = state.stepsPerTransform;
     const seq = state.sequence;
-    const anchors = (_a = state.anchors) !== null && _a !== void 0 ? _a : [];
+    const anchors = state.anchors ?? [];
     const anchorAt = {};
     for (const a of anchors) {
         anchorAt[a.step] = a.triad;
