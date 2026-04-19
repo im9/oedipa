@@ -1,8 +1,9 @@
 # ADR 002: M4L Device Architecture
 
-## Status: Proposed
+## Status: Implemented
 
 **Created**: 2026-04-18
+**Implemented**: 2026-04-19 ([m4l/Oedipa.amxd](../../../m4l/Oedipa.amxd) + [m4l/Oedipa.maxpat](../../../m4l/Oedipa.maxpat) source patcher; [m4l/host/](../../../m4l/host/) n4m host; transport-synced 16th-note walk + panic on stop verified in Live 9/Max 9)
 
 ## Context
 
