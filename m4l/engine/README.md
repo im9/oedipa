@@ -11,7 +11,7 @@ runtime.
 | `tonnetz.ts` | Engine source. Pure functions: `identifyTriad`, `buildTriad`, `applyTransform`, `applyVoicing`, `addSeventh`, `walk`. |
 | `tonnetz.test.ts` | Test suite. Iterates the shared vectors at [`../../docs/ai/tonnetz-test-vectors.json`](../../docs/ai/tonnetz-test-vectors.json) for cross-target conformance. |
 | `tsconfig.json`, `package.json` | ES2022 ESM build config. |
-| `dist/` | Generated output. Gitignored — regenerate with `npm run build`. |
+| `dist/` | Generated output. Gitignored — regenerate with `pnpm build`. |
 
 Engine semantics are specified in
 [`../../docs/ai/adr/archive/001-tonnetz-engine-interface.md`](../../docs/ai/adr/archive/001-tonnetz-engine-interface.md).
@@ -19,15 +19,20 @@ Do not edit `tonnetz.ts` without reading that ADR first.
 
 ## Dev
 
+This package is a member of the `m4l/` pnpm workspace. Run from this
+directory for engine-only commands:
+
 ```
-npm install        # first time
-npm test           # run the test suite directly against tonnetz.ts
-npm run build      # emit dist/tonnetz.js (ESM)
-npm run typecheck  # tsc --noEmit
+pnpm test           # run the test suite directly against tonnetz.ts
+pnpm build          # emit dist/tonnetz.js (ESM)
+pnpm typecheck      # tsc --noEmit
 ```
 
+Or from `m4l/` to run across the whole workspace: `pnpm -r test`, etc.
+First-time setup: `cd m4l && pnpm install`.
+
 Tests run on Node's native `--test` runner with TypeScript type stripping,
-so the test command needs no transpile step. `npm run build` is for
+so the test command needs no transpile step. `pnpm build` is for
 producing the artifact consumed by the M4L device.
 
 ## TDD gate

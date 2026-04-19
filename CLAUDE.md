@@ -60,16 +60,31 @@ docs/ai/             — shared design docs, ADRs, test vectors
 
 ### m4l/
 
+`m4l/` is a pnpm workspace. Packages: `@oedipa/engine`, `@oedipa/host`.
+
+```bash
+cd m4l
+pnpm install         # first time, installs all workspace packages
+pnpm -r test         # run tests across all packages
+pnpm -r build        # compile dist/ for all packages
+pnpm -r typecheck    # type-check without emit
+```
+
+Per-package (e.g. just engine):
+
 ```bash
 cd m4l/engine
-npm install          # first time only
-npm test             # run tests against TS source
-npm run build        # compile dist/tonnetz.js for jsui
-npm run typecheck    # type-check without emit
+pnpm test            # run tests against TS source
+pnpm build           # compile dist/tonnetz.js for jsui
 ```
 
 Open `.amxd` in Max for Live to use the device. The device loads
-`dist/tonnetz.js`, so run `npm run build` after engine changes.
+`dist/tonnetz.js` via `[node.script host/index.js]`, so run `pnpm -r build`
+after engine or host changes.
+
+**Do NOT add `max-api` to dependencies.** It's injected by Max at runtime;
+the npm version conflicts with the injected one. See `m4l/host/index.js`
+header comment.
 
 ### vst/
 
@@ -163,11 +178,11 @@ Now edit implementation files. Keep changes minimal and focused.
 Run the target's test command:
 
 - `vst/` — `cd vst && make test`
-- `m4l/` — `cd m4l/engine && npm test` (runs `node --test` on TS source)
+- `m4l/` — `cd m4l && pnpm -r test` (runs `node --test` on TS source across workspace)
 - `app/` — (TBD when target is added)
 
-For m4l, also run `npm run build` to refresh `dist/tonnetz.js` before loading
-the device in Live. `npm run typecheck` checks types without emitting.
+For m4l, also run `pnpm -r build` to refresh `dist/` artifacts before loading
+the device in Live. `pnpm -r typecheck` checks types without emitting.
 
 All tests must pass. Do not proceed with failing tests.
 

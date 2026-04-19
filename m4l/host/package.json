@@ -1,5 +1,5 @@
 {
-  "name": "oedipa-host",
+  "name": "@oedipa/host",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,9 +9,5 @@
     "test": "node --test host.test.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
-  },
-  "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
   }
 }

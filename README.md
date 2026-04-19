@@ -56,7 +56,7 @@ Per-target build commands:
 
 | Target | First time | Build | Test |
 |---|---|---|---|
-| `m4l/engine/` | `npm install` | `npm run build` | `npm test` |
+| `m4l/` (workspace) | `cd m4l && pnpm install` | `pnpm -r build` | `pnpm -r test` |
 | `vst/` | `git submodule update --init --recursive` | `make build` | `make test` |
 
 Per-target dev docs:

@@ -3,6 +3,11 @@
 // TS Host class in dist/host/host.js — this file owns nothing musical, only
 // the Max message protocol.
 //
+// NOTE: `max-api` is provided by Max at runtime when this file is loaded by
+// [node.script]. Do NOT add it to package.json dependencies — the npm version
+// conflicts with the injected one. Running this file under plain Node will
+// fail to resolve 'max-api'; tests live in host.test.ts and don't touch it.
+//
 // Protocol (see docs/ai/adr/002-m4l-device-architecture.md §3):
 //
 //   Max -> here:
@@ -18,6 +23,8 @@
 
 import Max from 'max-api'
 import { Host } from './dist/host/host.js'
+
+Max.post('oedipa host: index.js loaded')
 
 const host = new Host({
   startChord: [60, 64, 67],

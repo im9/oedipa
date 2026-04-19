@@ -1,6 +1,13 @@
 build/
 .DS_Store
 *.user
+node_modules/
 
 # m4l/engine build output — regenerate with `npm run build`
 m4l/engine/dist/
+
+# m4l/host build output — regenerate with `npm run build`
+m4l/host/dist/
+
+# Ableton Live project folder (auto-created when m4l/ is added as a Live Project)
+m4l/Oedipa Project/

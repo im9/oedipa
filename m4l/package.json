@@ -1,0 +1,16 @@
+{
+  "name": "@oedipa/m4l",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Oedipa M4L target — pnpm workspace root for engine and host packages.",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  }
+}
