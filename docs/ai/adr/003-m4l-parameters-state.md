@@ -1,8 +1,9 @@
-# ADR 003: M4L Parameters & State
+# ADR 003: M4L Sequencer — Lattice UI & Parameters
 
 ## Status: Proposed
 
 **Created**: 2026-04-19
+**Revised**: 2026-04-23 (absorbed planned ADR 004; restructured around the lattice as the primary UI)
 
 ## Context
 
@@ -25,121 +26,161 @@ const host = new Host({
 ```
 
 To ship a usable device the user must be able to change these without editing
-source. Live's native way is `live.*` parameters — they appear in the device
-header, automate from clips, save with presets, and integrate with Push.
+source. Oedipa is a **Tonnetz traversal** sequencer — a chord walk on a
+triangular lattice of triads — so the device's primary UI is the **lattice
+itself**. Transport and voice settings are ancillary and sit in Live's native
+`live.*` header; the walk is edited by direct manipulation of the lattice.
 
-This ADR decides **which parameters to expose, how they map to `live.*`
-objects, and how values flow to `host`**. Preset save/restore is in scope
-because `live.*` values are persisted by Live automatically — but the
-non-`live.*` state (complex structures like `sequence`, `anchors`) needs an
-explicit decision.
-
-Lattice-driven interaction (visually setting `startChord`, `anchors`,
-editing `sequence` by clicking lattice edges) is **deferred to [ADR 004](#)**.
-This ADR deals with the non-lattice parameter surface.
+This ADR decides the full m4l device surface: what the user sees, what they
+can click/drag, how state flows between Max objects and the n4m host, and how
+state persists across preset save / device instantiation. An earlier draft
+split the lattice UI into a separate ADR 004, but the lattice and the walk
+parameters (`startChord` / `sequence` / `anchors`) are the same design
+decision viewed from two angles — separating them produced circular
+references with no actual architectural gain.
 
 ## Decision
 
-(Draft — to be refined during implementation. Marked [OPEN] where not decided.)
+Parameters split into three groups by **musical function**, which naturally
+maps onto two UI surfaces.
 
-### Parameter classification
+### Group A — Transport (live.\* header)
 
-Parameters split into three tiers by how Live can represent them:
+| Param              | Type | Range | Live object    |
+|--------------------|------|-------|----------------|
+| `stepsPerTransform`| int  | 1–32  | `live.numbox`  |
 
-**Tier 1 — Scalar, Live-native.** Expose as `live.*` objects. Automatable,
-preset-saved by Live, Push-mappable.
+How long each triad holds, in 16th-note transport ticks.
 
-| Param              | Type      | Range        | Live object         |
-|--------------------|-----------|--------------|---------------------|
-| `stepsPerTransform`| int       | 1–32         | `live.numbox`       |
-| `voicing`          | enum      | close/spread/drop2 | `live.tab` (3 tabs) |
-| `seventh`          | bool      | 0/1          | `live.toggle`       |
-| `velocity`         | int       | 1–127        | `live.dial`         |
-| `channel`          | int       | 1–16         | `live.numbox`       |
+### Group B — Voice / MIDI output (live.\* header)
 
-**Tier 2 — Structured, Live-native with encoding.** Complex but representable
-via a small set of `live.*` objects.
+| Param      | Type | Range              | Live object         |
+|------------|------|--------------------|---------------------|
+| `voicing`  | enum | close/spread/drop2 | `live.tab` (3 tabs) |
+| `seventh`  | bool | 0/1                | `live.toggle`       |
+| `velocity` | int  | 1–127              | `live.dial`         |
+| `channel`  | int  | 1–16               | `live.numbox`       |
 
-| Param         | Representation                                           |
-|---------------|----------------------------------------------------------|
-| `sequence`    | [OPEN] Either (a) fixed max-length of N `live.tab` dropdowns over {P, L, R, none}, host compacts to the non-`none` prefix; or (b) single `live.text` string "PLR" parsed by host. |
-| `startChord`  | [OPEN] Either (a) three `live.numbox` for p1/p2/p3 MIDI notes; or (b) defer fully to lattice UI (ADR 004) and treat as non-`live.*` state persisted via `pattr`/dict; or (c) seeded from MIDI input (ADR 005). |
+How a triad (Group C output) is rendered as MIDI notes.
 
-**Tier 3 — Deferred to ADR 004.** `anchors` (list of `{step, triad}`) is not
-cleanly representable in `live.*` and its natural UI is the lattice. Stored
-in dict/`pattr` state, persisted with preset but edited only via the lattice.
+### Group C — Walk (lattice UI)
+
+The Tonnetz traversal — Oedipa's reason for existing. Edited only via the
+lattice; not represented as `live.*` objects because the natural model is
+spatial (a triad is a triangle, a sequence is a path, an anchor is a pin).
+
+| Param        | Semantics                                                 |
+|--------------|-----------------------------------------------------------|
+| `startChord` | Triad where the walk begins                               |
+| `sequence`   | Ordered list of P / L / R operations applied per step     |
+| `anchors`    | `{step, triad}` pairs that override the computed walk     |
+
+### Lattice UI — interaction model
+
+The lattice is a `[jsui]` component embedded in the device's UI panel. Per
+CLAUDE.md Gate 1, it splits into:
+
+- **Logic layer** (pure TypeScript, compiled to `dist/` for jsui):
+  coordinate ↔ triad mapping, hit testing, drag math, state transitions. Runs
+  in Node for tests.
+- **Renderer** (jsui-specific): draws the lattice, reads model state, not
+  unit-tested.
+
+Interactions (draft — refined during implementation):
+
+- **Click a triangle** → set as `startChord` [OPEN: does this jump the active walk immediately, or only take effect at the next loop start?]
+- **Click an edge (P / L / R axis)** → append that operation to `sequence` [OPEN: removal / reorder — backspace key? drag off? right-click?]
+- **Pin a triangle as an anchor** [OPEN: UX is the least-settled piece — candidates are long-press during playback, a dedicated "anchor mode" toggle, or shift-click on the active step]
+- **Current-step indicator**: the triangle Oedipa is currently outputting highlights; the planned upcoming path is lightly overlaid
+
+### State ownership & persistence
+
+- **Group A + B** — `live.*` values. Persisted by Live automatically; restored on device load via `loadbang` → dump → `setParams <key>` chain into `host`.
+- **Group C** — not representable as `live.*`. Stored in a Max `dict` scoped to the device, bridged to Live's preset storage via `pattr`. On load, `pattr` fires the serialized walk state into `setStartChord` / `setSequence` / `setAnchors`.
+
+Rehydration order: all params must land in `host` before the first transport
+tick. `loadbang` fires before transport ticks in practice, so natural
+ordering suffices. If a race appears, gate `step` on a `paramsReady` flag set
+at the end of the load sequence.
 
 ### Message protocol (Max → host)
 
-`host` already accepts per-key updates via the existing handlers in
-[index.js](../../../m4l/host/index.js):
+No change from ADR 002 — `host` already accepts:
 
-- `setParams <key> <value>` (scalar)
-- `setStartChord <p1> <p2> <p3>`
-- `setSequence <op> [<op> ...]`
-- `setAnchors <json>`
+- `setParams <key> <value>` — Group A / B scalars
+- `setStartChord <p1> <p2> <p3>` — Group C
+- `setSequence <op> [<op> ...]` — Group C
+- `setAnchors <json>` — Group C
 
-No protocol change needed — each `live.*` object's outlet is prepended with
-`setParams <key>` (or the appropriate typed setter) and sent to
-`[node.script]`. Initial values on device load are pushed via `loadbang` →
-`[live.*]` dump → `setParams` chain.
-
-### Preset save / restore
-
-- **Tier 1 & 2a** — Live's preset persists `live.*` values automatically. On
-  load, the `loadbang` dump re-fires the values into `host`, restoring
-  state.
-- **Tier 2b (`live.text`) and Tier 3 (`anchors`)** — `pattr` or a `dict`
-  object named into the preset storage. On load, fire into the
-  `setSequence` / `setAnchors` handlers.
-
-Rehydration order matters: params must land in `host` **before** the first
-`step` message. In practice loadbang fires before transport ticks, so
-natural ordering suffices — no explicit barrier needed. If this turns out
-to race in practice, gate `step` handling until a `paramsReady` flag is
-set by a `loadbang → set(all) → done` sequence.
+`live.*` outlets prepend `setParams <key>`; `pattr`/`dict` load paths route
+into the typed setters. The lattice UI calls the typed setters directly via
+the jsui → Max → `[node.script]` bridge.
 
 ### Automation & Push
 
-Tier 1 params are automatable by default (Live does this for any `live.*`).
-Tier 2 / Tier 3 are not meaningfully automatable — they're structural, not
-continuous. No special work needed; the abstraction falls out naturally.
+Group A and B are automatable by default (Live handles this for any
+`live.*`). Group C is structural and not meaningfully automatable — no
+special work.
 
 ## Scope
 
-**In scope for this ADR:**
-- Which parameters to expose to Live vs. keep in host-internal state
-- Tier mapping (scalar → `live.*`, structured → encoded, lattice → ADR 004)
-- Message protocol between `live.*` objects and `host`
-- Preset save / restore mechanism for each tier
+**In scope:**
+- Full m4l device UI surface (header + lattice)
+- Parameter grouping and `live.*` mapping
+- Lattice logic / renderer split
+- State persistence (Live presets + `pattr`/`dict`)
 - Initial-value propagation on device load
 
 **Out of scope (future ADRs):**
-- Lattice-driven interaction for `startChord`, `anchors`, `sequence` → ADR 004
-- MIDI input handling (including input-as-start-chord-seed) → ADR 005
-- Rhythm pattern representation (only "all-steps-sound" in v1)
+- MIDI input handling (seeding `startChord` from played notes, live chord re-harmonization) → ADR 004 (renumbered from old ADR 005 plan)
+- Rhythm patterns beyond "every step sounds" → later ADR
 - Preset-browser integration beyond Live's defaults
+
+## Implementation checklist
+
+Flip to Implemented and move to `archive/` once all boxes are checked.
+
+### Phase 1 — Transport + Voice (Group A + B)
+
+- [ ] `live.*` objects added to [Oedipa.maxpat](../../../m4l/Oedipa.maxpat) for `stepsPerTransform`, `voicing`, `seventh`, `velocity`, `channel`
+- [ ] `loadbang` → dump → `setParams <key>` chain wired for each
+- [ ] Manual: change each param in Live, confirm `host` receives update
+- [ ] Manual: save Live set, reopen, confirm values restored
+
+### Phase 2 — Lattice renderer (view-only)
+
+- [ ] `m4l/engine/lattice.ts` (pure logic): coordinate ↔ triad mapping, viewport math, current-step state
+- [ ] `m4l/engine/lattice.test.ts`: coordinate math + highlight tests (shared test vectors where applicable)
+- [ ] `m4l/host/lattice-renderer.js` (jsui wrapper): draws triangles, reads walk state, highlights current step
+- [ ] Manual: lattice renders in device panel, current-step indicator tracks transport
+
+### Phase 3 — Lattice interaction (Group C editing)
+
+- [ ] Hit testing: point → triangle, point → edge
+- [ ] Click triangle → `setStartChord`
+- [ ] Click edge → `setSequence` (append)
+- [ ] Anchor UX decision + implementation → `setAnchors`
+- [ ] Sequence editing: removal / reorder
+- [ ] Tests driving pure logic via the public interaction API
+- [ ] Manual: edit walk via lattice, confirm audible output matches
+
+### Phase 4 — Persistence (Group C state)
+
+- [ ] `pattr` + `dict` wired for `startChord` / `sequence` / `anchors`
+- [ ] Confirm `pattr` dump fires before first transport tick (measure if uncertain)
+- [ ] Manual: save set with non-default walk, reopen, confirm restored
+- [ ] Manual: cut/paste device across Live sets, confirm walk state survives
 
 ## Open questions
 
-1. `sequence` representation — Tier 2a (fixed-length `live.tab` array) is
-   more automation-friendly and preset-stable, but caps max sequence
-   length. Tier 2b (`live.text` string) is unlimited but not automatable
-   and requires text-parse validation. Default: Tier 2a with N=8, expand
-   later if needed.
-2. `startChord` — fastest-to-ship is Tier 1-ish with three `live.numbox`.
-   But musically, selecting three MIDI notes feels awkward — users think
-   in chord names, not note triples. Probably right to defer to ADR 004
-   (lattice click-to-set) and ADR 005 (MIDI input seed), leaving a
-   `live.numbox` triple as a fallback for the v1 device.
-3. How many `live.*` objects fit in the default device header strip before
-   needing the UI panel to open? Live's device header is cramped; some
-   params may move into the embedded `[jsui]` area once ADR 004 lands.
-4. Does `pattr` / `dict` for Tier 3 state survive cut/paste of the device
-   across Live sets? Needs a smoke test during implementation.
+1. **Anchor UX** — long-press, dedicated mode, or shift-click? Least-settled part of Group C; may spin into a sub-decision if it gets complex.
+2. **Sequence length cap** — soft cap ~16 ops seems reasonable for visual legibility; hard cap enforced in pure logic.
+3. **Lattice extent** — fixed viewport vs. scroll/pan? Probably fixed for v1; revisit if walks escape the viewport.
+4. **Preset cut/paste** — does `pattr`/`dict` survive device cut/paste across Live sets? Phase 4 manual test confirms.
 
 ## Per-target notes
 
-This ADR is m4l-specific. Equivalent for `vst/` is `AudioProcessorValueTreeState`
-with standard parameter declarations; host ↔ param bridging is already covered
-by JUCE and will not need its own ADR. iOS (app/) will reuse the JUCE param tree.
+m4l-specific. The `vst/` equivalent would be `AudioProcessorValueTreeState`
+for Group A + B, a custom state tree for Group C, and a JUCE `Component` for
+the lattice — all standard JUCE, unlikely to need its own ADR. iOS (`app/`)
+will reuse the JUCE param tree and rework the lattice for touch input.

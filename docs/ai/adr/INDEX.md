@@ -5,8 +5,7 @@ only when relevant to the current task.
 
 ## Status Legend
 
-- **Proposed**: Not yet implemented. Read before working on related features.
-- **Accepted**: Design decided, implementation pending or in progress.
+- **Proposed**: Not yet fully implemented. Contains an implementation checklist; flip to Implemented once all boxes are checked.
 - **Implemented**: Done. Code is the source of truth. Read only for historical rationale.
 - **Superseded**: Replaced by a newer ADR. Generally skip.
 
@@ -34,7 +33,7 @@ only when relevant to the current task.
 | #   | Title | Status | Notes |
 |-----|-------|--------|-------|
 | 002 | [M4L Device Architecture](archive/002-m4l-device-architecture.md) | Implemented | Patch / host.js / lattice.js / engine layering; engine loading; MIDI I/O; state ownership |
-| 003 | [M4L Parameters & State](003-m4l-parameters-state.md) | Proposed | Which params exposed to Live; live.* mapping; preset save/restore; protocol to host |
+| 003 | [M4L Sequencer — Lattice UI & Parameters](003-m4l-parameters-state.md) | Proposed | Lattice is the primary UI; live.* for transport/voice; pattr/dict for walk state |
 
 ## VST
 
