@@ -6,7 +6,7 @@
   "description": "Tonnetz engine for Oedipa (M4L target). Runs in Node.js for tests and (via dist/) in Max for Live [node.script] for the device.",
   "scripts": {
     "build": "tsc",
-    "test": "node --test tonnetz.test.ts",
+    "test": "node --test tonnetz.test.ts lattice.test.ts",
     "typecheck": "tsc --noEmit"
   }
 }

@@ -190,8 +190,8 @@ Flip to Implemented and move to `archive/` once all boxes are checked.
 
 ### Phase 2 — Lattice renderer (view-only)
 
-- [ ] `m4l/engine/lattice.ts` (pure logic): coordinate ↔ triad mapping, viewport math, current-step state
-- [ ] `m4l/engine/lattice.test.ts`: coordinate math + highlight tests (shared test vectors where applicable)
+- [x] `m4l/engine/lattice.ts` (pure logic): coordinate ↔ triad mapping, viewport math, current-step state
+- [x] `m4l/engine/lattice.test.ts`: coordinate math + highlight tests (lattice ↔ engine consistency via `applyTransform` round-trips; shared `tonnetz-test-vectors.json` covers the engine, lattice tests are layout-specific)
 - [ ] `m4l/host/lattice-renderer.js` (jsui wrapper): draws triangles, reads walk state, highlights current step
 - [ ] Manual: lattice renders in device panel, current-step indicator tracks transport
 
