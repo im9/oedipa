@@ -86,6 +86,47 @@ CLAUDE.md Gate 1, it splits into:
 - **Renderer** (jsui-specific): draws the lattice, reads model state, not
   unit-tested.
 
+**Viewport: fixed, no scroll/pan in v1.** Ableton M4L devices live in a
+fixed-size strip (no native equivalent of inboil's full-screen lattice modal).
+Targeting a 7-column × 3-row vertex grid (= 6 × 2 = 12 major/minor triangle
+pairs visible) gives ±2–3 P/L/R steps of visibility from a centered start
+chord — enough for the common case. Walks that travel further go off-screen;
+v1 accepts this and revisits scroll/pan only if the limitation bites in real
+use.
+
+**Coordinate convention** (mirrors inboil's
+[TonnetzSheet.svelte](https://github.com/im9/inboil/blob/main/src/lib/components/TonnetzSheet.svelte)
+math so visual intuition transfers between the two tools, even though no code
+is shared):
+
+```
+noteAt(row, col, centerPc) = (centerPc + (col - cc) * 7 + (row - cr) * 4) mod 12
+
+major triangle vertices: (r, c), (r, c+1), (r+1, c)        → {root, P5, M3}
+minor triangle vertices: (r+1, c), (r+1, c+1), (r, c+1)    → {root, P5, m3}
+```
+
+Axes:
+
+- **col +1** = +7 semitones (perfect fifth)
+- **row +1** = +4 semitones (major third)
+- **(row +1, col −1)** = −3 semitones (minor third)
+
+Each triangle has three edges, identified by which interval its two endpoints
+span. The Neo-Riemannian operations correspond to the **shared edge** with the
+adjacent flipped triangle:
+
+- **P5 edge** (horizontal, 7 semitones, e.g. C–G) ↔ **P** — shared with the
+  same-root opposite-mode triad (C major ↔ C minor)
+- **M3 edge** (down-right diagonal, 4 semitones, e.g. C–E) ↔ **R** — shared
+  with the relative triad (C major ↔ A minor; root and major-third in common)
+- **m3 edge** (up-right diagonal, 3 semitones, e.g. E–G) ↔ **L** — shared
+  with the leading-tone triad (C major ↔ E minor; major-third and fifth in
+  common)
+
+Hit-testing a P / L / R input reduces to "which edge of the current triangle
+did the user click."
+
 Interactions (draft — refined during implementation):
 
 - **Click a triangle** → set as `startChord` [OPEN: does this jump the active walk immediately, or only take effect at the next loop start?]
@@ -134,7 +175,7 @@ special work.
 **Out of scope (future ADRs):**
 - MIDI input handling (seeding `startChord` from played notes, live chord re-harmonization) → ADR 004 (renumbered from old ADR 005 plan)
 - Rhythm patterns beyond "every step sounds" → later ADR
-- Preset-browser integration beyond Live's defaults
+- Library presets (`.adv`) and cross-set device cut/paste of Group C state — v1 only persists via the host Live set; revisit if users actually ask
 
 ## Implementation checklist
 
@@ -142,10 +183,10 @@ Flip to Implemented and move to `archive/` once all boxes are checked.
 
 ### Phase 1 — Transport + Voice (Group A + B)
 
-- [ ] `live.*` objects added to [Oedipa.maxpat](../../../m4l/Oedipa.maxpat) for `stepsPerTransform`, `voicing`, `seventh`, `velocity`, `channel`
-- [ ] `loadbang` → dump → `setParams <key>` chain wired for each
-- [ ] Manual: change each param in Live, confirm `host` receives update
-- [ ] Manual: save Live set, reopen, confirm values restored
+- [x] `live.*` objects added to [Oedipa.maxpat](../../../m4l/Oedipa.maxpat) for `stepsPerTransform`, `voicing`, `seventh`, `velocity`, `channel`
+- [x] `loadbang` → dump → `setParams <key>` chain wired for each (uses `live.thisdevice` outlet 0 instead of `loadbang` so dumps fire after Live restores stored values; voicing routes via `sel 0 1 2` → 3 message boxes since `live.tab` outputs an int and the host expects the enum string)
+- [ ] Manual: change each param in Live, confirm `host` receives update — **deferred to Phase 2 verification pass** (Group A + B device-strip UI is hard to exercise standalone; bundle with Phase 2 lattice manual checks once there's a richer feedback loop)
+- [ ] Manual: save Live set, reopen, confirm values restored — **deferred to Phase 2 verification pass**
 
 ### Phase 2 — Lattice renderer (view-only)
 
@@ -169,14 +210,11 @@ Flip to Implemented and move to `archive/` once all boxes are checked.
 - [ ] `pattr` + `dict` wired for `startChord` / `sequence` / `anchors`
 - [ ] Confirm `pattr` dump fires before first transport tick (measure if uncertain)
 - [ ] Manual: save set with non-default walk, reopen, confirm restored
-- [ ] Manual: cut/paste device across Live sets, confirm walk state survives
 
 ## Open questions
 
 1. **Anchor UX** — long-press, dedicated mode, or shift-click? Least-settled part of Group C; may spin into a sub-decision if it gets complex.
 2. **Sequence length cap** — soft cap ~16 ops seems reasonable for visual legibility; hard cap enforced in pure logic.
-3. **Lattice extent** — fixed viewport vs. scroll/pan? Probably fixed for v1; revisit if walks escape the viewport.
-4. **Preset cut/paste** — does `pattr`/`dict` survive device cut/paste across Live sets? Phase 4 manual test confirms.
 
 ## Per-target notes
 
