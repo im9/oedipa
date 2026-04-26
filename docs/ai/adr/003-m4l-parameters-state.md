@@ -58,10 +58,17 @@ How long each triad holds, in 16th-note transport ticks.
 |------------|------|--------------------|---------------------|
 | `voicing`  | enum | close/spread/drop2 | `live.tab` (3 tabs) |
 | `seventh`  | bool | 0/1                | `live.toggle`       |
-| `velocity` | int  | 1–127              | `live.dial`         |
 | `channel`  | int  | 1–16               | `live.numbox`       |
 
 How a triad (Group C output) is rendered as MIDI notes.
+
+**`velocity` is intentionally not a UI control** in v1. A single dial that
+applies the same velocity to every chord note across every step is
+musically blunt — what we actually want is for the velocity of incoming
+played notes to flow through to the generated chord. That requires real
+MIDI input handling and is the work of ADR 004 (input handling). Until
+then, the host keeps a fixed default velocity (`100`) internally so the
+engine and tests still pass; the value just has no UI surface to change.
 
 ### Group C — Walk (lattice UI)
 
@@ -173,7 +180,7 @@ special work.
 - Initial-value propagation on device load
 
 **Out of scope (future ADRs):**
-- MIDI input handling (seeding `startChord` from played notes, live chord re-harmonization) → ADR 004 (renumbered from old ADR 005 plan)
+- MIDI input handling (seeding `startChord` from played notes, live chord re-harmonization, **velocity passthrough**) → ADR 004 (renumbered from old ADR 005 plan)
 - Rhythm patterns beyond "every step sounds" → later ADR
 - Library presets (`.adv`) and cross-set device cut/paste of Group C state — v1 only persists via the host Live set; revisit if users actually ask
 
@@ -185,6 +192,7 @@ Flip to Implemented and move to `archive/` once all boxes are checked.
 
 - [x] `live.*` objects added to [Oedipa.maxpat](../../../m4l/Oedipa.maxpat) for `stepsPerTransform`, `voicing`, `seventh`, `velocity`, `channel`
 - [x] `loadbang` → dump → `setParams <key>` chain wired for each (uses `live.thisdevice` outlet 0 instead of `loadbang` so dumps fire after Live restores stored values; voicing routes via `sel 0 1 2` → 3 message boxes since `live.tab` outputs an int and the host expects the enum string)
+- [x] Remove `velocity` from the device-strip UI; keep the host param as a fixed default `100`. Velocity will be sourced from incoming MIDI in ADR 004.
 - [ ] Manual: change each param in Live, confirm `host` receives update — **deferred to Phase 2 verification pass** (Group A + B device-strip UI is hard to exercise standalone; bundle with Phase 2 lattice manual checks once there's a richer feedback loop)
 - [ ] Manual: save Live set, reopen, confirm values restored — **deferred to Phase 2 verification pass**
 
@@ -192,7 +200,7 @@ Flip to Implemented and move to `archive/` once all boxes are checked.
 
 - [x] `m4l/engine/lattice.ts` (pure logic): coordinate ↔ triad mapping, viewport math, current-step state
 - [x] `m4l/engine/lattice.test.ts`: coordinate math + highlight tests (lattice ↔ engine consistency via `applyTransform` round-trips; shared `tonnetz-test-vectors.json` covers the engine, lattice tests are layout-specific)
-- [ ] `m4l/host/lattice-renderer.js` (jsui wrapper): draws triangles, reads walk state, highlights current step
+- [x] `m4l/host/lattice-renderer.js` (jsui wrapper): draws triangles, reads walk state, highlights current step. Bridge protocol: host emits `lattice-center <pc>` / `lattice-current <pc1> <pc2> <pc3>` / `lattice-clear` via `Max.outlet`; `[jsui]` consumes them through `route` + `prepend` boxes calling `latticeCenter` / `latticeCurrent` / `latticeClear` handlers. The vertex/triangle math is duplicated in JS (Max's [jsui] runs Max's bundled JS, not Node) — kept tiny and testable on the engine side.
 - [ ] Manual: lattice renders in device panel, current-step indicator tracks transport
 
 ### Phase 3 — Lattice interaction (Group C editing)

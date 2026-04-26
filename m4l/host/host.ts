@@ -48,6 +48,14 @@ export class Host {
     this.params = { ...this.params, ...patch }
   }
 
+  get currentTriad(): Triad | null {
+    return this.lastTriad
+  }
+
+  get centerPc(): number {
+    return ((this.params.startChord[0] % 12) + 12) % 12
+  }
+
   step(pos: number): NoteEvent[] {
     const { startChord, sequence, stepsPerTransform, anchors, voicing, seventh, velocity, channel } = this.params
     const walkState: WalkState = { startChord, sequence, stepsPerTransform, anchors }

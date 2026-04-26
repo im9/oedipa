@@ -8,7 +8,8 @@
 // conflicts with the injected one. Running this file under plain Node will
 // fail to resolve 'max-api'; tests live in host.test.ts and don't touch it.
 //
-// Protocol (see docs/ai/adr/002-m4l-device-architecture.md §3):
+// Protocol (see docs/ai/adr/002-m4l-device-architecture.md §3,
+// docs/ai/adr/003-m4l-parameters-state.md §"Lattice UI"):
 //
 //   Max -> here:
 //     step <pos>                          advance to host step index
@@ -17,9 +18,13 @@
 //     setStartChord <p1> <p2> <p3>        triad as MIDI notes
 //     setSequence <op> [<op> ...]         'P' | 'L' | 'R' list
 //     setAnchors <json>                   JSON array of {step, triad}
+//     latticeRefresh                      re-emit lattice state (used on load)
 //
 //   here -> Max (via Max.outlet):
 //     note <pitch> <velocity> <channel>   velocity=0 means note-off
+//     lattice-center <pc>                 lattice center pc (0..11)
+//     lattice-current <pc1> <pc2> <pc3>   current triad as pitch classes
+//     lattice-clear                       no current triad (panic / pre-play)
 
 import Max from 'max-api'
 import { Host } from './dist/host/host.js'
@@ -42,12 +47,28 @@ function emit(ev) {
   Max.outlet('note', ev.pitch, velocity, ev.channel)
 }
 
+function emitLatticeCenter() {
+  Max.outlet('lattice-center', host.centerPc)
+}
+
+function emitLatticeCurrent() {
+  const t = host.currentTriad
+  if (t === null) {
+    Max.outlet('lattice-clear')
+    return
+  }
+  Max.outlet('lattice-current', t[0] % 12, t[1] % 12, t[2] % 12)
+}
+
 Max.addHandler('step', (pos) => {
-  for (const ev of host.step(Number(pos))) emit(ev)
+  const events = host.step(Number(pos))
+  for (const ev of events) emit(ev)
+  if (events.length > 0) emitLatticeCurrent()
 })
 
 Max.addHandler('panic', () => {
   for (const ev of host.panic()) emit(ev)
+  emitLatticeCurrent()
 })
 
 Max.addHandler('setParams', (key, value) => {
@@ -56,6 +77,7 @@ Max.addHandler('setParams', (key, value) => {
 
 Max.addHandler('setStartChord', (p1, p2, p3) => {
   host.setParams({ startChord: [Number(p1), Number(p2), Number(p3)] })
+  emitLatticeCenter()
 })
 
 Max.addHandler('setSequence', (...ops) => {
@@ -64,4 +86,9 @@ Max.addHandler('setSequence', (...ops) => {
 
 Max.addHandler('setAnchors', (json) => {
   host.setParams({ anchors: JSON.parse(json) })
+})
+
+Max.addHandler('latticeRefresh', () => {
+  emitLatticeCenter()
+  emitLatticeCurrent()
 })

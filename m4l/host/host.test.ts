@@ -138,3 +138,48 @@ describe('Host.setParams', () => {
     assert.equal(pitchesOf(events, 'noteOff').length, 3)
   })
 })
+
+describe('Host.currentTriad / centerPc — for lattice rendering', () => {
+  // The lattice renderer needs to know which cell to highlight (currentTriad)
+  // and which pc to center the lattice on (centerPc). Both are read after
+  // step() emits chord-change events.
+  test('currentTriad is null before any step', () => {
+    const host = new Host(baseParams())
+    assert.equal(host.currentTriad, null)
+  })
+
+  test('currentTriad reflects the chord emitted by the last step', () => {
+    const host = new Host(baseParams())
+    host.step(0)
+    assert.deepEqual(host.currentTriad, [60, 64, 67])
+  })
+
+  test('currentTriad updates after a transform', () => {
+    const host = new Host(baseParams())
+    host.step(0)
+    host.step(1)
+    // P(C major) = C minor at the same root midi note (60)
+    const t = host.currentTriad!
+    const pcs = t.map(n => ((n % 12) + 12) % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs, [0, 3, 7])
+  })
+
+  test('currentTriad resets to null after panic', () => {
+    const host = new Host(baseParams())
+    host.step(0)
+    host.panic()
+    assert.equal(host.currentTriad, null)
+  })
+
+  test('centerPc is the pc of startChord[0]', () => {
+    const host = new Host(baseParams({ startChord: [66, 70, 73] })) // F# major
+    assert.equal(host.centerPc, 6)
+  })
+
+  test('centerPc updates when startChord changes via setParams', () => {
+    const host = new Host(baseParams())
+    assert.equal(host.centerPc, 0) // C
+    host.setParams({ startChord: [65, 69, 72] }) // F major
+    assert.equal(host.centerPc, 5)
+  })
+})

@@ -2,9 +2,9 @@
     "patcher": {
         "fileversion": 1,
         "appversion": {
-            "major": 9,
-            "minor": 0,
-            "revision": 0,
+            "major": 8,
+            "minor": 6,
+            "revision": 5,
             "architecture": "x64",
             "modernui": 1
         },
@@ -12,6 +12,7 @@
         "rect": [80.0, 80.0, 1400.0, 820.0],
         "bglocked": 0,
         "openinpresentation": 1,
+        "devicewidth": 608.0,
         "default_fontsize": 12.0,
         "default_fontface": 0,
         "default_fontname": "Arial",
@@ -65,28 +66,39 @@
 
             {"box": {"id": "obj-params-comment", "maxclass": "comment", "text": "Parameters (Group A + B)", "numinlets": 1, "numoutlets": 0, "fontsize": 12.0, "patching_rect": [970.0, 60.0, 200.0, 22.0]}},
 
-            {"box": {"id": "obj-stepsper", "maxclass": "live.numbox", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"], "parameter_enable": 1, "patching_rect": [970.0, 90.0, 60.0, 22.0], "presentation": 1, "presentation_rect": [10.0, 22.0, 50.0, 18.0], "saved_attribute_attributes": {"valueof": {"parameter_initial": [4], "parameter_initial_enable": 1, "parameter_longname": "OedipaSteps", "parameter_mmax": 32.0, "parameter_mmin": 1.0, "parameter_shortname": "Steps", "parameter_type": 1, "parameter_unitstyle": 0}}}},
+            {"box": {"id": "obj-panel-controls", "maxclass": "panel", "bgcolor": [0, 0, 0, 0], "bordercolor": [0.4, 0.4, 0.4, 1], "border": 0, "rounded": 4, "patching_rect": [970.0, 50.0, 144.0, 180.0], "presentation": 0}},
+
+            {"box": {"id": "obj-jsui-separator", "maxclass": "jsui", "filename": "/Users/tn/src/vst/oedipa/m4l/separator-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 0, "patching_rect": [970.0, 240.0, 1.0, 172.0], "presentation": 1, "presentation_rect": [477.0, 8.0, 1.0, 172.0]}},
+
+            {"box": {"id": "obj-stepsper", "maxclass": "live.numbox", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"], "parameter_enable": 1, "patching_rect": [970.0, 90.0, 60.0, 22.0], "presentation": 1, "presentation_rect": [486.0, 24.0, 50.0, 18.0], "saved_attribute_attributes": {"valueof": {"parameter_initial": [4], "parameter_initial_enable": 1, "parameter_longname": "OedipaSteps", "parameter_mmax": 32.0, "parameter_mmin": 1.0, "parameter_shortname": "Steps", "parameter_type": 1, "parameter_unitstyle": 0}}}},
             {"box": {"id": "obj-prep-stepsper", "maxclass": "newobj", "text": "prepend setParams stepsPerTransform", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [1100.0, 90.0, 220.0, 22.0]}},
-            {"box": {"id": "obj-lbl-stepsper", "maxclass": "comment", "text": "Steps", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 90.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [10.0, 6.0, 50.0, 14.0]}},
+            {"box": {"id": "obj-lbl-stepsper", "maxclass": "comment", "text": "Steps", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 90.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [486.0, 8.0, 50.0, 14.0]}},
 
-            {"box": {"id": "obj-seventh", "maxclass": "live.toggle", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"], "parameter_enable": 1, "patching_rect": [970.0, 130.0, 24.0, 24.0], "presentation": 1, "presentation_rect": [70.0, 22.0, 18.0, 18.0], "saved_attribute_attributes": {"valueof": {"parameter_initial": [0], "parameter_initial_enable": 1, "parameter_longname": "OedipaSeventh", "parameter_mmax": 1.0, "parameter_mmin": 0.0, "parameter_shortname": "7th", "parameter_type": 1, "parameter_unitstyle": 0}}}},
+            {"box": {"id": "obj-seventh", "maxclass": "live.toggle", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"], "parameter_enable": 1, "patching_rect": [970.0, 130.0, 24.0, 24.0], "presentation": 1, "presentation_rect": [486.0, 64.0, 18.0, 18.0], "saved_attribute_attributes": {"valueof": {"parameter_initial": [0], "parameter_initial_enable": 1, "parameter_longname": "OedipaSeventh", "parameter_mmax": 1.0, "parameter_mmin": 0.0, "parameter_shortname": "7th", "parameter_type": 1, "parameter_unitstyle": 0}}}},
             {"box": {"id": "obj-prep-seventh", "maxclass": "newobj", "text": "prepend setParams seventh", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [1100.0, 130.0, 170.0, 22.0]}},
-            {"box": {"id": "obj-lbl-seventh", "maxclass": "comment", "text": "7th", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 130.0, 40.0, 16.0], "presentation": 1, "presentation_rect": [70.0, 6.0, 30.0, 14.0]}},
+            {"box": {"id": "obj-lbl-seventh", "maxclass": "comment", "text": "7th", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 130.0, 40.0, 16.0], "presentation": 1, "presentation_rect": [486.0, 48.0, 30.0, 14.0]}},
 
-            {"box": {"id": "obj-velocity", "maxclass": "live.dial", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"], "parameter_enable": 1, "patching_rect": [970.0, 170.0, 40.0, 40.0], "presentation": 1, "presentation_rect": [108.0, 16.0, 28.0, 28.0], "saved_attribute_attributes": {"valueof": {"parameter_initial": [100], "parameter_initial_enable": 1, "parameter_longname": "OedipaVelocity", "parameter_mmax": 127.0, "parameter_mmin": 1.0, "parameter_shortname": "Vel", "parameter_type": 1, "parameter_unitstyle": 0}}}},
-            {"box": {"id": "obj-prep-velocity", "maxclass": "newobj", "text": "prepend setParams velocity", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [1100.0, 180.0, 170.0, 22.0]}},
-            {"box": {"id": "obj-lbl-velocity", "maxclass": "comment", "text": "Vel", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 170.0, 40.0, 16.0], "presentation": 1, "presentation_rect": [108.0, 4.0, 30.0, 14.0]}},
-
-            {"box": {"id": "obj-channel", "maxclass": "live.numbox", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"], "parameter_enable": 1, "patching_rect": [970.0, 230.0, 60.0, 22.0], "presentation": 1, "presentation_rect": [148.0, 22.0, 50.0, 18.0], "saved_attribute_attributes": {"valueof": {"parameter_initial": [1], "parameter_initial_enable": 1, "parameter_longname": "OedipaChannel", "parameter_mmax": 16.0, "parameter_mmin": 1.0, "parameter_shortname": "Ch", "parameter_type": 1, "parameter_unitstyle": 0}}}},
+            {"box": {"id": "obj-channel", "maxclass": "live.numbox", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"], "parameter_enable": 1, "patching_rect": [970.0, 230.0, 60.0, 22.0], "presentation": 1, "presentation_rect": [486.0, 104.0, 50.0, 18.0], "saved_attribute_attributes": {"valueof": {"parameter_initial": [1], "parameter_initial_enable": 1, "parameter_longname": "OedipaChannel", "parameter_mmax": 16.0, "parameter_mmin": 1.0, "parameter_shortname": "Ch", "parameter_type": 1, "parameter_unitstyle": 0}}}},
             {"box": {"id": "obj-prep-channel", "maxclass": "newobj", "text": "prepend setParams channel", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [1100.0, 230.0, 170.0, 22.0]}},
-            {"box": {"id": "obj-lbl-channel", "maxclass": "comment", "text": "Ch", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 230.0, 40.0, 16.0], "presentation": 1, "presentation_rect": [148.0, 6.0, 30.0, 14.0]}},
+            {"box": {"id": "obj-lbl-channel", "maxclass": "comment", "text": "Ch", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 230.0, 40.0, 16.0], "presentation": 1, "presentation_rect": [486.0, 88.0, 30.0, 14.0]}},
 
-            {"box": {"id": "obj-voicing", "maxclass": "live.tab", "numinlets": 1, "numoutlets": 3, "outlettype": ["", "", "float"], "parameter_enable": 1, "patching_rect": [970.0, 270.0, 130.0, 22.0], "presentation": 1, "presentation_rect": [208.0, 22.0, 130.0, 18.0], "saved_attribute_attributes": {"valueof": {"parameter_enum": ["Close", "Spread", "Drop 2"], "parameter_initial": [0], "parameter_initial_enable": 1, "parameter_longname": "OedipaVoicing", "parameter_shortname": "Voicing", "parameter_type": 2}}}},
+            {"box": {"id": "obj-voicing", "maxclass": "live.tab", "numinlets": 1, "numoutlets": 3, "outlettype": ["", "", "float"], "parameter_enable": 1, "patching_rect": [970.0, 270.0, 130.0, 22.0], "presentation": 1, "presentation_rect": [486.0, 144.0, 122.0, 18.0], "saved_attribute_attributes": {"valueof": {"parameter_enum": ["Close", "Spread", "Drop 2"], "parameter_initial": [0], "parameter_initial_enable": 1, "parameter_longname": "OedipaVoicing", "parameter_shortname": "Voicing", "parameter_type": 2}}}},
             {"box": {"id": "obj-sel-voicing", "maxclass": "newobj", "text": "sel 0 1 2", "numinlets": 1, "numoutlets": 4, "outlettype": ["bang", "bang", "bang", ""], "patching_rect": [1100.0, 270.0, 70.0, 22.0]}},
             {"box": {"id": "obj-msg-voicing-close", "maxclass": "message", "text": "setParams voicing close", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [1100.0, 300.0, 160.0, 22.0]}},
             {"box": {"id": "obj-msg-voicing-spread", "maxclass": "message", "text": "setParams voicing spread", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [1100.0, 330.0, 170.0, 22.0]}},
             {"box": {"id": "obj-msg-voicing-drop2", "maxclass": "message", "text": "setParams voicing drop2", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [1100.0, 360.0, 170.0, 22.0]}},
-            {"box": {"id": "obj-lbl-voicing", "maxclass": "comment", "text": "Voicing", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 270.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [208.0, 6.0, 60.0, 14.0]}}
+            {"box": {"id": "obj-lbl-voicing", "maxclass": "comment", "text": "Voicing", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 270.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [486.0, 128.0, 60.0, 14.0]}},
+
+            {"box": {"id": "obj-lattice-comment", "maxclass": "comment", "text": "Lattice (jsui)", "numinlets": 1, "numoutlets": 0, "fontsize": 12.0, "patching_rect": [130.0, 470.0, 130.0, 22.0]}},
+
+            {"box": {"id": "obj-route-lattice", "maxclass": "newobj", "text": "route lattice-center lattice-current lattice-clear", "numinlets": 1, "numoutlets": 4, "outlettype": ["", "", "bang", ""], "patching_rect": [130.0, 500.0, 320.0, 22.0]}},
+            {"box": {"id": "obj-prep-lcenter", "maxclass": "newobj", "text": "prepend latticeCenter", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [130.0, 530.0, 140.0, 22.0]}},
+            {"box": {"id": "obj-prep-lcurrent", "maxclass": "newobj", "text": "prepend latticeCurrent", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [280.0, 530.0, 150.0, 22.0]}},
+            {"box": {"id": "obj-msg-lclear", "maxclass": "message", "text": "latticeClear", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [440.0, 530.0, 90.0, 22.0]}},
+
+            {"box": {"id": "obj-msg-refresh", "maxclass": "message", "text": "latticeRefresh", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [330.0, 130.0, 100.0, 22.0]}},
+
+            {"box": {"id": "obj-jsui", "maxclass": "jsui", "filename": "/Users/tn/src/vst/oedipa/m4l/lattice-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 0, "patching_rect": [130.0, 570.0, 460.0, 120.0], "presentation": 1, "presentation_rect": [8.0, 8.0, 460.0, 120.0]}}
         ],
         "lines": [
             {"patchline": {"source": ["obj-midiin", 0], "destination": ["obj-midiout", 0]}},
@@ -123,7 +135,6 @@
 
             {"patchline": {"source": ["obj-thisdevice", 0], "destination": ["obj-stepsper", 0]}},
             {"patchline": {"source": ["obj-thisdevice", 0], "destination": ["obj-seventh", 0]}},
-            {"patchline": {"source": ["obj-thisdevice", 0], "destination": ["obj-velocity", 0]}},
             {"patchline": {"source": ["obj-thisdevice", 0], "destination": ["obj-channel", 0]}},
             {"patchline": {"source": ["obj-thisdevice", 0], "destination": ["obj-voicing", 0]}},
 
@@ -132,9 +143,6 @@
 
             {"patchline": {"source": ["obj-seventh", 0], "destination": ["obj-prep-seventh", 0]}},
             {"patchline": {"source": ["obj-prep-seventh", 0], "destination": ["obj-nodescript", 0]}},
-
-            {"patchline": {"source": ["obj-velocity", 0], "destination": ["obj-prep-velocity", 0]}},
-            {"patchline": {"source": ["obj-prep-velocity", 0], "destination": ["obj-nodescript", 0]}},
 
             {"patchline": {"source": ["obj-channel", 0], "destination": ["obj-prep-channel", 0]}},
             {"patchline": {"source": ["obj-prep-channel", 0], "destination": ["obj-nodescript", 0]}},
@@ -145,7 +153,18 @@
             {"patchline": {"source": ["obj-sel-voicing", 2], "destination": ["obj-msg-voicing-drop2", 0]}},
             {"patchline": {"source": ["obj-msg-voicing-close", 0], "destination": ["obj-nodescript", 0]}},
             {"patchline": {"source": ["obj-msg-voicing-spread", 0], "destination": ["obj-nodescript", 0]}},
-            {"patchline": {"source": ["obj-msg-voicing-drop2", 0], "destination": ["obj-nodescript", 0]}}
+            {"patchline": {"source": ["obj-msg-voicing-drop2", 0], "destination": ["obj-nodescript", 0]}},
+
+            {"patchline": {"source": ["obj-route", 1], "destination": ["obj-route-lattice", 0]}},
+            {"patchline": {"source": ["obj-route-lattice", 0], "destination": ["obj-prep-lcenter", 0]}},
+            {"patchline": {"source": ["obj-route-lattice", 1], "destination": ["obj-prep-lcurrent", 0]}},
+            {"patchline": {"source": ["obj-route-lattice", 2], "destination": ["obj-msg-lclear", 0]}},
+            {"patchline": {"source": ["obj-prep-lcenter", 0], "destination": ["obj-jsui", 0]}},
+            {"patchline": {"source": ["obj-prep-lcurrent", 0], "destination": ["obj-jsui", 0]}},
+            {"patchline": {"source": ["obj-msg-lclear", 0], "destination": ["obj-jsui", 0]}},
+
+            {"patchline": {"source": ["obj-thisdevice", 0], "destination": ["obj-msg-refresh", 0]}},
+            {"patchline": {"source": ["obj-msg-refresh", 0], "destination": ["obj-nodescript", 0]}}
         ]
     }
 }
