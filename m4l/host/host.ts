@@ -1,5 +1,6 @@
 // M4L host layer for Oedipa.
-// Spec: docs/ai/adr/002-m4l-device-architecture.md
+// Spec: docs/ai/adr/archive/002-m4l-device-architecture.md (architecture),
+//       docs/ai/adr/003-m4l-parameters-state.md (cell sequencer params)
 //
 // Bridges Max transport and the Tonnetz engine. Owns WalkState, resolves
 // host step index -> triad (via engine.walk), applies voicing/seventh, and
@@ -12,9 +13,8 @@ import {
   addSeventh,
   applyVoicing,
   walk,
-  type Anchor,
+  type Cell,
   type MidiNote,
-  type Transform,
   type Triad,
   type Voicing,
   type WalkState,
@@ -26,11 +26,12 @@ export type NoteEvent =
 
 export interface HostParams {
   startChord: Triad
-  sequence: Transform[]
+  cells: Cell[]
   stepsPerTransform: number
   voicing: Voicing
   seventh: boolean
-  anchors: Anchor[]
+  jitter: number
+  seed: number
   velocity: number
   channel: number
 }
@@ -48,6 +49,13 @@ export class Host {
     this.params = { ...this.params, ...patch }
   }
 
+  setCell(idx: number, op: Cell): void {
+    if (idx < 0 || idx >= this.params.cells.length) return
+    const cells = this.params.cells.slice()
+    cells[idx] = op
+    this.params = { ...this.params, cells }
+  }
+
   get currentTriad(): Triad | null {
     return this.lastTriad
   }
@@ -57,8 +65,8 @@ export class Host {
   }
 
   step(pos: number): NoteEvent[] {
-    const { startChord, sequence, stepsPerTransform, anchors, voicing, seventh, velocity, channel } = this.params
-    const walkState: WalkState = { startChord, sequence, stepsPerTransform, anchors }
+    const { startChord, cells, stepsPerTransform, jitter, seed, voicing, seventh, velocity, channel } = this.params
+    const walkState: WalkState = { startChord, cells, stepsPerTransform, jitter, seed }
     const triad = walk(walkState, pos)
 
     if (this.lastTriad !== null && triadsEqual(triad, this.lastTriad)) {

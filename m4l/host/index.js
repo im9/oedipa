@@ -8,16 +8,18 @@
 // conflicts with the injected one. Running this file under plain Node will
 // fail to resolve 'max-api'; tests live in host.test.ts and don't touch it.
 //
-// Protocol (see docs/ai/adr/002-m4l-device-architecture.md §3,
-// docs/ai/adr/003-m4l-parameters-state.md §"Lattice UI"):
+// Protocol (see docs/ai/adr/archive/002-m4l-device-architecture.md §3,
+// docs/ai/adr/003-m4l-parameters-state.md §"Message protocol"):
 //
 //   Max -> here:
 //     step <pos>                          advance to host step index
 //     panic                               all notes off
-//     setParams <key> <value>             scalar param update
+//     setParams <key> <value>             scalar param update (jitter, seed,
+//                                         stepsPerTransform, voicing, seventh,
+//                                         channel)
 //     setStartChord <p1> <p2> <p3>        triad as MIDI notes
-//     setSequence <op> [<op> ...]         'P' | 'L' | 'R' list
-//     setAnchors <json>                   JSON array of {step, triad}
+//     setCell <idx> <op>                  single-cell update; op ∈ {P,L,R,hold}
+//     setCells <op0> <op1> <op2> <op3>    bulk-set the whole cell array
 //     latticeRefresh                      re-emit lattice state (used on load)
 //
 //   here -> Max (via Max.outlet):
@@ -33,11 +35,12 @@ Max.post('oedipa host: index.js loaded')
 
 const host = new Host({
   startChord: [60, 64, 67],
-  sequence: ['P'],
+  cells: ['P', 'L', 'R', 'hold'],
   stepsPerTransform: 4,
   voicing: 'close',
   seventh: false,
-  anchors: [],
+  jitter: 0,
+  seed: 0,
   velocity: 100,
   channel: 1,
 })
@@ -80,12 +83,12 @@ Max.addHandler('setStartChord', (p1, p2, p3) => {
   emitLatticeCenter()
 })
 
-Max.addHandler('setSequence', (...ops) => {
-  host.setParams({ sequence: ops })
+Max.addHandler('setCell', (idx, op) => {
+  host.setCell(Number(idx), String(op))
 })
 
-Max.addHandler('setAnchors', (json) => {
-  host.setParams({ anchors: JSON.parse(json) })
+Max.addHandler('setCells', (...ops) => {
+  host.setParams({ cells: ops.map(String) })
 })
 
 Max.addHandler('latticeRefresh', () => {

@@ -1,12 +1,14 @@
 {
-  "version": 1,
-  "description": "Cross-target conformance test vectors for the Tonnetz engine (see docs/ai/adr/archive/001-tonnetz-engine-interface.md). All target implementations (m4l, vst, app) must pass these. Binding assertion: pitch-class set of output equals expected_pcs (order-independent). Realized octaves may vary by integer multiples of 12 due to target-specific boundary behavior in buildTriad; pitch-class identity is the contract.",
+  "version": 2,
+  "description": "Cross-target conformance test vectors for the Tonnetz engine (see docs/ai/adr/archive/001-tonnetz-engine-interface.md and docs/ai/adr/003-m4l-parameters-state.md). All target implementations (m4l, vst, app) must pass these. Binding assertion: pitch-class set of output equals expected_pcs (order-independent). Realized octaves may vary by integer multiples of 12 due to target-specific boundary behavior in buildTriad; pitch-class identity is the contract.",
   "conventions": {
     "triad": "[a, b, c] MIDI note numbers. For inputs in close position, a=root, b=root+3 or +4, c=root+7. identify_triad cases also include inversions.",
     "pitch_classes": "integer 0..11 (C=0, ..., B=11), sorted ascending for set equality",
     "transforms": "P | L | R. Sequences of single-char strings.",
     "voicings": "close | spread | drop2",
-    "anchor": "{ step: int, triad: [a, b, c] } — step is absolute position in the walk"
+    "cells": "Each cell is one of 'P' | 'L' | 'R' | 'hold'. Sequencer iterates cells cyclically; one cell consumed per stepsPerTransform host ticks. 'hold' leaves walker on the current triad.",
+    "jitter": "float 0..1. Per-step probability that the cell's op is replaced by a uniform-random pick from {P, L, R, hold}.",
+    "seed": "int. Seeds a mulberry32 PRNG. For each transform tick, two floats are sampled: first decides substitute-or-not (substitute iff r < jitter); second selects the substitute op (idx = floor(r * 4) ∈ {0=P, 1=L, 2=R, 3=hold}). The PRNG is seeded fresh from `seed` at the start of every walk(state, pos) call so any-pos restart reproduces."
   },
 
   "identify_triad": [
@@ -63,97 +65,131 @@
     { "name": "A minor + min7",          "voiced": [57, 60, 64],     "triad": [57, 60, 64], "expected": [57, 60, 64, 67] }
   ],
 
-  "walk": [
+  "walk_deterministic": [
     {
-      "name": "simple walk, stepsPerTransform=1, no anchors",
+      "name": "PLR cycle, jitter=0, spt=1",
+      "description": "Plain cell cycle with no holds and no jitter. cell index advances on every host tick.",
       "state": {
         "startChord": [60, 64, 67],
-        "sequence": ["P", "L", "R"],
+        "cells": ["P", "L", "R", "P"],
         "stepsPerTransform": 1,
-        "anchors": []
+        "jitter": 0,
+        "seed": 0
       },
       "samples": [
         { "pos": 0, "expected_pcs": [0, 4, 7],  "note": "startChord (C major)" },
-        { "pos": 1, "expected_pcs": [0, 3, 7],  "note": "after P: C minor" },
-        { "pos": 2, "expected_pcs": [0, 3, 8],  "note": "after L: Ab major" },
-        { "pos": 3, "expected_pcs": [0, 5, 8],  "note": "after R: F minor" },
-        { "pos": 4, "expected_pcs": [0, 5, 9],  "note": "after P (cycle wraparound, seq[0]): F major" },
-        { "pos": 5, "expected_pcs": [0, 4, 9],  "note": "after L (seq[1]): A minor" }
+        { "pos": 1, "expected_pcs": [0, 3, 7],  "note": "cell[0]=P: C minor" },
+        { "pos": 2, "expected_pcs": [0, 3, 8],  "note": "cell[1]=L: Ab major" },
+        { "pos": 3, "expected_pcs": [0, 5, 8],  "note": "cell[2]=R: F minor" },
+        { "pos": 4, "expected_pcs": [0, 5, 9],  "note": "cell[3]=P: F major" },
+        { "pos": 5, "expected_pcs": [0, 5, 8],  "note": "cell[0]=P (cycle): F minor" },
+        { "pos": 6, "expected_pcs": [1, 5, 8],  "note": "cell[1]=L: Db major" },
+        { "pos": 7, "expected_pcs": [1, 5, 10], "note": "cell[2]=R: Bb minor" }
       ]
     },
     {
-      "name": "chord held for multiple steps, stepsPerTransform=2",
+      "name": "hold cells preserve chord",
+      "description": "'hold' cells leave the walker untouched. Verifies the four-element op space.",
       "state": {
         "startChord": [60, 64, 67],
-        "sequence": ["P", "L"],
+        "cells": ["P", "hold", "L", "hold"],
+        "stepsPerTransform": 1,
+        "jitter": 0,
+        "seed": 0
+      },
+      "samples": [
+        { "pos": 0, "expected_pcs": [0, 4, 7],   "note": "startChord C major" },
+        { "pos": 1, "expected_pcs": [0, 3, 7],   "note": "cell[0]=P: C minor" },
+        { "pos": 2, "expected_pcs": [0, 3, 7],   "note": "cell[1]=hold: stays C minor" },
+        { "pos": 3, "expected_pcs": [0, 3, 8],   "note": "cell[2]=L: Ab major" },
+        { "pos": 4, "expected_pcs": [0, 3, 8],   "note": "cell[3]=hold: stays Ab major" },
+        { "pos": 5, "expected_pcs": [3, 8, 11],  "note": "cell[0]=P (cycle): Ab minor" }
+      ]
+    },
+    {
+      "name": "stepsPerTransform=2 holds chord between cells",
+      "description": "Cells consumed only at boundaries (every spt host ticks). Between boundaries, walker holds.",
+      "state": {
+        "startChord": [60, 64, 67],
+        "cells": ["P", "L", "R"],
         "stepsPerTransform": 2,
-        "anchors": []
+        "jitter": 0,
+        "seed": 0
       },
       "samples": [
         { "pos": 0, "expected_pcs": [0, 4, 7], "note": "startChord" },
         { "pos": 1, "expected_pcs": [0, 4, 7], "note": "not a boundary, unchanged" },
-        { "pos": 2, "expected_pcs": [0, 3, 7], "note": "boundary, apply P" },
+        { "pos": 2, "expected_pcs": [0, 3, 7], "note": "boundary, cell[0]=P: C minor" },
         { "pos": 3, "expected_pcs": [0, 3, 7], "note": "not a boundary, unchanged" },
-        { "pos": 4, "expected_pcs": [0, 3, 8], "note": "boundary, apply L" }
+        { "pos": 4, "expected_pcs": [0, 3, 8], "note": "boundary, cell[1]=L: Ab major" },
+        { "pos": 5, "expected_pcs": [0, 3, 8], "note": "not a boundary, unchanged" },
+        { "pos": 6, "expected_pcs": [0, 5, 8], "note": "boundary, cell[2]=R: F minor" }
       ]
     },
     {
-      "name": "walk with anchor reset (Oedipa semantics)",
-      "description": "Anchor at step 3 resets the transform counter. Post-anchor walk begins from sequence[0] regardless of how far the counter had advanced. This distinguishes Oedipa's reset semantics from inboil's skip-in-place semantics.",
+      "name": "all-hold cells freeze startChord",
+      "description": "Pathological case: every cell is hold. Walker never moves.",
       "state": {
         "startChord": [60, 64, 67],
-        "sequence": ["P", "L", "R"],
+        "cells": ["hold", "hold", "hold", "hold"],
         "stepsPerTransform": 1,
-        "anchors": [
-          { "step": 3, "triad": [55, 59, 62] }
-        ]
+        "jitter": 0,
+        "seed": 0
       },
       "samples": [
-        { "pos": 0, "expected_pcs": [0, 4, 7],  "note": "startChord (C major)" },
-        { "pos": 1, "expected_pcs": [0, 3, 7],  "note": "P: C minor" },
-        { "pos": 2, "expected_pcs": [0, 3, 8],  "note": "L: Ab major" },
-        { "pos": 3, "expected_pcs": [2, 7, 11], "note": "ANCHOR: G major. Counter resets." },
-        { "pos": 4, "expected_pcs": [2, 7, 10], "note": "After reset, seq[0]=P applied: G minor. (Skip-in-place would give seq[2]=R → E minor [4, 7, 11])" },
-        { "pos": 5, "expected_pcs": [3, 7, 10], "note": "seq[1]=L: Eb major" }
+        { "pos": 0,  "expected_pcs": [0, 4, 7], "note": "startChord" },
+        { "pos": 5,  "expected_pcs": [0, 4, 7], "note": "all holds, unchanged" },
+        { "pos": 50, "expected_pcs": [0, 4, 7], "note": "still unchanged" }
       ]
     },
     {
-      "name": "anchor at step 0 (start-replacing)",
-      "description": "Anchor at step 0 should override startChord. Transform counter begins at 0 regardless.",
+      "name": "single-cell program loops one op",
+      "description": "cells.length=1 case. The same op applies on every transform tick.",
       "state": {
         "startChord": [60, 64, 67],
-        "sequence": ["P"],
+        "cells": ["P"],
         "stepsPerTransform": 1,
-        "anchors": [
-          { "step": 0, "triad": [65, 69, 72] }
-        ]
+        "jitter": 0,
+        "seed": 0
       },
       "samples": [
-        { "pos": 0, "expected_pcs": [0, 5, 9], "note": "ANCHOR overrides startChord: F major" },
-        { "pos": 1, "expected_pcs": [0, 5, 8], "note": "P: F minor" }
-      ]
-    },
-    {
-      "name": "multiple anchors",
-      "description": "Two anchors. Each resets the counter independently.",
-      "state": {
-        "startChord": [60, 64, 67],
-        "sequence": ["P", "L"],
-        "stepsPerTransform": 1,
-        "anchors": [
-          { "step": 2, "triad": [62, 66, 69] },
-          { "step": 5, "triad": [67, 71, 74] }
-        ]
-      },
-      "samples": [
-        { "pos": 0, "expected_pcs": [0, 4, 7],  "note": "startChord C major" },
-        { "pos": 1, "expected_pcs": [0, 3, 7],  "note": "P: C minor" },
-        { "pos": 2, "expected_pcs": [2, 6, 9],  "note": "ANCHOR: D major, counter reset" },
-        { "pos": 3, "expected_pcs": [2, 5, 9],  "note": "seq[0]=P: D minor" },
-        { "pos": 4, "expected_pcs": [2, 5, 10], "note": "seq[1]=L: Bb major" },
-        { "pos": 5, "expected_pcs": [2, 7, 11], "note": "ANCHOR: G major, counter reset" },
-        { "pos": 6, "expected_pcs": [2, 7, 10], "note": "seq[0]=P: G minor" }
+        { "pos": 0, "expected_pcs": [0, 4, 7], "note": "startChord C major" },
+        { "pos": 1, "expected_pcs": [0, 3, 7], "note": "P: C minor" },
+        { "pos": 2, "expected_pcs": [0, 4, 7], "note": "P: C major (P involution)" },
+        { "pos": 3, "expected_pcs": [0, 3, 7], "note": "P: C minor" }
       ]
     }
-  ]
+  ],
+
+  "mulberry32": {
+    "description": "PRNG used for jitter. Standard mulberry32 (https://gist.github.com/tommyettinger/46a3c5e1ba2554c7b2f6dab3f54e1eb6). Each implementation MUST produce these exact floats from the given seed for the first N calls. This is the binding contract for cross-target jitter reproducibility.",
+    "algorithm": "function mulberry32(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) | 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; } }",
+    "samples": "FILLED_BY_ENGINE_IMPLEMENTATION (run scripts/dump-mulberry32.ts after Phase 3 engine lands)"
+  },
+
+  "walk_jitter": {
+    "description": "Jitter behavior. expected_pcs values FILLED_BY_ENGINE_IMPLEMENTATION once the mulberry32 reference outputs are in place. Cases below describe the structural assertions; concrete pcs emerge from running the engine and copying back.",
+    "cases": [
+      {
+        "name": "jitter=0 ignores seed",
+        "description": "With jitter=0, the seed has no effect. Walk identical to walk_deterministic 'PLR cycle' above.",
+        "structural_assertion": "walk(jitter=0, seed=any) === walk(jitter=0, seed=other)"
+      },
+      {
+        "name": "jitter=1 ignores cells",
+        "description": "With jitter=1, every cell op is replaced by a random pick. Result depends only on seed and pos, not on cells contents.",
+        "structural_assertion": "walk(jitter=1, cells=['P','L','R','hold']) === walk(jitter=1, cells=['hold','hold','hold','hold'])"
+      },
+      {
+        "name": "fixed seed reproduces",
+        "description": "Calling walk(state, pos) twice must yield identical triads.",
+        "structural_assertion": "walk(state, pos) === walk(state, pos) for arbitrary state, pos"
+      },
+      {
+        "name": "any-pos restart consistency",
+        "description": "walk(state, pos=N) must equal the result of advancing the walker step-by-step from pos=0 to N. Cross-target conformance depends on this — Live can resume playback at any position.",
+        "structural_assertion": "walk(state, N) === stepwise advance from 0 to N"
+      }
+    ]
+  }
 }

@@ -1,8 +1,9 @@
 # Concept
 
 Oedipa is a Tonnetz-based chord exploration MIDI tool. On each clock tick a
-**walker** traverses a neo-Riemannian lattice toward a user-placed **attractor**,
-emitting triads with smooth voice leading.
+**walker** traverses a neo-Riemannian lattice, driven by a short repeating
+**cell sequence** of P / L / R / hold operations and an optional **jitter**
+randomness layer.
 
 This document describes the **musical model** — the parts that are shared across
 all targets (`m4l/`, `vst/`, `app/`). Target-specific UI and interaction design
@@ -12,15 +13,15 @@ live in separate docs.
 
 On each step of the host transport, Oedipa:
 
-1. Looks at the walker's current triad and the user-set **attractor** triad on the
-   lattice.
-2. Picks the next P / L / R operation that tends to move the walker closer to the
-   attractor, with **jitter** controlling how often it deviates.
-3. Emits the resulting chord as MIDI notes, shaped by voicing settings.
+1. Looks at the current **cell** in the sequence (`cells[stepIdx % cells.length]`)
+   holding an op: `P` / `L` / `R` / `hold`.
+2. With probability `jitter`, replaces the op with a uniformly-random one.
+3. Applies the op to the walker's current triad (or holds if `hold`).
+4. Emits the resulting triad as MIDI notes, shaped by voicing settings.
 
-The user shapes the output by placing and moving the attractor (manually or via
-host automation), tuning jitter, and choosing voicing. The Tonnetz handles
-harmony and voice leading; the user steers the walker.
+The user shapes the output by writing the cells (the "program"), tuning jitter,
+and choosing voicing. Each cell is independently host-automatable — the live
+steering layer replaces the static authoring of long P/L/R lists.
 
 ## Musical model
 
@@ -53,31 +54,35 @@ identify the triad's pitch classes, apply the transform in pitch-class space, th
 reconstruct the nearest realization to the current voicing. This preserves octave
 proximity and avoids large jumps.
 
-### Traversal — attractor-driven walk
+### Traversal — cell sequencer with jitter
 
-At each transform step, the walker has three candidates: the P, L, and R
-neighbors of the current triad. Lattice distance from each candidate to the
-attractor is computed, and the walker picks among them by a probabilistic rule:
+The walk is driven by a small array of **cells**, each holding one of:
+- `P`, `L`, `R` — apply that neo-Riemannian operation
+- `hold` — leave the walker on the current triad
 
-- **jitter = 0**: greedy — always pick the candidate with smallest distance to
-  the attractor (ties broken deterministically by seed).
-- **jitter = 1**: uniform random — distance is ignored.
-- **intermediate**: probabilistic preference for nearer candidates (softmax-style;
-  the engine fixes the exact formula and asserts it via shared test vectors).
+At each transform boundary (every `stepsPerTransform` host ticks), the walker
+consumes one cell:
 
-When the walker has reached the attractor (current triad equals attractor), it
-stays put until either the attractor moves or jitter perturbs it to an adjacent
-triangle.
+- The cell index advances cyclically: `cellIdx = transformIdx mod cells.length`.
+- With probability `jitter`, the cell's op is replaced by a uniform-random pick
+  from `{P, L, R, hold}`. The substitution is sampled from a seeded PRNG so the
+  walk is reproducible for fixed `(startChord, cells, jitter, seed)`.
+- The chosen op is applied (or the chord held). The new triad is the
+  nearest-octave realization to the previous one, preserving voice leading.
 
-If `attractor` is unset, it defaults to `startChord` — the walker holds the start
-chord (with jitter optionally drifting it).
+`jitter = 0` reproduces a strict cyclic walk through the program. `jitter = 1`
+ignores the program entirely (uniform random walk on the Tonnetz). Intermediate
+values give a "loosely follows the program" feel.
 
-The walk is **reproducible**: for fixed (`startChord`, attractor trajectory,
-`jitter`, `seed`), restarting playback from any position yields the same output.
-Randomness is seeded; the seed is a parameter, not a hidden runtime detail.
+The sequence is short by design (target convention: 4 cells). The motion comes
+from the loop *plus* the cells being independently host-automatable — the user
+either authors a static program and lets jitter colour it, or animates one cell
+via host automation to evolve the walk over time. This is the design's
+replacement for both inboil's variable-length sequence editor and the discarded
+attractor model.
 
 **Rate**: `stepsPerTransform` controls how many host steps each chord is held
-before the next transform fires. Rate = 1 yields a moving chord every step
+before the next cell is consumed. Rate = 1 yields a moving chord every step
 (O&C / arpeggio feel). Rate = 4–16 yields a pad-style progression.
 
 ## Output model
@@ -110,8 +115,8 @@ notes. Sample-accurate timing against the host clock is expected on all targets
 
 **Input handling** is a target-level design choice. The canonical use case is
 **incoming notes update `startChord`** — the user plays a chord, the walker
-restarts from there and steers toward the current attractor. Targets that have
-no notion of MIDI input may omit this.
+restarts from there and continues advancing through the cells. Targets that
+have no notion of MIDI input may omit this.
 
 **Velocity source** — v1 uses incoming MIDI note velocity when input is wired
 (passthrough), and a fixed default (100) otherwise. A single static velocity
@@ -129,8 +134,8 @@ released *before* new notes-on, in the same processing block. No intentional
 overlap in v1 (can be revisited if legato-style voice leading becomes a goal).
 
 **Transport** — state is reset on stop; resuming from an arbitrary position
-recomputes the walk deterministically from `startChord` + attractor + seed +
-position, so the output is identical regardless of where playback begins.
+recomputes the walk deterministically from `startChord` + cells + jitter + seed
++ position, so the output is identical regardless of where playback begins.
 
 **MPE** — not supported in v1. The Tonnetz lattice has natural per-note
 articulation potential (pitch bend from lattice position, pressure from voicing
@@ -142,30 +147,35 @@ emission layer abstract enough that MPE can be added without rewriting.
 
 Clarifying scope by exclusion:
 
-- **Not a chord sequencer.** The user does not enter a list of chords or a list
-  of transforms; they place an attractor and let the walker steer toward it.
+- **Not a chord sequencer.** The user does not enter a list of chords; they
+  enter a short list of P/L/R/hold *operations* and the chords emerge from the
+  walk.
+- **Not a long-form sequence editor.** The cell array is intentionally short
+  (target convention: 4 cells). Long P/L/R sequences are inboil's mode and not
+  Oedipa's — beyond a handful of cells, "print to MIDI clip and edit there" is
+  the better DAW-native workflow.
 - **Not a generative synth.** No oscillators, no audio. MIDI only.
 - **Not a scene graph.** The inboil origin embeds Tonnetz inside a broader
   generative-node architecture. Oedipa flattens this: one Tonnetz, one walker,
   one output.
 - **Not an unseeded random walker.** The walk is reproducible for fixed
-  (startChord, attractor, jitter, seed). "Random" here means "seeded
-  pseudorandom that the user can lock down and print to a clip."
+  (startChord, cells, jitter, seed). "Random" here means "seeded pseudorandom
+  the user can lock down and print to a clip."
 
 ## Parameter surface (canonical)
 
 The minimum parameter set each target must expose:
 
-| Parameter           | Type                       | Notes                                |
-|---------------------|----------------------------|--------------------------------------|
-| `startChord`        | triad                      | walker's initial triad               |
-| `attractor`         | triad                      | target the walker steers toward      |
-| `jitter`            | float 0..1                 | greedy ↔ uniform-random mix          |
-| `seed`              | int                        | RNG seed for reproducibility         |
-| `stepsPerTransform` | int ≥ 1                    | rate (host steps per transform)      |
-| `voicing`           | `close \| spread \| drop2` | output voicing                       |
-| `seventh`           | bool                       | add 7th extension                    |
-| `rhythm`            | pattern                    | note trigger pattern                 |
+| Parameter           | Type                          | Notes                                |
+|---------------------|-------------------------------|--------------------------------------|
+| `startChord`        | triad                         | walker's initial triad               |
+| `cells`             | `('P' \| 'L' \| 'R' \| 'hold')[]` | ordered cell sequence (4 by default) |
+| `jitter`            | float 0..1                    | per-step random-substitute probability |
+| `seed`              | int                           | RNG seed for reproducibility         |
+| `stepsPerTransform` | int ≥ 1                       | rate (host steps per cell)           |
+| `voicing`           | `close \| spread \| drop2`    | output voicing                       |
+| `seventh`           | bool                          | add 7th extension                    |
+| `rhythm`            | pattern                       | note trigger pattern                 |
 
 Targets may add parameters (MIDI routing, MPE configuration, etc.) but must
 support this core set for conceptual compatibility.
@@ -175,17 +185,20 @@ support this core set for conceptual compatibility.
 Oedipa has two ancestors:
 
 - **inboil's `generative.ts`** (see `CLAUDE.md` for references) provided the
-  neo-Riemannian engine, P/L/R triad math, and voicing layer. The scene-graph
-  architecture, sheet/dock UI pattern, and inboil's *sequence-driven* traversal
-  (user writes the P/L/R list by hand) do **not** carry over.
+  neo-Riemannian engine, P/L/R triad math, and voicing layer. inboil's variable-
+  length sequence editor and anchor system **do not** carry over — they assume
+  Tonnetz is one node in a scene graph that emits to a clip the user post-edits.
 - **Ornament & Crime's [Automatonnetz](https://ornament-and-cri.me/automatonnetz/)**
-  module provided the *traversal philosophy*: don't ask the user to write a step
-  sequence — let an automaton walk the lattice and give the user a small handle
-  to steer it. Automatonnetz steers via a 2D vector grid modulated by CV;
-  Oedipa steers via a single attractor that a DAW can automate naturally.
+  module provided the *steering philosophy*: don't ask the user to write a long
+  step sequence — author a small repeating program and steer it live with host
+  modulation. Automatonnetz uses a 5×5 grid of chord targets perturbed by CV;
+  Oedipa uses 4 cells of P/L/R/hold ops with each cell exposed as an
+  independently-automatable host parameter, plus seeded `jitter` as the live-
+  randomness equivalent of CV perturbation. The mechanics differ; the design
+  intent (small program + live steering, not long-form authoring) is shared.
 
-inboil itself was sequence-driven. Oedipa diverges here and aligns with
-Automatonnetz: the plugin's value is the autonomous walk, not a fancy step-
-sequencer UI. If the user wants to hand-edit chords, they print Oedipa's output
-to a MIDI clip and edit there — that is the DAW-native workflow Oedipa is
-designed around.
+Standalone MIDI plugins need to be musically sufficient on their own — the
+"print and post-edit" workflow is part of their utility but not their reason
+for existing. Oedipa's cells + jitter + per-cell automation is the minimum
+viable program element that satisfies that bar without becoming a clip-writer
+in disguise.

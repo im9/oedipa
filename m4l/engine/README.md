@@ -44,8 +44,8 @@ vectors file, not into per-target test code.
 
 ## How the M4L device consumes it
 
-The engine is **stateless**. The device holds `WalkState` (start chord,
-sequence, steps-per-transform, anchors) externally and calls
+The engine is **stateless**. The device holds `WalkState` (start chord, cell
+sequence, steps-per-transform, jitter, seed) externally and calls
 `walk(state, pos)` to get the triad at host step `pos`.
 
 ```ts
@@ -53,13 +53,17 @@ import { walk } from './dist/tonnetz.js'
 
 const state = {
   startChord: [60, 64, 67],           // C major
-  sequence: ['P', 'L', 'R'],
+  cells: ['P', 'L', 'R', 'hold'],     // cyclic op program
   stepsPerTransform: 4,
+  jitter: 0,                          // 0..1
+  seed: 0,
 }
 const triad = walk(state, 8)          // triad after 2 transforms
 ```
 
 The host (running in Max's `[node.script]`) emits MIDI from the triad;
 scheduling and note-off discipline live on the Max side. See
-[`../../docs/ai/adr/002-m4l-device-architecture.md`](../../docs/ai/adr/002-m4l-device-architecture.md)
-for the full device architecture.
+[`../../docs/ai/adr/archive/002-m4l-device-architecture.md`](../../docs/ai/adr/archive/002-m4l-device-architecture.md)
+for the full device architecture and
+[`../../docs/ai/adr/003-m4l-parameters-state.md`](../../docs/ai/adr/003-m4l-parameters-state.md)
+for the cell sequencer + jitter design.
