@@ -241,8 +241,8 @@ test vectors get updated alongside.
 - [ ] 4× `live.tab` (4-option) added to [Oedipa.maxpat](../../../m4l/Oedipa.maxpat); dump path firing `setCell <idx> <op>`
 - [ ] `live.dial` `jitter` (0–1, scaled) and `live.numbox` `seed` added; dump path firing `setParams jitter <v>` / `setParams seed <v>`
 - [ ] Per-cell active-step indicator in the device strip (driven by an outlet from host emitting current cellIdx each transform)
-- [ ] Lattice click handler: triangle hit → `setStartChord` (and pattr update)
-- [ ] Lattice logic tests: hit testing (point → triangle), click → triad translation
+- [x] Lattice click handler: triangle hit → `setStartChord`. ([m4l/lattice-renderer.js](../../../m4l/lattice-renderer.js) `onclick`, modifier-free primary-button only; pattr write deferred to Phase 5.)
+- [x] Lattice logic tests: hit testing (point → triangle), click → triad translation. ([m4l/engine/lattice.test.ts](../../../m4l/engine/lattice.test.ts), `computeLayout` / `pointToCell` / `cellToTriad`; engine 118 green.)
 - [ ] Manual: edit cells via device strip → audible walk follows
 - [ ] Manual: jitter sweep (0 → 1) audibly transitions deterministic → random
 - [ ] Manual: automate `cell2` on a clip → walker's cycle evolves over time

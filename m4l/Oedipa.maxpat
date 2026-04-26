@@ -98,7 +98,7 @@
 
             {"box": {"id": "obj-msg-refresh", "maxclass": "message", "text": "latticeRefresh", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [330.0, 130.0, 100.0, 22.0]}},
 
-            {"box": {"id": "obj-jsui", "maxclass": "jsui", "filename": "/Users/tn/src/vst/oedipa/m4l/lattice-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 0, "patching_rect": [130.0, 570.0, 460.0, 120.0], "presentation": 1, "presentation_rect": [8.0, 8.0, 460.0, 120.0]}}
+            {"box": {"id": "obj-jsui", "maxclass": "jsui", "filename": "/Users/tn/src/vst/oedipa/m4l/lattice-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [130.0, 570.0, 460.0, 120.0], "presentation": 1, "presentation_rect": [8.0, 8.0, 460.0, 120.0]}}
         ],
         "lines": [
             {"patchline": {"source": ["obj-midiin", 0], "destination": ["obj-midiout", 0]}},
@@ -162,6 +162,7 @@
             {"patchline": {"source": ["obj-prep-lcenter", 0], "destination": ["obj-jsui", 0]}},
             {"patchline": {"source": ["obj-prep-lcurrent", 0], "destination": ["obj-jsui", 0]}},
             {"patchline": {"source": ["obj-msg-lclear", 0], "destination": ["obj-jsui", 0]}},
+            {"patchline": {"source": ["obj-jsui", 0], "destination": ["obj-nodescript", 0]}},
 
             {"patchline": {"source": ["obj-thisdevice", 0], "destination": ["obj-msg-refresh", 0]}},
             {"patchline": {"source": ["obj-msg-refresh", 0], "destination": ["obj-nodescript", 0]}}

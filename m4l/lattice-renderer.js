@@ -14,7 +14,7 @@
 // observed to choke on UTF-8 in source files.
 
 inlets = 1
-outlets = 0
+outlets = 1
 
 mgraphics.init()
 mgraphics.relative_coords = 0
@@ -22,7 +22,7 @@ mgraphics.autofill = 0
 
 // Startup banner: lets us verify the script actually loaded fresh.
 // If Max cached an older copy, this banner won't appear in the console.
-post('lattice-renderer.js loaded build=2026-04-25-B\n')
+post('lattice-renderer.js loaded build=2026-04-26-click\n')
 
 // Print box dimensions on first paint so we can verify the fit math.
 var debugFirstPaint = true
@@ -82,6 +82,58 @@ function trianglePcs(r, c, kind) {
   return [noteAt(r + 1, c), noteAt(r + 1, c + 1), noteAt(r, c + 1)]
 }
 
+// --- Shared layout (mirrors engine/lattice.ts computeLayout) ---
+
+var SQRT3_OVER_2 = 0.8660254
+var PAD_X = 4
+var PAD_Y = 4
+
+function computeLayoutLocal(w, h) {
+  var spanX = (COLS - 1) + (ROWS - 1) * 0.5
+  var spanY = (ROWS - 1)
+  var triW = Math.min(
+    (w - 2 * PAD_X) / spanX,
+    (h - 2 * PAD_Y) / spanY / SQRT3_OVER_2
+  )
+  var triH = triW * SQRT3_OVER_2
+  return {
+    triW: triW,
+    triH: triH,
+    offsetX: (w - spanX * triW) / 2,
+    offsetY: (h - spanY * triH) / 2
+  }
+}
+
+function pointToCell(px, py, layout) {
+  var rowF = (py - layout.offsetY) / layout.triH
+  var colF = (px - layout.offsetX - rowF * layout.triW * 0.5) / layout.triW
+  var r = Math.floor(rowF)
+  var c = Math.floor(colF)
+  if (r < 0 || r >= ROWS - 1) return null
+  if (c < 0 || c >= COLS - 1) return null
+  var fr = rowF - r
+  var fc = colF - c
+  return { row: r, col: c, kind: (fc + fr < 1) ? 'major' : 'minor' }
+}
+
+function buildTriad(rootPc, isMajor, reference) {
+  var root = Math.floor(reference / 12) * 12 + rootPc
+  if (root - reference > 6) root -= 12
+  if (reference - root > 6) root += 12
+  while (root < 36) root += 12
+  while (root > 84) root -= 12
+  var third = root + (isMajor ? 4 : 3)
+  var fifth = root + 7
+  return [root, third, fifth]
+}
+
+function cellToTriad(r, c, kind) {
+  var pcs = trianglePcs(r, c, kind)
+  var ident = identifyTriad(pcs)
+  if (ident === null) return null
+  return buildTriad(ident.rootPc, ident.isMajor, 60)
+}
+
 function identifyTriad(pcs) {
   for (var i = 0; i < 3; i++) {
     var pc = pcs[i]
@@ -120,22 +172,13 @@ function paint() {
     debugFirstPaint = false
   }
 
-  var padX = 4
-  var padY = 4
-
-  // Equilateral fit: triH = triW * sqrt(3)/2. Lattice is centered in the box
-  // and keeps inboil-style triangle shape; corners may have wedge whitespace,
-  // which is correct for a parallelogram lattice.
-  var SQRT3_OVER_2 = 0.8660254
-  var spanX = (COLS - 1) + (ROWS - 1) * 0.5
-  var spanY = (ROWS - 1)
-  var triW = Math.min(
-    (w - 2 * padX) / spanX,
-    (h - 2 * padY) / spanY / SQRT3_OVER_2
-  )
-  var triH = triW * SQRT3_OVER_2
-  var offsetX = (w - spanX * triW) / 2
-  var offsetY = (h - spanY * triH) / 2
+  // Equilateral fit centered in box; corners may have wedge whitespace, which
+  // is correct for a parallelogram lattice.
+  var layout = computeLayoutLocal(w, h)
+  var triW = layout.triW
+  var triH = layout.triH
+  var offsetX = layout.offsetX
+  var offsetY = layout.offsetY
 
   function vtxX(row, col) { return offsetX + col * triW + row * triW * 0.5 }
   function vtxY(row) { return offsetY + row * triH }
@@ -149,6 +192,24 @@ function paint() {
       drawCell(r, c, 'minor', vtxX, vtxY)
     }
   }
+}
+
+// --- Mouse interaction ---
+//
+// ADR 003 "Lattice UI": modifier-free click sets startChord. No edge clicks,
+// no drag, no anchors.
+
+function onclick(x, y, button, cmd, shift, capslock, option, ctrl) {
+  if (button !== 0) return
+  if (cmd || shift || option || ctrl) return
+  var w = box.rect[2] - box.rect[0]
+  var h = box.rect[3] - box.rect[1]
+  var layout = computeLayoutLocal(w, h)
+  var cell = pointToCell(x, y, layout)
+  if (cell === null) return
+  var triad = cellToTriad(cell.row, cell.col, cell.kind)
+  if (triad === null) return
+  outlet(0, 'setStartChord', triad[0], triad[1], triad[2])
 }
 
 function drawCell(r, c, kind, vtxX, vtxY) {
