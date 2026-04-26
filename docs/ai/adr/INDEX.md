@@ -33,7 +33,7 @@ only when relevant to the current task.
 | #   | Title | Status | Notes |
 |-----|-------|--------|-------|
 | 002 | [M4L Device Architecture](archive/002-m4l-device-architecture.md) | Implemented | Patch / host.js / lattice.js / engine layering; engine loading; MIDI I/O; state ownership |
-| 003 | [M4L Sequencer — Lattice UI & Parameters](003-m4l-parameters-state.md) | Proposed | Lattice is the primary UI; live.* for transport/voice; pattr/dict for walk state |
+| 003 | [M4L Sequencer — Lattice UI & Walk Generation](003-m4l-parameters-state.md) | Proposed | Attractor-driven walker (Automatonnetz-style); lattice click sets attractor, shift+click sets startChord; live.* for transport/voice/attractor/jitter/seed |
 
 ## VST
 

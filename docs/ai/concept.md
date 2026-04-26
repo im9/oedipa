@@ -1,8 +1,8 @@
 # Concept
 
-Oedipa is a Tonnetz-based chord exploration MIDI tool. It walks a neo-Riemannian
-lattice on every clock tick, emitting triads that move through smooth voice-
-leading relationships.
+Oedipa is a Tonnetz-based chord exploration MIDI tool. On each clock tick a
+**walker** traverses a neo-Riemannian lattice toward a user-placed **attractor**,
+emitting triads with smooth voice leading.
 
 This document describes the **musical model** — the parts that are shared across
 all targets (`m4l/`, `vst/`, `app/`). Target-specific UI and interaction design
@@ -12,21 +12,23 @@ live in separate docs.
 
 On each step of the host transport, Oedipa:
 
-1. Applies the next transform in a user-defined **sequence** to the current triad.
-2. Advances by one position on the Tonnetz lattice.
-3. Emits the resulting chord as MIDI notes, shaped by voicing and rhythm settings.
+1. Looks at the walker's current triad and the user-set **attractor** triad on the
+   lattice.
+2. Picks the next P / L / R operation that tends to move the walker closer to the
+   attractor, with **jitter** controlling how often it deviates.
+3. Emits the resulting chord as MIDI notes, shaped by voicing settings.
 
-The user shapes the output by defining the transform sequence, the rate, the
-voicing, and optional anchor points. The Tonnetz handles harmony; the user handles
-motion.
+The user shapes the output by placing and moving the attractor (manually or via
+host automation), tuning jitter, and choosing voicing. The Tonnetz handles
+harmony and voice leading; the user steers the walker.
 
 ## Musical model
 
 ### Tonnetz lattice
 
-The Tonnetz is a 2D triangular lattice where each vertex is a triad (major △ or
-minor ▽) and adjacent vertices are connected by one of three transforms. Major
-and minor triads alternate — any single transform flips the quality.
+The Tonnetz is a 2D triangular lattice where each face is a triad (major △ or
+minor ▽) and adjacent faces are connected by one of three transforms. Major and
+minor triads alternate — any single transform flips the quality.
 
 ### Neo-Riemannian transforms
 
@@ -51,20 +53,32 @@ identify the triad's pitch classes, apply the transform in pitch-class space, th
 reconstruct the nearest realization to the current voicing. This preserves octave
 proximity and avoids large jumps.
 
-### Traversal
+### Traversal — attractor-driven walk
 
-Traversal is **deterministic and sequence-driven**, not random. The user specifies
-an ordered list of transforms (e.g. `[P, L, R, L]`) which is applied cyclically.
-This makes the output reproducible and musically intentional — randomness, if
-desired, is a layer on top, not the core behavior.
+At each transform step, the walker has three candidates: the P, L, and R
+neighbors of the current triad. Lattice distance from each candidate to the
+attractor is computed, and the walker picks among them by a probabilistic rule:
+
+- **jitter = 0**: greedy — always pick the candidate with smallest distance to
+  the attractor (ties broken deterministically by seed).
+- **jitter = 1**: uniform random — distance is ignored.
+- **intermediate**: probabilistic preference for nearer candidates (softmax-style;
+  the engine fixes the exact formula and asserts it via shared test vectors).
+
+When the walker has reached the attractor (current triad equals attractor), it
+stays put until either the attractor moves or jitter perturbs it to an adjacent
+triangle.
+
+If `attractor` is unset, it defaults to `startChord` — the walker holds the start
+chord (with jitter optionally drifting it).
+
+The walk is **reproducible**: for fixed (`startChord`, attractor trajectory,
+`jitter`, `seed`), restarting playback from any position yields the same output.
+Randomness is seeded; the seed is a parameter, not a hidden runtime detail.
 
 **Rate**: `stepsPerTransform` controls how many host steps each chord is held
 before the next transform fires. Rate = 1 yields a moving chord every step
 (O&C / arpeggio feel). Rate = 4–16 yields a pad-style progression.
-
-**Anchors**: optional (step-index, triad) pairs that override the generative walk
-at specific positions. This allows mixing free traversal with fixed harmonic
-landmarks — e.g. "start on C, reach F minor at bar 4, otherwise walk freely."
 
 ## Output model
 
@@ -81,8 +95,8 @@ Further extensions (9/11/13) are out of scope for v1.
 
 ### Rhythm
 
-Rhythm is decoupled from the transform sequence. The transform sequence defines
-*which chords*; the rhythm pattern defines *when notes play*:
+Rhythm is decoupled from the walker. The walker decides *which chords*; the
+rhythm pattern decides *when notes play*:
 
 - **all** — notes on every step
 - **legato** — notes held until the next chord boundary
@@ -94,11 +108,15 @@ Oedipa is a MIDI effect: it consumes transport (clock + position) and emits MIDI
 notes. Sample-accurate timing against the host clock is expected on all targets
 (M4L's scheduler, JUCE's `MidiBuffer` with sample offsets).
 
-**Input handling** is a target-level design choice — some targets may use input
-to seed the start chord, others may ignore it. Not part of the core concept.
+**Input handling** is a target-level design choice. The canonical use case is
+**incoming notes update `startChord`** — the user plays a chord, the walker
+restarts from there and steers toward the current attractor. Targets that have
+no notion of MIDI input may omit this.
 
-**Velocity source** — v1 uses a single fixed velocity parameter per chord.
-Rhythm-pattern-driven or input-derived velocity are future extensions.
+**Velocity source** — v1 uses incoming MIDI note velocity when input is wired
+(passthrough), and a fixed default (100) otherwise. A single static velocity
+parameter is intentionally not exposed: a one-knob "all chords play at 100" is
+musically blunt, and the input passthrough path is the design we want.
 
 **MIDI channel** — output channel is a target-level parameter (default 1).
 
@@ -111,8 +129,8 @@ released *before* new notes-on, in the same processing block. No intentional
 overlap in v1 (can be revisited if legato-style voice leading becomes a goal).
 
 **Transport** — state is reset on stop; resuming from an arbitrary position
-recomputes the walk deterministically from `startChord` + position, so the output
-is identical regardless of where playback begins.
+recomputes the walk deterministically from `startChord` + attractor + seed +
+position, so the output is identical regardless of where playback begins.
 
 **MPE** — not supported in v1. The Tonnetz lattice has natural per-note
 articulation potential (pitch bend from lattice position, pressure from voicing
@@ -124,34 +142,50 @@ emission layer abstract enough that MPE can be added without rewriting.
 
 Clarifying scope by exclusion:
 
-- **Not a chord sequencer.** The user does not enter a list of chords; they enter
-  a list of transforms. Chords emerge from the walk.
+- **Not a chord sequencer.** The user does not enter a list of chords or a list
+  of transforms; they place an attractor and let the walker steer toward it.
 - **Not a generative synth.** No oscillators, no audio. MIDI only.
 - **Not a scene graph.** The inboil origin embeds Tonnetz inside a broader
-  generative-node architecture. Oedipa flattens this: one Tonnetz, one output.
-- **Not a randomizer.** Sequences are deterministic; anchors are explicit. Any
-  randomness is opt-in on top of the deterministic base.
+  generative-node architecture. Oedipa flattens this: one Tonnetz, one walker,
+  one output.
+- **Not an unseeded random walker.** The walk is reproducible for fixed
+  (startChord, attractor, jitter, seed). "Random" here means "seeded
+  pseudorandom that the user can lock down and print to a clip."
 
 ## Parameter surface (canonical)
 
 The minimum parameter set each target must expose:
 
-| Parameter         | Type                              | Notes                         |
-|-------------------|-----------------------------------|-------------------------------|
-| `startChord`      | triad                             | initial lattice position      |
-| `sequence`        | `[P \| L \| R, …]`                | transform cycle               |
-| `stepsPerTransform` | int ≥ 1                         | rate                          |
-| `voicing`         | `close \| spread \| drop2`        | output voicing                |
-| `seventh`         | bool                              | add 7th extension             |
-| `rhythm`          | pattern                           | note trigger pattern          |
-| `anchors`         | `[(step, triad), …]`              | optional fixed landmarks      |
+| Parameter           | Type                       | Notes                                |
+|---------------------|----------------------------|--------------------------------------|
+| `startChord`        | triad                      | walker's initial triad               |
+| `attractor`         | triad                      | target the walker steers toward      |
+| `jitter`            | float 0..1                 | greedy ↔ uniform-random mix          |
+| `seed`              | int                        | RNG seed for reproducibility         |
+| `stepsPerTransform` | int ≥ 1                    | rate (host steps per transform)      |
+| `voicing`           | `close \| spread \| drop2` | output voicing                       |
+| `seventh`           | bool                       | add 7th extension                    |
+| `rhythm`            | pattern                    | note trigger pattern                 |
 
 Targets may add parameters (MIDI routing, MPE configuration, etc.) but must
 support this core set for conceptual compatibility.
 
 ## Origin notes
 
-The musical model is adapted from inboil's `generative.ts` (see `CLAUDE.md`
-for references). The neo-Riemannian engine, per-step transform paradigm, and
-voicing layer carry over. The scene-graph architecture, sheet/dock UI pattern,
-and auxiliary features (write/live mode, freeze, merge modes) do not.
+Oedipa has two ancestors:
+
+- **inboil's `generative.ts`** (see `CLAUDE.md` for references) provided the
+  neo-Riemannian engine, P/L/R triad math, and voicing layer. The scene-graph
+  architecture, sheet/dock UI pattern, and inboil's *sequence-driven* traversal
+  (user writes the P/L/R list by hand) do **not** carry over.
+- **Ornament & Crime's [Automatonnetz](https://ornament-and-cri.me/automatonnetz/)**
+  module provided the *traversal philosophy*: don't ask the user to write a step
+  sequence — let an automaton walk the lattice and give the user a small handle
+  to steer it. Automatonnetz steers via a 2D vector grid modulated by CV;
+  Oedipa steers via a single attractor that a DAW can automate naturally.
+
+inboil itself was sequence-driven. Oedipa diverges here and aligns with
+Automatonnetz: the plugin's value is the autonomous walk, not a fancy step-
+sequencer UI. If the user wants to hand-edit chords, they print Oedipa's output
+to a MIDI clip and edit there — that is the DAW-native workflow Oedipa is
+designed around.
