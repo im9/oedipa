@@ -238,8 +238,8 @@ test vectors get updated alongside.
 
 ### Phase 4 — Cell sequencer wiring + lattice click
 
-- [ ] 4× `live.tab` (4-option) added to [Oedipa.maxpat](../../../m4l/Oedipa.maxpat); dump path firing `setCell <idx> <op>`
-- [ ] `live.dial` `jitter` (0–1, scaled) and `live.numbox` `seed` added; dump path firing `setParams jitter <v>` / `setParams seed <v>`
+- [x] 4× `live.tab` (4-option) added to [Oedipa.maxpat](../../../m4l/Oedipa.maxpat); dump path firing `setCell <idx> <op>` (devicewidth 608→880; sep2 jsui + presentation column at x=626..866; voicing-style sel→msg→nodescript chain per cell; defaults P/L/R/—)
+- [x] `live.dial` `jitter` (0–1, float) and `live.numbox` `seed` (0–99999, int) added; dump path firing `setParams jitter <v>` / `setParams seed <v>`
 - [ ] Per-cell active-step indicator in the device strip (driven by an outlet from host emitting current cellIdx each transform)
 - [x] Lattice click handler: triangle hit → `setStartChord`. ([m4l/lattice-renderer.js](../../../m4l/lattice-renderer.js) `onclick`, modifier-free primary-button only; pattr write deferred to Phase 5.)
 - [x] Lattice logic tests: hit testing (point → triangle), click → triad translation. ([m4l/engine/lattice.test.ts](../../../m4l/engine/lattice.test.ts), `computeLayout` / `pointToCell` / `cellToTriad`; engine 118 green.)
