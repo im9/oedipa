@@ -52,12 +52,16 @@ function emit(ev) {
 }
 
 function emitLatticeCenter() {
-  // Send centerPc + startChord pcs so the renderer can mark the startChord
-  // triangle (it sits at a centerPc-derived position, but quality (major/minor)
-  // and the exact pc set are not derivable from centerPc alone).
+  // Send a FIXED viewport pc + startChord pcs. The renderer's viewport center
+  // is intentionally decoupled from startChord — clicking a cell moves the
+  // marker to that cell instead of rotating the whole lattice around the
+  // startChord (the rotating behavior fit inboil's richer visual lattice but
+  // makes Oedipa's simpler one feel inert under interaction). host.centerPc
+  // remains the musical "tonal center" (= startChord root) for any future
+  // consumers; it just isn't the viewport anchor.
   const sc = host.startChord
   const mod12 = (n) => ((n % 12) + 12) % 12
-  Max.outlet('lattice-center', host.centerPc, mod12(sc[0]), mod12(sc[1]), mod12(sc[2]))
+  Max.outlet('lattice-center', 0, mod12(sc[0]), mod12(sc[1]), mod12(sc[2]))
 }
 
 function emitLatticeCurrent() {
@@ -102,7 +106,13 @@ Max.addHandler('setParams', (key, value) => {
 })
 
 Max.addHandler('setStartChord', (p1, p2, p3) => {
-  host.setParams({ startChord: [Number(p1), Number(p2), Number(p3)] })
+  const a = Number(p1), b = Number(p2), c = Number(p3)
+  // Guard against corrupt rehydrate (e.g., uninitialized pattrs emitting 0).
+  // A real triad never has all three pitches at MIDI 0; treat that pattern
+  // as a "no value yet" signal and keep the host's current startChord.
+  if (a === 0 && b === 0 && c === 0) return
+  if (Number.isNaN(a) || Number.isNaN(b) || Number.isNaN(c)) return
+  host.setParams({ startChord: [a, b, c] })
   emitLatticeCenter()
 })
 
@@ -118,3 +128,9 @@ Max.addHandler('latticeRefresh', () => {
   emitLatticeCenter()
   emitLatticeCurrent()
 })
+
+// Signal the patcher that node.script is up and all handlers are registered.
+// The patcher gates its initial param dump cascade (live.* + pattr rehydrate)
+// on this so messages don't arrive before this script can handle them —
+// see docs/ai/adr/003-m4l-parameters-state.md "Rehydration order".
+Max.outlet('hostReady', 1)

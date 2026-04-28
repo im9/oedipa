@@ -236,10 +236,29 @@ function paint() {
   // No bg paint — let device strip show through, so lattice doesn't read
   // as a contained box (Ableton native devices don't use sub-panels).
 
+  // Painted in 4 passes so the startCell's accent border isn't clipped by
+  // the default 1px strokes of adjacent cells along shared edges. Single-pass
+  // draws (fill+stroke per cell) caused the gray accent to look chewed up
+  // wherever it bordered another cell drawn later in the loop.
   for (var r = 0; r < ROWS - 1; r++) {
     for (var c = 0; c < COLS - 1; c++) {
-      drawCell(r, c, 'major', vtxX, vtxY)
-      drawCell(r, c, 'minor', vtxX, vtxY)
+      drawCellFill(r, c, 'major', vtxX, vtxY)
+      drawCellFill(r, c, 'minor', vtxX, vtxY)
+    }
+  }
+  for (var r = 0; r < ROWS - 1; r++) {
+    for (var c = 0; c < COLS - 1; c++) {
+      drawCellStroke(r, c, 'major', vtxX, vtxY, /*accent*/ false)
+      drawCellStroke(r, c, 'minor', vtxX, vtxY, /*accent*/ false)
+    }
+  }
+  if (startCell !== null && !cellEq(startCell, currentCell)) {
+    drawCellStroke(startCell.row, startCell.col, startCell.kind, vtxX, vtxY, /*accent*/ true)
+  }
+  for (var r = 0; r < ROWS - 1; r++) {
+    for (var c = 0; c < COLS - 1; c++) {
+      drawCellLabel(r, c, 'major', vtxX, vtxY)
+      drawCellLabel(r, c, 'minor', vtxX, vtxY)
     }
   }
 }
@@ -250,7 +269,10 @@ function paint() {
 // no drag, no anchors.
 
 function onclick(x, y, button, cmd, shift, capslock, option, ctrl) {
-  if (button !== 0) return
+  // Max 8 jsui: button=1 is the primary (left) mouse button. Reject anything
+  // else (right-click, middle-click) so context menus etc. don't trigger
+  // startChord changes.
+  if (button !== 1) return
   if (cmd || shift || option || ctrl) return
   var w = box.rect[2] - box.rect[0]
   var h = box.rect[3] - box.rect[1]
@@ -262,33 +284,33 @@ function onclick(x, y, button, cmd, shift, capslock, option, ctrl) {
   outlet(0, 'setStartChord', triad[0], triad[1], triad[2])
 }
 
-function drawCell(r, c, kind, vtxX, vtxY) {
-  var v
+function cellVertices(r, c, kind, vtxX, vtxY) {
   if (kind === 'major') {
-    v = [
+    return [
       [vtxX(r, c), vtxY(r)],
       [vtxX(r, c + 1), vtxY(r)],
       [vtxX(r + 1, c), vtxY(r + 1)]
     ]
-  } else {
-    v = [
-      [vtxX(r + 1, c), vtxY(r + 1)],
-      [vtxX(r + 1, c + 1), vtxY(r + 1)],
-      [vtxX(r, c + 1), vtxY(r)]
-    ]
   }
+  return [
+    [vtxX(r + 1, c), vtxY(r + 1)],
+    [vtxX(r + 1, c + 1), vtxY(r + 1)],
+    [vtxX(r, c + 1), vtxY(r)]
+  ]
+}
 
-  var pcs = trianglePcs(r, c, kind)
-  var ident = identifyTriad(pcs)
-  var thisCell = { row: r, col: c, kind: kind }
-  var isCurrent = cellEq(thisCell, currentCell)
-  var isStart = cellEq(thisCell, startCell)
-
-  // Fill
+function pathTriangle(v) {
   mgraphics.move_to(v[0][0], v[0][1])
   mgraphics.line_to(v[1][0], v[1][1])
   mgraphics.line_to(v[2][0], v[2][1])
   mgraphics.close_path()
+}
+
+function drawCellFill(r, c, kind, vtxX, vtxY) {
+  var v = cellVertices(r, c, kind, vtxX, vtxY)
+  var thisCell = { row: r, col: c, kind: kind }
+  var isCurrent = cellEq(thisCell, currentCell)
+  pathTriangle(v)
   if (isCurrent) {
     mgraphics.set_source_rgba(0.976, 0.655, 0.129, 1) // Live orange
   } else if (kind === 'major') {
@@ -297,37 +319,39 @@ function drawCell(r, c, kind, vtxX, vtxY) {
     mgraphics.set_source_rgba(0.275, 0.275, 0.275, 1) // slightly darker for minor
   }
   mgraphics.fill()
+}
 
-  // Stroke (default black 1px). For startChord cells (when not also the
-  // walker's current cell) overdraw with a slightly thicker, lighter line so
-  // the user can see the "rest position" even when the walker has moved away.
-  mgraphics.move_to(v[0][0], v[0][1])
-  mgraphics.line_to(v[1][0], v[1][1])
-  mgraphics.line_to(v[2][0], v[2][1])
-  mgraphics.close_path()
-  if (isStart && !isCurrent) {
-    mgraphics.set_source_rgba(0.78, 0.78, 0.78, 1) // light gray accent
+function drawCellStroke(r, c, kind, vtxX, vtxY, accent) {
+  var v = cellVertices(r, c, kind, vtxX, vtxY)
+  pathTriangle(v)
+  if (accent) {
+    mgraphics.set_source_rgba(0.78, 0.78, 0.78, 1) // light gray startChord accent
     mgraphics.set_line_width(2)
   } else {
     mgraphics.set_source_rgba(0, 0, 0, 1)
     mgraphics.set_line_width(1)
   }
   mgraphics.stroke()
+}
 
-  // Label
-  if (ident !== null) {
-    var label = NOTE_NAMES[ident.rootPc] + (ident.isMajor ? '' : 'm')
-    var cx = (v[0][0] + v[1][0] + v[2][0]) / 3
-    var cy = (v[0][1] + v[1][1] + v[2][1]) / 3
-    if (isCurrent) {
-      mgraphics.set_source_rgba(0.078, 0.078, 0.078, 1) // dark text on orange
-    } else {
-      mgraphics.set_source_rgba(0.784, 0.784, 0.784, 1) // light gray text
-    }
-    mgraphics.select_font_face('Arial')
-    mgraphics.set_font_size(11)
-    var ext = mgraphics.text_measure(label)
-    mgraphics.move_to(cx - ext[0] / 2, cy + ext[1] * 0.35)
-    mgraphics.show_text(label)
+function drawCellLabel(r, c, kind, vtxX, vtxY) {
+  var v = cellVertices(r, c, kind, vtxX, vtxY)
+  var pcs = trianglePcs(r, c, kind)
+  var ident = identifyTriad(pcs)
+  if (ident === null) return
+  var thisCell = { row: r, col: c, kind: kind }
+  var isCurrent = cellEq(thisCell, currentCell)
+  var label = NOTE_NAMES[ident.rootPc] + (ident.isMajor ? '' : 'm')
+  var cx = (v[0][0] + v[1][0] + v[2][0]) / 3
+  var cy = (v[0][1] + v[1][1] + v[2][1]) / 3
+  if (isCurrent) {
+    mgraphics.set_source_rgba(0.078, 0.078, 0.078, 1) // dark text on orange
+  } else {
+    mgraphics.set_source_rgba(0.784, 0.784, 0.784, 1) // light gray text
   }
+  mgraphics.select_font_face('Arial')
+  mgraphics.set_font_size(11)
+  var ext = mgraphics.text_measure(label)
+  mgraphics.move_to(cx - ext[0] / 2, cy + ext[1] * 0.35)
+  mgraphics.show_text(label)
 }

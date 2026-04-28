@@ -73,16 +73,18 @@ the intended source (concept.md "Velocity source"; wired in ADR 004).
 
 ### Group C — Walk generation
 
-| Param        | Type                                   | Range  | Surface                        |
-|--------------|----------------------------------------|--------|--------------------------------|
-| `startChord` | triad                                  | —      | lattice (click) + pattr        |
-| `cells`      | `('P' \| 'L' \| 'R' \| 'hold')[]` (4)  | enum   | 4× `live.tab` (4-option each)  |
-| `jitter`     | float                                  | 0–1    | `live.dial`                    |
-| `seed`       | int                                    | 0–2³¹−1| `live.numbox`                  |
+| Param        | Type                                   | Range  | Surface                                  |
+|--------------|----------------------------------------|--------|------------------------------------------|
+| `startChord` | triad                                  | —      | lattice (click) + 3× hidden `live.numbox`|
+| `cells`      | `('P' \| 'L' \| 'R' \| 'hold')[]` (4)  | enum   | 4× `live.tab` (4-option each)            |
+| `jitter`     | float                                  | 0–1    | `live.dial`                              |
+| `seed`       | int                                    | 0–2³¹−1| `live.numbox`                            |
 
 `startChord` is the walker's starting triad. Set once at session start
 (typically from incoming MIDI per ADR 004; via lattice click as the manual
-fallback). Not directly automatable; persisted via `pattr`.
+fallback). Persisted as three hidden `live.numbox` parameters (one per
+pitch); see "State ownership & persistence" for why this won out over the
+originally-planned `pattr` approach.
 
 `cells` is the program. Default `['P', 'L', 'R', 'hold']` — exercises every op
 once, lands on a hold each cycle so motion has a pulse. Each cell is exposed
@@ -113,10 +115,24 @@ C# minor, G# minor — without a matching cell, so the playhead silently
 vanished when the walker visited those chords. Bumping rows to 4 (3
 row-bands) gives every Tonnetz triad at least one viewport cell.
 
+**Viewport center is fixed (centerPc = 0)**, independent of `startChord`.
+Earlier Phase 2 wiring sent `host.centerPc` (= `startChord[0] % 12`) to the
+renderer, so the lattice rotated whenever startChord changed and clicked
+chords always landed near the visual center. Inboil's richer multi-layer
+visualization made that rotation legible; Oedipa's lattice is sparse enough
+that rotation reads as "clicks don't do anything" — every triangle ends up
+near the middle. With a fixed viewport, clicking a cell moves the gray
+startChord marker to that cell, which is the interaction the simpler
+visual affords. `host.centerPc` is kept as an API (the musical tonal
+center) but is no longer the viewport anchor — `emitLatticeCenter` sends
+a hard-coded `0` (see [m4l/host/index.js](../../../m4l/host/index.js)).
+
 **Interactions** (revised — minimal):
 
 - **Click a triangle** → set `startChord` to that triad. Writes via
-  `setStartChord` and the pattr-backed dict. (Modifier-free; no attractor to
+  `setStartChord` directly to the host (immediate response) and in parallel
+  through the persistence triplet (`unpack 0 0 0` → 3 hidden `live.numbox`)
+  so the change survives save/reopen. (Modifier-free; no attractor to
   conflict with.)
 - **No edge clicks. No drag. No anchor pinning.** The lattice is primarily a
   *visualization*; cell editing happens in the device strip.
@@ -157,16 +173,41 @@ device-strip horizontal budget will decide.
 ### State ownership & persistence
 
 - **Group A + B + Group C `cells*` / `jitter` / `seed`** — `live.*`. Persisted
-  by Live automatically; restored on device load via the existing
-  `live.thisdevice` outlet 0 → dump → `setParams <key>` chain.
-- **Group C `startChord`** — not representable as `live.*` (no native Live
-  equivalent for "a triad"). Stored in a Max `dict` scoped to the device,
-  bridged to Live's preset storage via `pattr`. On load, `pattr` fires the
-  serialized startChord into `setStartChord`.
+  by Live automatically; restored on device load via the dump cascade gated
+  on `hostReady` (see Rehydration order below).
+- **Group C `startChord`** — three hidden `live.numbox` parameters
+  (`OedipaScRoot` / `OedipaScThird` / `OedipaScFifth`, each `parameter_type 1`,
+  `parameter_initial 60/64/67`, `parameter_visible 0`). The original ADR
+  text proposed a Max `dict` + `pattr` bridge; that was implemented but
+  values weren't actually saved with the Live set even with `autopattr
+  @greedy 1`, and pattr's positional list defaults didn't survive
+  uninitialized-bang either. Three plain `live.numbox` parameters use the
+  same battle-tested save/restore path as `cells` / `jitter` / `seed`,
+  remove the special-case dict/pattr machinery, and "just work".
+  `parameter_visible 0` keeps them out of the user-facing parameter view
+  so the strip still presents `startChord` as set-via-click rather than as
+  an automatable parameter (see "Automation & Push" for the trade-off).
 
-Rehydration order: all params must land in `host` before the first transport
-tick. `live.thisdevice` outlet 0 sequences the live.* dumps; `pattr` follows.
-Gate `step` on a `paramsReady` flag if a race appears in practice.
+Rehydration order: node.script (`m4l/host/index.js`) emits a `hostReady 1`
+message after all `Max.addHandler` registrations are in place. The patcher
+routes that through `route hostReady` → `t b`, and the bang fans out to all
+`live.*` params (Group A/B + cells/jitter/seed) plus the startChord-rehydrate
+trigger (`t b b b` → bang the 3 `live.numbox` in reverse order so the
+leftmost `pack 0 0 0` inlet fires last and emits a single combined triad to
+`prepend setStartChord`). This avoids a real race we observed: live.thisdevice
+outlet 0 fires before `[node.script]` finishes loading, so the dump cascade
+attached directly to `live.thisdevice` reached node.script when it was still
+"not ready". Routing the cascade through `hostReady` instead of
+`live.thisdevice` outlet 0 guarantees node.script can handle every dumped
+message. Transport ticks are independently gated on `live.observer is_playing`,
+so user pressing Play happens well after host-ready in practice and no
+`paramsReady` flag on `step` is needed.
+
+The host also defends against corrupt rehydrate input: `setStartChord 0 0 0`
+(or any NaN) is treated as a no-op rather than overwriting startChord. This
+is a stopgap from an earlier pattr iteration where uninitialized pattrs
+emitted 0 and corrupted the host's startChord; now obsolete with live.numbox
+defaults but kept as a cheap safety net.
 
 ### Message protocol (Max → host)
 
@@ -182,7 +223,14 @@ Removed from prior revisions: `setSequence`, `setAnchors`, `setAttractor`.
 
 Group A, Group B, and most of Group C (`cell0..cell3`, `jitter`, `seed`) are
 automatable by default — they are `live.*`. `startChord` is structural (set
-once per session, then driven by MIDI input) and not automatable.
+once per session, then driven by MIDI input) and not directly automatable
+in practice: its three persistence `live.numbox` parameters are
+`parameter_visible 0`, which keeps them out of the device's parameter list
+(the M-mode mapping view) and out of clip automation lanes. They are still
+technically Live parameters under the hood — a determined user could surface
+them via Push's "all parameters" view or via Max API inspection — but no
+ordinary workflow exposes them, and the click-the-lattice surface is the
+only shape the UI presents for this control.
 
 The musically significant automation handle is **a single cell** — automating
 `cell2`, say, gives the user a slowly-rotating "what's the third op of the
@@ -197,7 +245,7 @@ The cell schema is intentionally small. Two natural extensions are deferred:
   ("distance" along a P/L/R axis). Schema-additive; existing data migrates
   with `count = 1`.
 - **(dx, dy, flip)** vector cells — full Automatonnetz-style spatial program.
-  Schema-replacing; would version the pattr-backed state and sit alongside the
+  Schema-replacing; would version the persisted state and sit alongside the
   current op cells via a discriminated union.
 
 Neither is in scope for v1. Revisit only if the simple op cells prove
@@ -211,7 +259,7 @@ musically thin in real use.
 - Host API change: `HostParams` adopts the new shape
 - Lattice click → `startChord` (no modifier)
 - Cell sequencer UI in the device strip (4× live.tab + dial + numbox)
-- Persistence: Group C live.* automatic, `startChord` via pattr
+- Persistence: Group C live.* automatic, `startChord` via 3 hidden `live.numbox`
 - Shared test vectors updated to the new walk semantics
 
 **Out of scope (future ADRs):**
@@ -266,9 +314,43 @@ test vectors get updated alongside.
 
 ### Phase 5 — startChord persistence
 
-- [ ] `pattr` + `dict` wired for `startChord` only
-- [ ] `live.thisdevice` outlet 0 sequences live.* dumps then `pattr` rehydrate before transport ticks
-- [ ] Manual: save set with non-default startChord and cell automation, reopen, confirm both restored
+Originally specified as `pattr` + `dict` bridged to Live's preset storage.
+Implemented and discarded after iteration: a list-typed `pattr` returned bad
+emissions on uninitialized bang, three int-typed pattrs with positional
+defaults didn't honor those defaults, and `autopattr @greedy 1` did not
+actually save pattr values to the Live set in this M4L environment. Settled
+on three hidden `live.numbox` parameters — same save/restore mechanism as
+the rest of the device's `live.*` state, no special machinery needed.
+Verified end-to-end via save/close/reopen with both startChord and a
+cell-automation clip.
+
+- [x] Three hidden `live.numbox` parameters (`OedipaScRoot` /
+  `OedipaScThird` / `OedipaScFifth`, `parameter_initial 60/64/67`,
+  `parameter_visible 0`) added to [Oedipa.maxpat](../../../m4l/Oedipa.maxpat).
+  Click path: `jsui → route setStartChord → unpack 0 0 0 → 3 live.numbox`
+  (each stores and emits) → `pack 0 0 0` → `prepend setStartChord` →
+  nodescript. Rehydrate path: `trig-hostready → t b b b → 3 live.numbox`
+  (banged in reverse so leftmost pack inlet fires last) → same `pack` →
+  `prepend setStartChord` → nodescript.
+- [x] Dump cascade gated on `hostReady` instead of `live.thisdevice` outlet
+  0. node.script's [host/index.js](../../../m4l/host/index.js) emits
+  `Max.outlet('hostReady', 1)` after all handlers are registered; the
+  patcher routes that through `route hostReady → t b` to fan out to all
+  `live.*` params (Group A/B + cells/jitter/seed) and the startChord
+  rehydrate trigger. This fixes the pre-existing race where
+  `live.thisdevice` outlet 0 fired before the node.script subprocess was
+  ready, so the very first dump landed in a "not ready" state. The host
+  additionally guards against `setStartChord 0 0 0` and NaN args (defensive
+  no-op) — leftover from an earlier pattr iteration but cheap to keep.
+- [x] Manual: saved set with non-default startChord (e.g. F#) plus a cell
+  automation clip; closed and reopened the set; both startChord marker and
+  cell automation restored as expected.
+
+The Lattice UI section's other Phase 5–era refinements (fixed viewport
+center, three-pass startCell border draw to avoid stroke-overlap chewing
+the gray accent) are also in this drop; see "Lattice UI — interaction
+model" and the renderer in
+[m4l/lattice-renderer.js](../../../m4l/lattice-renderer.js).
 
 ### Phase 6 — Cleanup
 
@@ -281,12 +363,9 @@ test vectors get updated alongside.
 1. **PRNG choice** — mulberry32 chosen; small, seedable, decent statistical
    properties. Lock the exact algorithm via shared test vectors so vst/app
    match bit-for-bit.
-2. **Cell layout in the device strip** — 1×4 row vs 2×2 grid. Decide during
-   Phase 4 with the actual horizontal budget in front of you.
-3. **Active-cell indicator transport** — the host already knows the current
-   transformIdx. Cleanest is a dedicated outlet from `[node.script]` emitting
-   `cellIdx <n>` each transform, routed to a row of LEDs. Confirm during
-   Phase 4 whether a simpler `pattr`-bound int suffices.
+2. **Cell layout in the device strip** — settled during Phase 4 as a 2×2
+   grid (top row cells 0/1, bottom row cells 2/3) with the active-step LED
+   row directly above each cell.
 
 ## Per-target notes
 
