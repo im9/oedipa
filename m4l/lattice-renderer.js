@@ -22,15 +22,16 @@ mgraphics.autofill = 0
 
 // Startup banner: lets us verify the script actually loaded fresh.
 // If Max cached an older copy, this banner won't appear in the console.
-post('lattice-renderer.js loaded build=2026-04-28-closest-and-startmark\n')
+post('lattice-renderer.js loaded build=2026-04-28-rows4\n')
 
 // Print box dimensions on first paint so we can verify the fit math.
 var debugFirstPaint = true
 
 var COLS = 7
-var ROWS = 3
+var ROWS = 4 // 3 row-bands; rows=3 left E/A major and C#/G# minor with no
+             // matching cell, making the playhead vanish for those chords
 var CC = Math.floor(COLS / 2) // 3
-var CR = Math.floor(ROWS / 2) // 1
+var CR = Math.floor(ROWS / 2) // 2
 
 var NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 

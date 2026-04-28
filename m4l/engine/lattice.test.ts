@@ -161,6 +161,44 @@ describe('findTriadCell', () => {
   })
 })
 
+describe('viewport coverage', () => {
+  // The renderer uses a 7×4 vertex viewport (3 row-bands) because the smaller
+  // 7×3 (2 row-bands) leaves four triads — E major, A major, C# minor,
+  // G# minor — without a matching cell. When the walker visited those chords,
+  // the playhead simply vanished. With rows=4 every Tonnetz triad has at
+  // least one viewport cell; closest-match collapses any duplicates to one
+  // highlight.
+
+  function allTriads(): Triad[] {
+    const out: Triad[] = []
+    for (let root = 0; root < 12; root++) {
+      out.push([60 + root, 64 + root, 67 + root] as Triad) // major
+      out.push([60 + root, 63 + root, 67 + root] as Triad) // minor
+    }
+    return out
+  }
+
+  test('rows=4 covers all 24 triads', () => {
+    const cfg: LatticeConfig = { cols: 7, rows: 4, centerPc: 0 }
+    for (const triad of allTriads()) {
+      assert.ok(
+        findTriadCell(triad, cfg) !== null,
+        `triad [${triad.join(', ')}] missing from rows=4 viewport`,
+      )
+    }
+  })
+
+  test('rows=3 misses E major, A major, C# minor, G# minor (regression doc)', () => {
+    // Documents the bug that motivated rows=3 → 4. If a future change brings
+    // rows=3 back, this test reminds why it broke playhead visibility.
+    const cfg: LatticeConfig = { cols: 7, rows: 3, centerPc: 0 }
+    assert.equal(findTriadCell([64, 68, 71] as Triad, cfg), null) // E major
+    assert.equal(findTriadCell([69, 73, 76] as Triad, cfg), null) // A major
+    assert.equal(findTriadCell([61, 64, 68] as Triad, cfg), null) // C# minor
+    assert.equal(findTriadCell([68, 71, 75] as Triad, cfg), null) // G# (Ab) minor
+  })
+})
+
 describe('lattice ↔ engine consistency', () => {
   // ADR 003: the three edges of a triangle correspond to P/L/R transforms
   // by way of which neighboring (flipped) triangle they share.
