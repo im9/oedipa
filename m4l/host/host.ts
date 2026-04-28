@@ -64,6 +64,10 @@ export class Host {
     return ((this.params.startChord[0] % 12) + 12) % 12
   }
 
+  get startChord(): Triad {
+    return this.params.startChord
+  }
+
   step(pos: number): NoteEvent[] {
     const { startChord, cells, stepsPerTransform, jitter, seed, voicing, seventh, velocity, channel } = this.params
     const walkState: WalkState = { startChord, cells, stepsPerTransform, jitter, seed }

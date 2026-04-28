@@ -22,7 +22,7 @@ mgraphics.autofill = 0
 
 // Startup banner: lets us verify the script actually loaded fresh.
 // If Max cached an older copy, this banner won't appear in the console.
-post('lattice-renderer.js loaded build=2026-04-26-click\n')
+post('lattice-renderer.js loaded build=2026-04-28-closest-and-startmark\n')
 
 // Print box dimensions on first paint so we can verify the fit math.
 var debugFirstPaint = true
@@ -36,6 +36,16 @@ var NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B
 
 var centerPc = 0
 var currentPcs = null // [pc, pc, pc] or null
+var startPcs = null // [pc, pc, pc] or null
+
+// Resolved single cells (closest-to-center match for currentPcs / startPcs).
+// Recomputed whenever centerPc, currentPcs, or startPcs change. Mirrors
+// engine/lattice.ts findTriadCell's closest-match logic so the highlight
+// remains a single, eye-trackable playhead even when a chord appears at
+// multiple lattice positions due to the 7-col viewport being shorter than
+// the natural 12-col Tonnetz period.
+var currentCell = null // {row, col, kind} or null
+var startCell = null // same
 
 // --- Message dispatch ---
 //
@@ -45,28 +55,42 @@ var currentPcs = null // [pc, pc, pc] or null
 // startup races where a message arrives before the named function is
 // resolved by Max's symbol table.
 
-function latticeCenter(pc) {
-  centerPc = ((Number(pc) % 12) + 12) % 12
+function mod12(n) { return ((Number(n) % 12) + 12) % 12 }
+
+function latticeCenter(pc, sp1, sp2, sp3) {
+  centerPc = mod12(pc)
+  if (sp1 !== undefined && sp2 !== undefined && sp3 !== undefined) {
+    startPcs = [mod12(sp1), mod12(sp2), mod12(sp3)]
+  }
+  resolveCells()
   mgraphics.redraw()
 }
 
 function latticeCurrent(p1, p2, p3) {
-  currentPcs = [Number(p1), Number(p2), Number(p3)]
+  currentPcs = [mod12(p1), mod12(p2), mod12(p3)]
+  currentCell = findClosestCell(currentPcs)
   mgraphics.redraw()
 }
 
 function latticeClear() {
   currentPcs = null
+  currentCell = null
   mgraphics.redraw()
 }
 
 function anything() {
   var msg = messagename
   var args = arrayfromargs(arguments)
-  if (msg === 'latticeCenter') { latticeCenter(args[0]); return }
+  if (msg === 'latticeCenter') { latticeCenter(args[0], args[1], args[2], args[3]); return }
   if (msg === 'latticeCurrent') { latticeCurrent(args[0], args[1], args[2]); return }
   if (msg === 'latticeClear') { latticeClear(); return }
   post('lattice-renderer: unhandled message ' + msg + '\n')
+}
+
+function resolveCells() {
+  startCell = startPcs !== null ? findClosestCell(startPcs) : null
+  // currentPcs uses the same formula; recompute since centerPc may have moved.
+  currentCell = currentPcs !== null ? findClosestCell(currentPcs) : null
 }
 
 // --- Lattice math (mirror of engine/lattice.ts) ---
@@ -156,9 +180,34 @@ function pcSetEqual(a, b) {
   return true
 }
 
-function isCurrentCell(r, c, kind) {
-  if (currentPcs === null) return false
-  return pcSetEqual(trianglePcs(r, c, kind), currentPcs)
+// Mirrors engine/lattice.ts findTriadCell — returns the visible cell whose
+// pc set equals targetPcs, choosing the cell whose centroid (in row,col
+// space) is closest to the center vertex (CR, CC). Returns null if no
+// matching cell is found in the visible viewport.
+function findClosestCell(targetPcs) {
+  if (targetPcs === null) return null
+  var best = null
+  var bestDistSq = 1e30
+  for (var r = 0; r < ROWS - 1; r++) {
+    for (var c = 0; c < COLS - 1; c++) {
+      for (var k = 0; k < 2; k++) {
+        var kind = k === 0 ? 'major' : 'minor'
+        if (!pcSetEqual(trianglePcs(r, c, kind), targetPcs)) continue
+        var dr = (kind === 'major' ? r + 1 / 3 : r + 2 / 3) - CR
+        var dc = (kind === 'major' ? c + 1 / 3 : c + 2 / 3) - CC
+        var distSq = dr * dr + dc * dc
+        if (distSq < bestDistSq) {
+          bestDistSq = distSq
+          best = { row: r, col: c, kind: kind }
+        }
+      }
+    }
+  }
+  return best
+}
+
+function cellEq(a, b) {
+  return a !== null && b !== null && a.row === b.row && a.col === b.col && a.kind === b.kind
 }
 
 // --- Drawing ---
@@ -230,7 +279,9 @@ function drawCell(r, c, kind, vtxX, vtxY) {
 
   var pcs = trianglePcs(r, c, kind)
   var ident = identifyTriad(pcs)
-  var isCurrent = isCurrentCell(r, c, kind)
+  var thisCell = { row: r, col: c, kind: kind }
+  var isCurrent = cellEq(thisCell, currentCell)
+  var isStart = cellEq(thisCell, startCell)
 
   // Fill
   mgraphics.move_to(v[0][0], v[0][1])
@@ -246,13 +297,20 @@ function drawCell(r, c, kind, vtxX, vtxY) {
   }
   mgraphics.fill()
 
-  // Stroke
+  // Stroke (default black 1px). For startChord cells (when not also the
+  // walker's current cell) overdraw with a slightly thicker, lighter line so
+  // the user can see the "rest position" even when the walker has moved away.
   mgraphics.move_to(v[0][0], v[0][1])
   mgraphics.line_to(v[1][0], v[1][1])
   mgraphics.line_to(v[2][0], v[2][1])
   mgraphics.close_path()
-  mgraphics.set_source_rgba(0, 0, 0, 1) // black borders, like Live's panel separators
-  mgraphics.set_line_width(1)
+  if (isStart && !isCurrent) {
+    mgraphics.set_source_rgba(0.78, 0.78, 0.78, 1) // light gray accent
+    mgraphics.set_line_width(2)
+  } else {
+    mgraphics.set_source_rgba(0, 0, 0, 1)
+    mgraphics.set_line_width(1)
+  }
   mgraphics.stroke()
 
   // Label

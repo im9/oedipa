@@ -119,6 +119,46 @@ describe('findTriadCell', () => {
     const triad: Triad = [69, 73, 76]
     assert.equal(findTriadCell(triad, config), null)
   })
+
+  // Several triads appear at MULTIPLE cells in a 7×3 viewport because
+  // the grid is shorter than the natural 12-col Tonnetz period. For these,
+  // findTriadCell must return the cell whose centroid (in row,col space) is
+  // closest to the center vertex (cr, cc). This makes the renderer's
+  // walker-cell highlight stable and unique instead of painting every match.
+  //
+  // Reason: with only one highlight per chord, the user sees a single moving
+  // "playhead" that they can track with their eyes; multi-highlighted chords
+  // visually "duplicate" the walker and break the eye's lock.
+  test('duplicate chord Bb major picks closer cell (1,1) over (0,5)', () => {
+    // Bb major (pcs {2, 5, 10}) sits at (0,5,major) and (1,1,major) when
+    // centerPc=0. Iteration order (r,c) hits (0,5) first; closest-match must
+    // override that with (1,1) because its centroid is closer to (cr=1, cc=3).
+    // Centroid distances to (1,3): (0,5)≈2.42 vs (1,1)≈1.70.
+    const triad: Triad = [70, 74, 77]
+    assert.deepEqual(findTriadCell(triad, config), { row: 1, col: 1, kind: 'major' })
+  })
+
+  test('duplicate chord D minor picks closer cell (1,1) over (0,5)', () => {
+    // D minor (pcs {2, 5, 9}) sits at (0,5,minor) and (1,1,minor) when
+    // centerPc=0. Distances to (1,3): (0,5)≈2.69 vs (1,1)≈1.49.
+    const triad: Triad = [62, 65, 69]
+    assert.deepEqual(findTriadCell(triad, config), { row: 1, col: 1, kind: 'minor' })
+  })
+
+  test('duplicate chord D# major picks closer cell (0,4) over (1,0)', () => {
+    // D# major (pcs {3, 7, 10}) — distances: (0,4)≈1.49 vs (1,0)≈2.69.
+    // First-match iteration also picks (0,4); included here so a future
+    // refactor of viewportCells iteration order can't silently regress this.
+    const triad: Triad = [63, 67, 70]
+    assert.deepEqual(findTriadCell(triad, config), { row: 0, col: 4, kind: 'major' })
+  })
+
+  test('singleton chord (only one viewport match) still returns that cell', () => {
+    // C major appears only at (1,3,major) when centerPc=0 — single match,
+    // closest-of-one is itself.
+    const triad: Triad = [60, 64, 67]
+    assert.deepEqual(findTriadCell(triad, config), { row: 1, col: 3, kind: 'major' })
+  })
 })
 
 describe('lattice ↔ engine consistency', () => {

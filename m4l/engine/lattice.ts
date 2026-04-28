@@ -126,18 +126,39 @@ export function cellToTriad(
   return buildTriad(rootPc, quality, reference)
 }
 
+// Returns the visible cell whose pc set matches `triad`, picking the cell
+// whose centroid is closest to the lattice center vertex when the same chord
+// appears in multiple positions (the 7×3 viewport is shorter than the natural
+// 12-col Tonnetz period, so chords like Bb major and D minor sit at two
+// cells). Single-highlight stability matters for the renderer: a unique
+// "playhead" the eye can track beats a multi-painted chord that visually
+// jumps between matches.
 export function findTriadCell(triad: Triad, config: LatticeConfig): TriangleCell | null {
   const { rootPc, quality } = identifyTriad(triad)
   const targetKind: TriangleKind = quality
   const targetPcs = new Set(triad.map(mod12))
+  const { cr, cc } = centerVertex(config)
+
+  let best: TriangleCell | null = null
+  let bestDistSq = Infinity
   for (const cell of viewportCells(config)) {
     if (cell.kind !== targetKind) continue
     const cellPcs = trianglePcs(cell, config)
-    if (cellPcs.every(pc => targetPcs.has(pc))) {
-      // sanity: ensure root pc is present (guards against accidental matches
-      // from incomplete pc sets — every triad has 3 distinct pcs)
-      if (cellPcs.includes(rootPc)) return cell
+    if (!cellPcs.every(pc => targetPcs.has(pc))) continue
+    // sanity: ensure root pc is present (guards against accidental matches
+    // from incomplete pc sets — every triad has 3 distinct pcs)
+    if (!cellPcs.includes(rootPc)) continue
+
+    // Centroid in (row, col) space. Major (r,c) covers vertices
+    // (r,c), (r,c+1), (r+1,c) → centroid (r+1/3, c+1/3).
+    // Minor (r,c) covers (r+1,c), (r+1,c+1), (r,c+1) → (r+2/3, c+2/3).
+    const dr = (cell.kind === 'major' ? cell.row + 1 / 3 : cell.row + 2 / 3) - cr
+    const dc = (cell.kind === 'major' ? cell.col + 1 / 3 : cell.col + 2 / 3) - cc
+    const distSq = dr * dr + dc * dc
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq
+      best = cell
     }
   }
-  return null
+  return best
 }

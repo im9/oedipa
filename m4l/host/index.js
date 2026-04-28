@@ -51,7 +51,12 @@ function emit(ev) {
 }
 
 function emitLatticeCenter() {
-  Max.outlet('lattice-center', host.centerPc)
+  // Send centerPc + startChord pcs so the renderer can mark the startChord
+  // triangle (it sits at a centerPc-derived position, but quality (major/minor)
+  // and the exact pc set are not derivable from centerPc alone).
+  const sc = host.startChord
+  const mod12 = (n) => ((n % 12) + 12) % 12
+  Max.outlet('lattice-center', host.centerPc, mod12(sc[0]), mod12(sc[1]), mod12(sc[2]))
 }
 
 function emitLatticeCurrent() {
