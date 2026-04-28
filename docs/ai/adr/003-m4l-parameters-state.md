@@ -107,8 +107,11 @@ The `[jsui]` lattice keeps the logic/renderer split from the prior revision:
   jsui-specific drawing. Reads state via `latticeCenter` / `latticeCurrent`
   handlers (already wired in Phase 2; no new bridge messages needed).
 
-**Viewport**: 7-column × 3-row vertex grid (12 visible triangles), unchanged
-from prior revisions.
+**Viewport**: 7-column × 4-row vertex grid (36 visible triangles). Phase 2
+shipped 7×3 (24 triangles) but it left four triads — E major, A major,
+C# minor, G# minor — without a matching cell, so the playhead silently
+vanished when the walker visited those chords. Bumping rows to 4 (3
+row-bands) gives every Tonnetz triad at least one viewport cell.
 
 **Interactions** (revised — minimal):
 
@@ -120,9 +123,18 @@ from prior revisions.
 
 **Visual state**:
 
-- **Walker's current triangle**: primary fill (already implemented in Phase 2)
-- **startChord triangle**: thin tertiary marker (lets the user see "rest
-  position")
+- **Walker's current triangle**: primary fill (Live orange). Implemented in
+  Phase 2.
+- **Highlight uniqueness**: the 7-col viewport is shorter than the natural
+  12-col Tonnetz period, so several chords (Bb major, D minor, etc.) sit at
+  two cells at once. The renderer resolves the walker's pcs to the *single*
+  cell whose centroid is closest to the lattice center, giving the eye one
+  trackable playhead instead of two. Mirrored in
+  [engine/lattice.ts](../../../m4l/engine/lattice.ts) `findTriadCell`.
+- **startChord triangle**: thin light-gray 2px border (overdrawn on the
+  default 1px black stroke), drawn only when the walker is *not* on the same
+  cell. Lets the user see the "rest position" even after the walker has
+  wandered off.
 - **Path trail** (optional): last N triangles fading out. Defer to a follow-up
   pass if the renderer cost is non-trivial — voice-leading walks already
   highlight one triangle at a time and the eye fills in continuity.
@@ -243,6 +255,9 @@ test vectors get updated alongside.
 - [ ] Per-cell active-step indicator in the device strip (driven by an outlet from host emitting current cellIdx each transform)
 - [x] Lattice click handler: triangle hit → `setStartChord`. ([m4l/lattice-renderer.js](../../../m4l/lattice-renderer.js) `onclick`, modifier-free primary-button only; pattr write deferred to Phase 5.)
 - [x] Lattice logic tests: hit testing (point → triangle), click → triad translation. ([m4l/engine/lattice.test.ts](../../../m4l/engine/lattice.test.ts), `computeLayout` / `pointToCell` / `cellToTriad`; engine 118 green.)
+- [x] Lattice viewport bug fix: rows 3 → 4 vertices ([m4l/lattice-renderer.js](../../../m4l/lattice-renderer.js), [Oedipa.maxpat](../../../m4l/Oedipa.maxpat) jsui height 120 → 160). The 7×3 grid left E major, A major, C# minor, and G# minor without a matching cell, so the playhead vanished on those chords. 7×4 covers all 24 triads. Regression test in [lattice.test.ts](../../../m4l/engine/lattice.test.ts) "viewport coverage".
+- [x] Lattice playhead deduplication: [`findTriadCell`](../../../m4l/engine/lattice.ts) and the renderer's mirrored helper now pick the cell whose centroid is closest to the lattice center vertex when a chord has multiple matches in the viewport, giving the eye one trackable highlight instead of multiple synchronized ones.
+- [x] Lattice startChord marker: thin light-gray 2px border on the rest-position cell, drawn only when not also the walker's current cell. Host emits startChord pcs alongside `lattice-center` so the renderer can resolve the marker without a new message route.
 - [ ] Manual: edit cells via device strip → audible walk follows
 - [ ] Manual: jitter sweep (0 → 1) audibly transitions deterministic → random
 - [ ] Manual: automate `cell2` on a clip → walker's cycle evolves over time

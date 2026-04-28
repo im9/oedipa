@@ -8,14 +8,19 @@ runtime.
 
 | File | Purpose |
 |---|---|
-| `tonnetz.ts` | Engine source. Pure functions: `identifyTriad`, `buildTriad`, `applyTransform`, `applyVoicing`, `addSeventh`, `walk`. |
-| `tonnetz.test.ts` | Test suite. Iterates the shared vectors at [`../../docs/ai/tonnetz-test-vectors.json`](../../docs/ai/tonnetz-test-vectors.json) for cross-target conformance. |
+| `tonnetz.ts` | Walk engine. Pure functions: `identifyTriad`, `buildTriad`, `applyTransform`, `applyVoicing`, `addSeventh`, `walk`, `mulberry32`. |
+| `tonnetz.test.ts` | Walk-engine tests. Iterates the shared vectors at [`../../docs/ai/tonnetz-test-vectors.json`](../../docs/ai/tonnetz-test-vectors.json) for cross-target conformance. |
+| `lattice.ts` | Lattice geometry. Pure functions: `noteAt`, `trianglePcs`, `viewportCells`, `computeLayout`, `pointToCell`, `cellToTriad`, `findTriadCell`. Mirrored as plain ES5 in [`../lattice-renderer.js`](../lattice-renderer.js) for jsui consumption (Max's classic JS engine, not Node). |
+| `lattice.test.ts` | Lattice geometry tests. Hit testing, cell↔triad round-trips, P/L/R neighbor consistency, viewport coverage. |
 | `tsconfig.json`, `package.json` | ES2022 ESM build config. |
 | `dist/` | Generated output. Gitignored — regenerate with `pnpm build`. |
 
-Engine semantics are specified in
+Walk-engine semantics are specified in
 [`../../docs/ai/adr/archive/001-tonnetz-engine-interface.md`](../../docs/ai/adr/archive/001-tonnetz-engine-interface.md).
-Do not edit `tonnetz.ts` without reading that ADR first.
+Lattice-UI semantics live in
+[`../../docs/ai/adr/003-m4l-parameters-state.md`](../../docs/ai/adr/003-m4l-parameters-state.md)
+"Lattice UI" section. Do not edit `tonnetz.ts` or `lattice.ts` without
+reading the corresponding ADR first.
 
 ## Dev
 
@@ -37,10 +42,13 @@ producing the artifact consumed by the M4L device.
 
 ## TDD gate
 
-Per the project's [CLAUDE.md](../../CLAUDE.md) Gate 1: update
-`tonnetz.test.ts` (and where appropriate `tonnetz-test-vectors.json`)
-**before** editing `tonnetz.ts`. New semantic cases go into the shared
-vectors file, not into per-target test code.
+Per the project's [CLAUDE.md](../../CLAUDE.md) Gate 1: update the relevant
+test file (`tonnetz.test.ts` or `lattice.test.ts`) **before** editing the
+implementation. For walk-engine semantics also update
+`tonnetz-test-vectors.json` — new cross-target cases go into the shared
+vectors file, not into per-target test code. Lattice geometry stays in
+TS-only tests since it's a UI concern not shared across targets the same
+way the walk engine is.
 
 ## How the M4L device consumes it
 
