@@ -60,6 +60,13 @@ export class Host {
     return this.lastTriad
   }
 
+  cellIdx(pos: number): number {
+    const { stepsPerTransform: spt, cells } = this.params
+    const numTransforms = Math.floor(pos / spt)
+    if (numTransforms <= 0 || cells.length === 0) return -1
+    return (numTransforms - 1) % cells.length
+  }
+
   get centerPc(): number {
     return ((this.params.startChord[0] % 12) + 12) % 12
   }

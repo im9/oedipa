@@ -27,6 +27,7 @@
 //     lattice-center <pc>                 lattice center pc (0..11)
 //     lattice-current <pc1> <pc2> <pc3>   current triad as pitch classes
 //     lattice-clear                       no current triad (panic / pre-play)
+//     cellIdx <n>                         active-cell LED index (-1 == none)
 
 import Max from 'max-api'
 import { Host } from './dist/host/host.js'
@@ -68,15 +69,32 @@ function emitLatticeCurrent() {
   Max.outlet('lattice-current', t[0] % 12, t[1] % 12, t[2] % 12)
 }
 
+let lastCellIdx = -1
+function emitCellIdx(pos) {
+  const idx = host.cellIdx(pos)
+  if (idx !== lastCellIdx) {
+    Max.outlet('cellIdx', idx)
+    lastCellIdx = idx
+  }
+}
+function clearCellIdx() {
+  if (lastCellIdx !== -1) {
+    Max.outlet('cellIdx', -1)
+    lastCellIdx = -1
+  }
+}
+
 Max.addHandler('step', (pos) => {
   const events = host.step(Number(pos))
   for (const ev of events) emit(ev)
   if (events.length > 0) emitLatticeCurrent()
+  emitCellIdx(Number(pos))
 })
 
 Max.addHandler('panic', () => {
   for (const ev of host.panic()) emit(ev)
   emitLatticeCurrent()
+  clearCellIdx()
 })
 
 Max.addHandler('setParams', (key, value) => {

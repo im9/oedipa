@@ -203,6 +203,57 @@ describe('Host.setCell', () => {
   })
 })
 
+describe('Host.cellIdx — for active-cell LED', () => {
+  // cellIdx(pos) returns the index of the cell whose op produced the chord
+  // currently sounding. -1 when no transform has fired yet (pos < spt).
+  // Derivation: walk() applies a transform at every pos % spt === 0 except
+  // pos=0; after numTransforms = floor(pos / spt) transforms, the most-recent
+  // cell consumed is index (numTransforms - 1) mod cells.length.
+  test('returns -1 before the first transform fires', () => {
+    const host = new Host(baseParams({ stepsPerTransform: 4 }))
+    // pos < spt → numTransforms = 0 → no cell has fired
+    assert.equal(host.cellIdx(0), -1)
+    assert.equal(host.cellIdx(3), -1)
+  })
+
+  test('returns 0 once the first transform has fired', () => {
+    const host = new Host(baseParams({ stepsPerTransform: 4 }))
+    // pos in [spt, 2*spt) → numTransforms = 1 → cells[0] is the active cell
+    assert.equal(host.cellIdx(4), 0)
+    assert.equal(host.cellIdx(7), 0)
+  })
+
+  test('advances one cell per stepsPerTransform window', () => {
+    const host = new Host(baseParams({ stepsPerTransform: 4 })) // cells length 4
+    assert.equal(host.cellIdx(8), 1)  // cells[1] applied
+    assert.equal(host.cellIdx(12), 2) // cells[2] applied
+    assert.equal(host.cellIdx(16), 3) // cells[3] applied
+  })
+
+  test('wraps modulo cells.length', () => {
+    const host = new Host(baseParams({ stepsPerTransform: 4 })) // cells length 4
+    // numTransforms = 5, 6 → (5-1) % 4 = 0, (6-1) % 4 = 1
+    assert.equal(host.cellIdx(20), 0)
+    assert.equal(host.cellIdx(24), 1)
+  })
+
+  test('honours stepsPerTransform=1 with 2-cell array', () => {
+    const host = new Host(baseParams({ stepsPerTransform: 1, cells: ['P', 'L'] }))
+    assert.equal(host.cellIdx(0), -1) // no transform yet
+    assert.equal(host.cellIdx(1), 0)  // cells[0]=P fired
+    assert.equal(host.cellIdx(2), 1)  // cells[1]=L fired
+    assert.equal(host.cellIdx(3), 0)  // wraps
+  })
+
+  test('reflects stepsPerTransform updates from setParams', () => {
+    const host = new Host(baseParams({ stepsPerTransform: 1 }))
+    assert.equal(host.cellIdx(2), 1) // 2 transforms with spt=1 → idx 1
+    host.setParams({ stepsPerTransform: 4 })
+    assert.equal(host.cellIdx(2), -1) // 0 transforms with spt=4
+    assert.equal(host.cellIdx(8), 1)  // 2 transforms with spt=4 → idx 1
+  })
+})
+
 describe('Host.currentTriad / centerPc — for lattice rendering', () => {
   // The lattice renderer needs to know which cell to highlight (currentTriad)
   // and which pc to center the lattice on (centerPc). Both are read after
