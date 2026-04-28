@@ -1,11 +1,12 @@
 # ADR 003: M4L Sequencer — Lattice UI & Cell Sequencer
 
-## Status: Proposed
+## Status: Implemented
 
 **Created**: 2026-04-19
 **Revised**: 2026-04-23 (absorbed planned ADR 004; restructured around the lattice as the primary UI)
 **Revised**: 2026-04-26 (replaced sequence-driven walker with attractor-driven walker)
 **Revised**: 2026-04-26 (replaced attractor model with short cell sequencer + jitter; concept.md rewritten in lockstep — see "Context" below for the design path)
+**Implemented**: 2026-04-29 (Phases 1–6 complete; manual save/reopen smoke verified)
 
 ## Context
 
@@ -354,9 +355,9 @@ model" and the renderer in
 
 ### Phase 6 — Cleanup
 
-- [ ] Remove any references to `sequence` / `anchors` / `attractor*` from source files / docs
-- [ ] Update [m4l/engine/README.md](../../../m4l/engine/README.md) if it describes the old API
-- [ ] Manual: full Live set save/reopen smoke test
+- [x] Remove any references to `sequence` / `anchors` / `attractor*` from source files / docs (live source: lattice-renderer.js click-handler comment rephrased to describe what the click does, not what doesn't exist; archive/* and concept.md "Origin notes" intentionally retained as historical context)
+- [x] Update [m4l/engine/README.md](../../../m4l/engine/README.md) if it describes the old API (now points to ADR 003 + concept.md "Traversal" for current walk semantics; archive/001 framed as v1-walker historical reference)
+- [x] Manual: full Live set save/reopen smoke test
 
 ## Open questions
 

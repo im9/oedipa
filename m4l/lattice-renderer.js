@@ -265,8 +265,9 @@ function paint() {
 
 // --- Mouse interaction ---
 //
-// ADR 003 "Lattice UI": modifier-free click sets startChord. No edge clicks,
-// no drag, no anchors.
+// ADR 003 "Lattice UI": a single primary-button click (no modifiers) sets
+// startChord to the clicked triangle's triad. Click is the only interaction
+// the lattice handles.
 
 function onclick(x, y, button, cmd, shift, capslock, option, ctrl) {
   // Max 8 jsui: button=1 is the primary (left) mouse button. Reject anything

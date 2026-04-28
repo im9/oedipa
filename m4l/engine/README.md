@@ -15,12 +15,16 @@ runtime.
 | `tsconfig.json`, `package.json` | ES2022 ESM build config. |
 | `dist/` | Generated output. Gitignored — regenerate with `pnpm build`. |
 
-Walk-engine semantics are specified in
-[`../../docs/ai/adr/archive/001-tonnetz-engine-interface.md`](../../docs/ai/adr/archive/001-tonnetz-engine-interface.md).
-Lattice-UI semantics live in
-[`../../docs/ai/adr/003-m4l-parameters-state.md`](../../docs/ai/adr/003-m4l-parameters-state.md)
-"Lattice UI" section. Do not edit `tonnetz.ts` or `lattice.ts` without
-reading the corresponding ADR first.
+Walk-engine semantics — current walk shape (cells / jitter / seed) is
+specified in [`../../docs/ai/concept.md`](../../docs/ai/concept.md) "Traversal"
+and [`../../docs/ai/adr/003-m4l-parameters-state.md`](../../docs/ai/adr/003-m4l-parameters-state.md).
+The triad math, P/L/R semantics, voicing layer, and shared-test-vectors
+contract that the engine still satisfies are documented in
+[`../../docs/ai/adr/archive/001-tonnetz-engine-interface.md`](../../docs/ai/adr/archive/001-tonnetz-engine-interface.md)
+(read with care — the `WalkState` shape there describes the v1 walker that
+ADR 003 superseded). Lattice-UI semantics live in ADR 003's "Lattice UI"
+section. Do not edit `tonnetz.ts` or `lattice.ts` without reading the
+corresponding ADR first.
 
 ## Dev
 
@@ -53,7 +57,7 @@ way the walk engine is.
 ## How the M4L device consumes it
 
 The engine is **stateless**. The device holds `WalkState` (start chord, cell
-sequence, steps-per-transform, jitter, seed) externally and calls
+program, steps-per-transform, jitter, seed) externally and calls
 `walk(state, pos)` to get the triad at host step `pos`.
 
 ```ts
