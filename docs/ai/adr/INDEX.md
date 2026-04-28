@@ -34,6 +34,7 @@ only when relevant to the current task.
 |-----|-------|--------|-------|
 | 002 | [M4L Device Architecture](archive/002-m4l-device-architecture.md) | Implemented | Patch / host.js / lattice.js / engine layering; engine loading; MIDI I/O; state ownership |
 | 003 | [M4L Sequencer — Lattice UI & Cell Sequencer](archive/003-m4l-parameters-state.md) | Implemented | Short cell sequencer (4× P/L/R/hold) + jitter + seed; lattice click sets startChord; live.* for transport/voice/cells/jitter/seed |
+| 004 | [MIDI Input & Note Discipline](004-midi-input.md) | Proposed | Incoming MIDI → startChord; velocity passthrough; listen channel; trigger / note-off discipline. 5 design axes open. |
 
 ## VST
 
