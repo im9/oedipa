@@ -258,11 +258,11 @@ test vectors get updated alongside.
 - [x] Lattice viewport bug fix: rows 3 → 4 vertices ([m4l/lattice-renderer.js](../../../m4l/lattice-renderer.js), [Oedipa.maxpat](../../../m4l/Oedipa.maxpat) jsui height 120 → 160). The 7×3 grid left E major, A major, C# minor, and G# minor without a matching cell, so the playhead vanished on those chords. 7×4 covers all 24 triads. Regression test in [lattice.test.ts](../../../m4l/engine/lattice.test.ts) "viewport coverage".
 - [x] Lattice playhead deduplication: [`findTriadCell`](../../../m4l/engine/lattice.ts) and the renderer's mirrored helper now pick the cell whose centroid is closest to the lattice center vertex when a chord has multiple matches in the viewport, giving the eye one trackable highlight instead of multiple synchronized ones.
 - [x] Lattice startChord marker: thin light-gray 2px border on the rest-position cell, drawn only when not also the walker's current cell. Host emits startChord pcs alongside `lattice-center` so the renderer can resolve the marker without a new message route.
-- [ ] Manual: edit cells via device strip → audible walk follows
-- [ ] Manual: jitter sweep (0 → 1) audibly transitions deterministic → random
-- [ ] Manual: automate `cell2` on a clip → walker's cycle evolves over time
-- [ ] Manual: change Group A + B live.* params → host receives update (deferred from Phase 1)
-- [ ] Manual: lattice renders + current-step tracks transport (deferred from Phase 2)
+- [x] Manual: edit cells via device strip → audible walk follows
+- [x] Manual: jitter sweep (0 → 1) audibly transitions deterministic → random
+- [x] Manual: automate `cell2` on a clip → walker's cycle evolves over time
+- [x] Manual: change Group A + B live.* params → host receives update (deferred from Phase 1)
+- [x] Manual: lattice renders + current-step tracks transport (deferred from Phase 2)
 
 ### Phase 5 — startChord persistence
 
