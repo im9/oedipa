@@ -9,22 +9,42 @@ neo-Riemannian lattice and emits the chords it finds.
 
 ## What it does
 
-On each host step, Oedipa applies one of three neo-Riemannian transforms
-(P, L, R) to the current triad and emits the result as MIDI. The user
-specifies:
+On each host step, Oedipa walks a Tonnetz lattice by applying one of three
+neo-Riemannian transforms (P, L, R) to the current triad and emits the
+result as MIDI. The user specifies:
 
-- a **start chord**
-- a **transform sequence** (e.g. `[P, L, R, L]`, applied cyclically)
+- a **start chord** — set by clicking a triangle on the lattice
+- a **cell program** — a short cyclic array of 4 ops, each `P` / `L` / `R` /
+  `hold`. The walker consumes one op per transform tick.
+- a **jitter** amount and a **seed** — `jitter` is the per-step probability
+  of substituting the current op with a uniform-random one; the
+  substitution is reproducible from the seed.
 - a **rate** (steps per transform)
-- optional **voicing** (close / spread / drop2) and a 7th extension
-- optional **anchors** — fixed chords at specific step indices that override
-  the generative walk
+- **voicing** (close / spread / drop2) and an optional 7th extension
 
-The Tonnetz handles harmony; the user shapes motion and rhythm. The walk is
-deterministic, so scrubbing the transport or resuming playback from any
-position produces the same output.
+The Tonnetz handles harmony; the cell program shapes motion; jitter steers
+how strict the loop stays. For a fixed `(startChord, cells, jitter, seed)`
+the walk is deterministic, so scrubbing the transport or resuming playback
+from any position produces the same output.
 
 Full musical model: [`docs/ai/concept.md`](docs/ai/concept.md).
+
+## Status
+
+In development. The `m4l/` target is musically usable but does not yet
+respond to incoming MIDI — `startChord` is currently set by lattice click
+only. See [`docs/ai/adr/INDEX.md`](docs/ai/adr/INDEX.md) for the roadmap;
+ADR 004 (MIDI input), ADR 005 (rhythmic feel), and ADR 006 (workflow /
+presets) are the path to v1 release.
+
+## Use (Max for Live)
+
+Open Ableton Live 12 with Max for Live, drag [`m4l/Oedipa.amxd`](m4l/Oedipa.amxd)
+onto a MIDI track, and put an instrument after it. Click a triangle on
+the lattice to set the starting chord; press play.
+
+Building from source is only needed if you want to modify the device — see
+the `Build` section below.
 
 ## Targets
 
@@ -71,4 +91,9 @@ only when the relevant area is being touched.
 Key docs:
 - [`docs/ai/concept.md`](docs/ai/concept.md) — shared musical model
 - [`docs/ai/adr/archive/001-tonnetz-engine-interface.md`](docs/ai/adr/archive/001-tonnetz-engine-interface.md) — engine contract, cross-target semantics (Implemented)
-- [`docs/ai/adr/002-m4l-device-architecture.md`](docs/ai/adr/002-m4l-device-architecture.md) — M4L device layering
+- [`docs/ai/adr/archive/002-m4l-device-architecture.md`](docs/ai/adr/archive/002-m4l-device-architecture.md) — M4L device layering (Implemented)
+- [`docs/ai/adr/archive/003-m4l-parameters-state.md`](docs/ai/adr/archive/003-m4l-parameters-state.md) — lattice UI + cell sequencer (Implemented)
+
+## License
+
+[MIT](LICENSE). Free distribution under the `im9` label.
