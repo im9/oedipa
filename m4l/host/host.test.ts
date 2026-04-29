@@ -11,8 +11,9 @@ function baseParams(overrides: Partial<HostParams> = {}): HostParams {
     seventh: false,
     jitter: 0,
     seed: 0,
-    velocity: 100,
     channel: 1,
+    triggerMode: 0,
+    inputChannel: 0,
     ...overrides,
   }
 }
@@ -251,6 +252,244 @@ describe('Host.cellIdx — for active-cell LED', () => {
     host.setParams({ stepsPerTransform: 4 })
     assert.equal(host.cellIdx(2), -1) // 0 transforms with spt=4
     assert.equal(host.cellIdx(8), 1)  // 2 transforms with spt=4 → idx 1
+  })
+})
+
+describe('Host.noteIn (ADR 004 — input event model)', () => {
+  test('triad input updates startChord and emits note-offs for sustained walker output', () => {
+    const host = new Host(baseParams())
+    host.step(0) // emit Cmaj noteOns; this.held = {60,64,67}
+    // Play Fmaj: F=65, A=69, C=72 — third note completes the triad
+    host.noteIn(65, 100, 1)
+    host.noteIn(69, 100, 1)
+    const events = host.noteIn(72, 100, 1)
+    // Subset search picks Fmaj (root 65 < other matches if any), startChord changes.
+    // recomputeStartChord emits noteOffs for previously sustained walker output.
+    assert.deepEqual(pitchesOf(events, 'noteOff').sort((a, b) => a - b), [60, 64, 67])
+    assert.deepEqual(pitchesOf(events, 'noteOn'), [], 'noteOns wait for next step')
+    assert.deepEqual(host.startChord, [65, 69, 72])
+  })
+
+  test('next step after input-driven chord change emits the new chord at effective pos 0', () => {
+    const host = new Host(baseParams({ cells: ['P', 'L', 'R'] }))
+    host.step(0); host.step(1); host.step(2) // walker has advanced
+    host.noteIn(65, 100, 1); host.noteIn(69, 100, 1); host.noteIn(72, 100, 1) // Fmaj
+    // Subsequent step at any pos: walker emits new startChord (Fmaj close) — cells not applied yet.
+    const events = host.step(7)
+    const pcs = pitchesOf(events, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs, [0, 5, 9]) // Fmaj
+  })
+
+  test('lastInputVelocity updates on every note-on and is used for walker output', () => {
+    const host = new Host(baseParams({ cells: ['P'] }))
+    host.step(0) // emit Cmaj at default vel 100
+    host.noteIn(60, 80, 1) // single note, no triad — startChord unchanged, lastInputVelocity = 80
+    const events = host.step(1) // P → Cmin, emit noteOns at new vel 80
+    const onVels = events.filter(e => e.type === 'noteOn').map(e => (e as { velocity: number }).velocity)
+    assert.ok(onVels.length > 0, 'expected noteOns')
+    for (const v of onVels) assert.equal(v, 80)
+  })
+
+  test('default lastInputVelocity is 100 before any input', () => {
+    const host = new Host(baseParams())
+    const events = host.step(0)
+    const onVels = events.filter(e => e.type === 'noteOn').map(e => (e as { velocity: number }).velocity)
+    for (const v of onVels) assert.equal(v, 100)
+  })
+
+  test('non-triad input does not update startChord', () => {
+    const host = new Host(baseParams())
+    const initial = host.startChord
+    host.noteIn(60, 100, 1) // C
+    host.noteIn(62, 100, 1) // C-D
+    host.noteIn(67, 100, 1) // C-D-G = Csus2, not a Tonnetz triad
+    assert.deepEqual(host.startChord, initial)
+  })
+
+  test('partial input (1 or 2 notes) does not update startChord', () => {
+    const host = new Host(baseParams())
+    const initial = host.startChord
+    host.noteIn(60, 100, 1)
+    assert.deepEqual(host.startChord, initial)
+    host.noteIn(64, 100, 1)
+    assert.deepEqual(host.startChord, initial)
+  })
+
+  test('inputChannel = 0 (omni) accepts notes on any channel', () => {
+    const host = new Host(baseParams({ inputChannel: 0 }))
+    host.noteIn(60, 100, 5)
+    host.noteIn(64, 100, 7)
+    host.noteIn(67, 100, 11)
+    assert.deepEqual(host.startChord, [60, 64, 67])
+  })
+
+  test('inputChannel = N rejects notes on other channels', () => {
+    const host = new Host(baseParams({ inputChannel: 2 }))
+    const initial = host.startChord
+    host.noteIn(65, 100, 1) // wrong channel
+    host.noteIn(69, 100, 1)
+    host.noteIn(72, 100, 1)
+    assert.deepEqual(host.startChord, initial, 'channel 1 ignored when filter=2')
+    host.noteIn(65, 100, 2)
+    host.noteIn(69, 100, 2)
+    host.noteIn(72, 100, 2)
+    assert.deepEqual(host.startChord, [65, 69, 72])
+  })
+})
+
+describe('Host.noteOff (ADR 004 — trigger model)', () => {
+  test('hybrid: walker continues running after all notes released', () => {
+    const host = new Host(baseParams({ triggerMode: 0, cells: ['P'] }))
+    host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
+    host.step(0) // walker emits Cmaj
+    host.noteOff(60, 1); host.noteOff(64, 1); host.noteOff(67, 1)
+    const events = host.step(1) // P → Cmin
+    const pcs = pitchesOf(events, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs, [0, 3, 7], 'walker still emits after release in hybrid mode')
+  })
+
+  test('hybrid: removing one note can expose a different triad subset', () => {
+    const host = new Host(baseParams({ triggerMode: 0 }))
+    // Hold Cmaj7 = C E G B → Cmaj wins (subset match, lowest root)
+    host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1); host.noteIn(71, 100, 1)
+    assert.deepEqual(host.startChord, [60, 64, 67])
+    // Release C → E G B remains = Em
+    host.noteOff(60, 1)
+    assert.deepEqual(host.startChord, [64, 67, 71])
+  })
+
+  test('hold-to-play: last note-off triggers panic and pauses the walker', () => {
+    const host = new Host(baseParams({ triggerMode: 1, cells: ['P'] }))
+    host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
+    host.step(0) // emit Cmaj
+    host.noteOff(60, 1); host.noteOff(64, 1)
+    const finalRelease = host.noteOff(67, 1)
+    assert.deepEqual(pitchesOf(finalRelease, 'noteOff').sort((a, b) => a - b), [60, 64, 67])
+    // Walker is paused
+    assert.deepEqual(host.step(1), [])
+    assert.deepEqual(host.step(2), [])
+    assert.equal(host.cellIdx(2), -1)
+  })
+
+  test('hold-to-play: note-on after release reactivates the walker and resets cells from cells[0]', () => {
+    const host = new Host(baseParams({ triggerMode: 1, cells: ['P'] }))
+    host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
+    host.step(0); host.step(1) // walker advances to P(Cmaj) = Cmin
+    host.noteOff(60, 1); host.noteOff(64, 1); host.noteOff(67, 1)
+    host.step(2) // paused, no events
+    // Re-press Cmaj — same chord, but walker should restart from cells[0]
+    host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
+    const events = host.step(3) // walker active again, emits Cmaj startChord (cells not applied yet)
+    const pcs = pitchesOf(events, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs, [0, 4, 7], 'walker resumes at startChord, cells fresh')
+  })
+
+  test('hybrid: note-off does not trigger panic even with no notes held', () => {
+    const host = new Host(baseParams({ triggerMode: 0, cells: ['P'] }))
+    host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
+    host.step(0)
+    const events = host.noteOff(60, 1) // not the last release; should also not panic
+    assert.deepEqual(events, [], 'no panic in hybrid even when held set thins')
+    host.noteOff(64, 1); host.noteOff(67, 1) // all released
+    const stepEvents = host.step(1) // walker still alive
+    assert.ok(stepEvents.length > 0)
+  })
+})
+
+describe('Host.transportStart (ADR 004 — pre-roll)', () => {
+  test('with no held notes, walker uses the persisted lattice startChord', () => {
+    const host = new Host(baseParams({ startChord: [62, 65, 69] })) // Dm
+    const events = host.transportStart()
+    assert.deepEqual(events, [], 'no events emitted directly')
+    assert.deepEqual(host.startChord, [62, 65, 69])
+    const stepEvents = host.step(0)
+    const pcs = pitchesOf(stepEvents, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs, [2, 5, 9])
+  })
+
+  test('with held notes, derives startChord from the snapshot', () => {
+    const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+    // User pre-pressed Fmaj before transport — these noteIns may or may not have
+    // triggered chord changes already (they did, since 3rd note completes triad);
+    // transportStart re-runs the snapshot path idempotently.
+    host.noteIn(65, 100, 1); host.noteIn(69, 100, 1); host.noteIn(72, 100, 1)
+    host.transportStart()
+    const events = host.step(0)
+    const pcs = pitchesOf(events, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs, [0, 5, 9])
+  })
+
+  test('hold-to-play: transportStart with no held notes keeps walker paused', () => {
+    const host = new Host(baseParams({ triggerMode: 1 }))
+    host.transportStart()
+    assert.deepEqual(host.step(0), [], 'no walker emission without held notes')
+  })
+
+  test('hold-to-play: transportStart with held notes activates walker', () => {
+    const host = new Host(baseParams({ triggerMode: 1, startChord: [60, 64, 67] }))
+    host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
+    host.transportStart()
+    const events = host.step(0)
+    const pcs = pitchesOf(events, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs, [0, 4, 7])
+  })
+})
+
+describe('Host pos reset on startChord change (ADR 004 Axis 5)', () => {
+  test('lattice setParams startChord at non-zero pos: walker emits new startChord on next step', () => {
+    const host = new Host(baseParams({ cells: ['P'] }))
+    host.step(0); host.step(1); host.step(2)
+    host.setParams({ startChord: [65, 69, 72] }) // Fmaj
+    const events = host.step(3) // pendingPosReset → effectivePos = 0 → walker emits startChord
+    const pcs = pitchesOf(events, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs, [0, 5, 9], 'Fmaj startChord, no transform applied yet')
+  })
+
+  test('input-driven startChord change resets cell program', () => {
+    const host = new Host(baseParams({ cells: ['P', 'L'] }))
+    host.step(0); host.step(1); host.step(2)
+    host.noteIn(65, 100, 1); host.noteIn(69, 100, 1); host.noteIn(72, 100, 1) // Fmaj
+    const events = host.step(3)
+    const pcs = pitchesOf(events, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs, [0, 5, 9], 'cells fresh: walker on Fmaj startChord, cells[0] not yet applied')
+    // Next step: cells[0] = P → F minor
+    const next = host.step(4)
+    const nextPcs = pitchesOf(next, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(nextPcs, [0, 5, 8])
+  })
+
+  test('setParams startChord with the same triad does not reset pos', () => {
+    const host = new Host(baseParams({ cells: ['P'] }))
+    host.step(0); host.step(1) // walker on Cmin (P applied)
+    host.setParams({ startChord: [60, 64, 67] }) // same value re-asserted (e.g. dump cascade)
+    const events = host.step(2) // walker should continue: P^2(Cmaj) = Cmaj
+    const pcs = pitchesOf(events, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs, [0, 4, 7])
+  })
+
+  test('replay determinism: two fresh hosts driven by the same input event sequence produce identical output', () => {
+    const script: Array<['step', number] | ['noteIn', number, number, number] | ['noteOff', number, number] | ['transportStart']> = [
+      ['transportStart'],
+      ['step', 0],
+      ['step', 1],
+      ['noteIn', 65, 90, 1], ['noteIn', 69, 90, 1], ['noteIn', 72, 90, 1],
+      ['step', 2], ['step', 3],
+      ['noteOff', 65, 1], ['noteOff', 69, 1], ['noteOff', 72, 1],
+      ['noteIn', 67, 80, 1], ['noteIn', 71, 80, 1], ['noteIn', 74, 80, 1], // Gmaj
+      ['step', 4], ['step', 5], ['step', 6],
+    ]
+    function run(): NoteEvent[] {
+      const h = new Host(baseParams({ cells: ['P', 'L', 'R', 'hold'], jitter: 0.5, seed: 42 }))
+      const out: NoteEvent[] = []
+      for (const cmd of script) {
+        if (cmd[0] === 'step') out.push(...h.step(cmd[1]))
+        else if (cmd[0] === 'noteIn') out.push(...h.noteIn(cmd[1], cmd[2], cmd[3]))
+        else if (cmd[0] === 'noteOff') out.push(...h.noteOff(cmd[1], cmd[2]))
+        else if (cmd[0] === 'transportStart') out.push(...h.transportStart())
+      }
+      return out
+    }
+    assert.deepEqual(run(), run(), 'replay must be bit-identical')
   })
 })
 

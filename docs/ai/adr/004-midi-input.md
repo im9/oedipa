@@ -261,35 +261,44 @@ belongs in the engine, not the host.
 
 ### Phase 2 — Host: input pipeline
 
-- [ ] Host tests ([m4l/host/host.test.ts](../../../m4l/host/host.test.ts)):
-  - Held-note set add/remove (note-on adds, note-off removes, duplicate
-    note-on is idempotent)
-  - `noteIn` triggers subset search → `setStartChord` with `pos = 0` reset
-  - Non-triad input doesn't update `startChord` or reset `pos`
-  - `lastInputVelocity` updates on every note-on (even those that don't
-    update `startChord`); persists across silence; defaults to 100
-  - `inputChannel = 0` accepts all; `inputChannel = N` filters
-  - `triggerMode = 0` (hybrid): note-off does nothing
-  - `triggerMode = 1` (hold-to-play): last-note-off triggers panic + walker
-    pause; next note-on resumes
-  - Pre-roll: `transportStart` with held notes derives `startChord` from
-    snapshot; with no held notes, uses persisted lattice `startChord`
-  - Lattice-click `setStartChord` also resets `pos = 0` (regression for
-    Axis 5 cell-reset rule applied uniformly)
-  - Replay determinism: two runs of the same `(seed, jitter, cells)` driven
-    by the same scripted input event sequence produce identical output
-    streams.
-- [ ] Host ([m4l/host/host.ts](../../../m4l/host/host.ts),
-  [m4l/host/index.js](../../../m4l/host/index.js)):
-  - Add `noteIn(pitch, vel, channel)` and `noteOff(pitch, channel)`
-    handlers; channel filter; held-note set; subset-search call;
-    `lastInputVelocity` update.
-  - Add `setTriggerMode(mode)` and `setInputChannel(ch)` setters.
-  - Add `transportStart()` handler running pre-roll snapshot.
-  - Wire `lastInputVelocity` into the existing voicing → MIDI output path.
-  - Note-off-before-note-on ordering on `startChord` change (input-driven,
-    lattice-driven, walker-driven).
-  - `setStartChord` also resets `pos = 0` (uniform reset rule).
+- [x] Host tests ([m4l/host/host.test.ts](../../../m4l/host/host.test.ts)):
+  added 21 tests across 4 new describes (`Host.noteIn`, `Host.noteOff`,
+  `Host.transportStart`, `Host pos reset on startChord change`). Cover:
+  triad-input chord update with note-offs for sustained walker output,
+  next-step emits new chord at effective pos 0, `lastInputVelocity`
+  tracking + default 100, non-triad / partial input no-op, omni vs single-
+  channel filter, hybrid walker continues after release, hybrid noteOff
+  can expose new triad subset, hold-to-play last-release panic + pause,
+  hold-to-play reactivation resets cells from cells[0], pre-roll with /
+  without held notes (both modes), lattice setParams startChord pos reset,
+  same-triad setParams no-op, replay determinism (script-replay produces
+  identical event streams).
+- [x] Host ([m4l/host/host.ts](../../../m4l/host/host.ts)):
+  - `HostParams`: removed `velocity` (replaced by tracked
+    `lastInputVelocity`); added `triggerMode` (0|1) and `inputChannel`
+    (0..16).
+  - Added `noteIn(pitch, vel, channel)`, `noteOff(pitch, channel)`,
+    `transportStart()`, private `recomputeStartChord()`, private
+    `matchesInputChannel()`. Internal state: `inputHeld`,
+    `lastInputVelocity`, `walkerActive`, `startPos`, `pendingPosReset`.
+  - `step()` now gates on `walkerActive`, applies `pendingPosReset` →
+    `effectivePos = pos - startPos`, and uses `this.lastInputVelocity` for
+    output velocity.
+  - `setParams()` detects startChord change → `pendingPosReset = true`,
+    `lastTriad = null`; inputChannel change → clears `inputHeld`;
+    triggerMode → 0 → reactivates walker. `triggerMode` and `inputChannel`
+    flow through the existing `setParams` path — no separate setters
+    needed (the patcher will fire `setParams triggerMode <v>` etc.).
+  - `cellIdx()` also gates on `walkerActive` and uses effective pos.
+- [x] [m4l/host/index.js](../../../m4l/host/index.js):
+  - Constructor params updated (removed `velocity`, added `triggerMode: 0`,
+    `inputChannel: 0`).
+  - Added `noteIn` / `noteOff` / `transportStart` Max.addHandler bridges,
+    each forwarding events through `emit()` and refreshing
+    `lattice-current`. `noteOff` additionally clears the cellIdx LED if
+    the walker just paused (hold-to-play release).
+- [x] `pnpm -r test` green (engine 140, host 50); `pnpm -r typecheck`
+  green; `pnpm -r build` refreshes `dist/`.
 
 ### Phase 3 — Patcher wiring
 

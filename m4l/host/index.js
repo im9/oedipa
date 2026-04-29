@@ -9,17 +9,21 @@
 // fail to resolve 'max-api'; tests live in host.test.ts and don't touch it.
 //
 // Protocol (see docs/ai/adr/archive/002-m4l-device-architecture.md §3,
-// docs/ai/adr/003-m4l-parameters-state.md §"Message protocol"):
+// docs/ai/adr/003-m4l-parameters-state.md §"Message protocol",
+// docs/ai/adr/004-midi-input.md §"Per-target notes"):
 //
 //   Max -> here:
 //     step <pos>                          advance to host step index
 //     panic                               all notes off
 //     setParams <key> <value>             scalar param update (jitter, seed,
 //                                         stepsPerTransform, voicing, seventh,
-//                                         channel)
+//                                         channel, triggerMode, inputChannel)
 //     setStartChord <p1> <p2> <p3>        triad as MIDI notes
 //     setCell <idx> <op>                  single-cell update; op ∈ {P,L,R,hold}
 //     setCells <op0> <op1> <op2> <op3>    bulk-set the whole cell array
+//     noteIn <pitch> <velocity> <channel> incoming MIDI note-on (ADR 004)
+//     noteOff <pitch> <channel>           incoming MIDI note-off (ADR 004)
+//     transportStart                      pre-roll snapshot at transport 0→1 (ADR 004)
 //     latticeRefresh                      re-emit lattice state (used on load)
 //
 //   here -> Max (via Max.outlet):
@@ -42,8 +46,9 @@ const host = new Host({
   seventh: false,
   jitter: 0,
   seed: 0,
-  velocity: 100,
   channel: 1,
+  triggerMode: 0,
+  inputChannel: 0,
 })
 
 function emit(ev) {
@@ -122,6 +127,26 @@ Max.addHandler('setCell', (idx, op) => {
 
 Max.addHandler('setCells', (...ops) => {
   host.setParams({ cells: ops.map(String) })
+})
+
+Max.addHandler('noteIn', (pitch, velocity, channel) => {
+  const events = host.noteIn(Number(pitch), Number(velocity), Number(channel))
+  for (const ev of events) emit(ev)
+  if (events.length > 0) emitLatticeCurrent()
+})
+
+Max.addHandler('noteOff', (pitch, channel) => {
+  const events = host.noteOff(Number(pitch), Number(channel))
+  for (const ev of events) emit(ev)
+  if (events.length > 0) emitLatticeCurrent()
+  // hold-to-play release triggers panic; clear LED if walker just paused
+  if (host.currentTriad === null) clearCellIdx()
+})
+
+Max.addHandler('transportStart', () => {
+  const events = host.transportStart()
+  for (const ev of events) emit(ev)
+  if (events.length > 0) emitLatticeCurrent()
 })
 
 Max.addHandler('latticeRefresh', () => {
