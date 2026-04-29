@@ -78,6 +78,17 @@ function emitLatticeCurrent() {
   Max.outlet('lattice-current', t[0] % 12, t[1] % 12, t[2] % 12)
 }
 
+// After an input-driven startChord change, the walker has cleared lastTriad
+// (so the next step() will fire fresh notes for the new chord) — but if
+// transport is stopped, no step() runs and the marker would just disappear.
+// Place the marker on the new startChord so the user gets immediate visual
+// feedback. Once transport runs, step() re-emits the same triad and the
+// marker stays put (no flicker).
+function emitMarkerForStartChord() {
+  const sc = host.startChord
+  Max.outlet('lattice-current', sc[0] % 12, sc[1] % 12, sc[2] % 12)
+}
+
 let lastCellIdx = -1
 function emitCellIdx(pos) {
   const idx = host.cellIdx(pos)
@@ -132,15 +143,30 @@ Max.addHandler('setCells', (...ops) => {
 Max.addHandler('noteIn', (pitch, velocity, channel) => {
   const events = host.noteIn(Number(pitch), Number(velocity), Number(channel))
   for (const ev of events) emit(ev)
-  if (events.length > 0) emitLatticeCurrent()
+  // Chord changed via input. Walker is always active after noteIn (hybrid stays
+  // active; hold-to-play re-activates). Refresh both the lattice anchor (so
+  // startChord highlights move with the new chord) and the marker.
+  if (events.length > 0) {
+    emitLatticeCenter()
+    emitMarkerForStartChord()
+  }
 })
 
 Max.addHandler('noteOff', (pitch, channel) => {
   const events = host.noteOff(Number(pitch), Number(channel))
   for (const ev of events) emit(ev)
-  if (events.length > 0) emitLatticeCurrent()
-  // hold-to-play release triggers panic; clear LED if walker just paused
-  if (host.currentTriad === null) clearCellIdx()
+  if (events.length > 0) {
+    if (host.isWalkerActive) {
+      // Chord change exposed via release — show the new startChord.
+      emitLatticeCenter()
+      emitMarkerForStartChord()
+    } else {
+      // Hold-to-play last release: panic ran inside host.noteOff; marker clears
+      // alongside the cellIdx LED.
+      Max.outlet('lattice-clear')
+      clearCellIdx()
+    }
+  }
 })
 
 Max.addHandler('transportStart', () => {

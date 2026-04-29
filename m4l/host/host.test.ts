@@ -537,3 +537,51 @@ describe('Host.currentTriad / centerPc — for lattice rendering', () => {
     assert.equal(host.centerPc, 5)
   })
 })
+
+describe('Host.isWalkerActive — for marker / cellIdx UI gating', () => {
+  // The bridge layer needs to distinguish "walker paused via hold-to-play
+  // last release" (marker should clear) from "startChord just changed but
+  // walker keeps running" (marker should move to the new chord). Both
+  // states leave currentTriad === null transiently, so currentTriad alone
+  // cannot disambiguate; isWalkerActive is the dedicated signal.
+  test('default is true', () => {
+    const host = new Host(baseParams())
+    assert.equal(host.isWalkerActive, true)
+  })
+
+  test('hybrid: stays true across input + release', () => {
+    const host = new Host(baseParams({ triggerMode: 0 }))
+    host.noteIn(60, 100, 1)
+    host.noteIn(64, 100, 1)
+    host.noteIn(67, 100, 1)
+    assert.equal(host.isWalkerActive, true)
+    host.noteOff(60, 1)
+    host.noteOff(64, 1)
+    host.noteOff(67, 1)
+    assert.equal(host.isWalkerActive, true)
+  })
+
+  test('hold-to-play: false after last release, true again after next note-on', () => {
+    const host = new Host(baseParams({ triggerMode: 1 }))
+    host.noteIn(60, 100, 1)
+    host.noteIn(64, 100, 1)
+    host.noteIn(67, 100, 1)
+    assert.equal(host.isWalkerActive, true)
+    host.noteOff(60, 1)
+    host.noteOff(64, 1)
+    host.noteOff(67, 1)
+    assert.equal(host.isWalkerActive, false)
+    host.noteIn(62, 100, 1)
+    assert.equal(host.isWalkerActive, true)
+  })
+
+  test('input-driven chord change leaves currentTriad null but isWalkerActive true', () => {
+    const host = new Host(baseParams())
+    host.step(0) // populates currentTriad
+    host.noteIn(65, 100, 1)
+    host.noteIn(69, 100, 1)
+    host.noteIn(72, 100, 1) // F major triad → startChord change
+    assert.equal(host.currentTriad, null)
+    assert.equal(host.isWalkerActive, true)
+  })
+})

@@ -302,21 +302,24 @@ belongs in the engine, not the host.
 
 ### Phase 3 — Patcher wiring
 
-- [ ] Add `triggerMode` `live.numbox` (range 0–1, int) to
-  [Oedipa.maxpat](../../../m4l/Oedipa.maxpat) device strip; dump path
-  firing `setParams triggerMode <v>`. Hooked into the `hostReady` dump
-  cascade per ADR 003's rehydration order.
-- [ ] Add `inputChannel` `live.numbox` (range 0–16, int) to device strip;
-  dump path firing `setParams inputChannel <v>`. Same dump cascade.
-- [ ] Fork `midiin` to `[node.script]` via `midiparse` (or `unpack` route)
-  → emit `noteIn <pitch> <vel> <ch>` and `noteOff <pitch> <ch>` messages.
-  Existing `midiin → midiout` passthrough is retained — Live convention
-  for MIDI effects is "user hears what they play in addition to the
-  device's output".
-- [ ] Hook transport-start (via `live.observer is_playing` 0→1 transition)
-  to a host `transportStart` message that triggers pre-roll snapshot.
-- [ ] `pnpm bake` to regenerate the `.amxd` from `Oedipa.maxpat` per the
-  patcher workflow.
+- [x] Added `triggerMode` `live.numbox` (range 0–1, int, init 0) to
+  [Oedipa.maxpat](../../../m4l/Oedipa.maxpat) device strip
+  (presentation_rect column at x=540, top row); `prepend setParams
+  triggerMode` feeds [node.script]. Banged from the `obj-trig-hostready`
+  fan-out, so it joins the rehydrate dump on `hostReady`.
+- [x] Added `inputChannel` `live.numbox` (range 0–16, int, init 0 = omni)
+  next to it (column x=540, second row); `prepend setParams inputChannel`
+  → [node.script]. Same dump cascade.
+- [x] Forked `midiin` to `[node.script]` via
+  `midiin → midiparse → (outlet 0 = note pair) → unpack 0 0` and
+  `(outlet 6 = channel)`, recombined through
+  `if $i2 > 0 then noteIn $i1 $i2 $i3 else noteOff $i1 $i3`. Existing
+  `midiin → midiout` passthrough is retained.
+- [x] Hooked transport-start: extended `obj-sel-stop` from `sel 0` to
+  `sel 0 1` so its second outlet bangs on `is_playing 0→1`; that bang
+  drives a `transportStart` message into [node.script].
+- [x] `pnpm bake` rewrote `Oedipa.amxd`; JSON validated, engine 140 / host
+  50 tests still green, `pnpm -r typecheck` clean.
 
 ### Phase 4 — Manual verification in Live
 

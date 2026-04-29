@@ -82,6 +82,10 @@ export class Host {
     return this.lastTriad
   }
 
+  get isWalkerActive(): boolean {
+    return this.walkerActive
+  }
+
   cellIdx(pos: number): number {
     if (!this.walkerActive) return -1
     const { stepsPerTransform: spt, cells } = this.params
