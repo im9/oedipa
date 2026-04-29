@@ -63,10 +63,11 @@ export interface HostParams {
   // Default in production = 6 (16th @ PPQN=24); tests pass 1 to keep
   // "1 tick = 1 step" semantics.
   ticksPerStep: number
-  swing: number              // 0.5 (none) .. 0.75 (heavy); off-beat tick offset
-  humanizeVelocity: number   // 0..1 amount
-  humanizeGate: number       // 0..1 amount
-  humanizeTiming: number     // 0..1 amount
+  swing: number                // 0.5 (none) .. 0.75 (heavy); off-beat tick offset
+  humanizeVelocity: number     // 0..1 amount
+  humanizeGate: number         // 0..1 amount
+  humanizeTiming: number       // 0..1 amount
+  humanizeProbability: number  // 0..1 amount (ADR 005 Phase 5)
 }
 
 export class Host {
@@ -242,18 +243,26 @@ export class Host {
       return []
     }
 
-    if (!stepEvent.played) {
+    const cell = cells[stepEvent.cellIdx]!
+    // ADR 005 §"Humanize": apply signed uniform noise to cell vel/gate/timing
+    // with the cell-amount knobs. Engine produces raw [0, 1) draws; map to
+    // [-1, +1] via (raw*2-1) and scale by amount. Clamp per ADR table.
+    // Phase 5: humanizeProbability perturbs cell.probability before the per-
+    // event roll. Re-derive `played` from rProb < effectiveProb so amount > 0
+    // can flip outcomes both ways (more silent on 1.0 cells, more played on
+    // low-prob cells). With humanizeProbability=0, effectiveProb collapses to
+    // cell.probability and the played decision matches stepEvent.played.
+    const { humanizeVelocity, humanizeGate, humanizeTiming, humanizeProbability } = this.params
+    const effectiveProb = clamp01(cell.probability + (stepEvent.humanizeProb * 2 - 1) * humanizeProbability)
+    const played = stepEvent.resolvedOp !== 'rest' && stepEvent.rProb < effectiveProb
+
+    if (!played) {
       // rest or probability fail: silent advance. Cursor still moves; no audio.
       this.lastTriad = stepEvent.chord
       this.lastEmittedEffectivePos = effectivePos
       return []
     }
 
-    const cell = cells[stepEvent.cellIdx]!
-    // ADR 005 §"Humanize": apply signed uniform noise to cell vel/gate/timing
-    // with the cell-amount knobs. Engine produces raw [0, 1) draws; map to
-    // [-1, +1] via (raw*2-1) and scale by amount. Clamp per ADR table.
-    const { humanizeVelocity, humanizeGate, humanizeTiming } = this.params
     const cellVel = clamp01(cell.velocity + (stepEvent.humanizeVel * 2 - 1) * humanizeVelocity)
     const cellGate = clamp01(cell.gate + (stepEvent.humanizeGate * 2 - 1) * humanizeGate)
     const cellTiming = clampSigned05(cell.timing + (stepEvent.humanizeTiming * 2 - 1) * humanizeTiming)

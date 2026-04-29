@@ -61,12 +61,17 @@ export interface StepEvent {
   resolvedOp: Op         // op after jitter substitution
   chord: Triad           // chord cursor AFTER this step's transform
   played: boolean        // false on rest or failed probability roll
+  // Raw probability roll value [0, 1). Engine determines `played` via
+  // `rProb < cell.probability`; host can re-derive when applying humanizeProb
+  // amount (ADR 005 Phase 5).
+  rProb: number
   // Raw uniform [0, 1) PRNG draws. Always populated regardless of op or
   // probability outcome — host applies cell humanize-amount and signed-noise
   // math (vel + (h*2-1)*amount, etc.) to keep the cross-target stream stable.
   humanizeVel: number
   humanizeGate: number
   humanizeTiming: number
+  humanizeProb: number   // ADR 005 Phase 5 — host scales by humanizeProbability
 }
 
 function mod12(n: number): PitchClass {
@@ -220,6 +225,7 @@ function resolveCellIdx(
 // 4. humanizeVelocity — 1 draw, always
 // 5. humanizeGate — 1 draw, always
 // 6. humanizeTiming — 1 draw, always
+// 7. humanizeProbability — 1 draw, always (Phase 5)
 function stepBoundary(
   cursor: { chord: Triad },
   cell: Cell,
@@ -228,9 +234,11 @@ function stepBoundary(
 ): {
   resolvedOp: Op
   played: boolean
+  rProb: number
   humanizeVel: number
   humanizeGate: number
   humanizeTiming: number
+  humanizeProb: number
 } {
   let op: Op = cell.op
 
@@ -246,6 +254,7 @@ function stepBoundary(
   const humanizeVel = rng()
   const humanizeGate = rng()
   const humanizeTiming = rng()
+  const humanizeProb = rng()
 
   if (op === 'P' || op === 'L' || op === 'R') {
     cursor.chord = applyTransform(cursor.chord, op)
@@ -254,7 +263,7 @@ function stepBoundary(
 
   // rest is silent by definition; otherwise probability fail = silent-advance.
   const played = op !== 'rest' && rProb < cell.probability
-  return { resolvedOp: op, played, humanizeVel, humanizeGate, humanizeTiming }
+  return { resolvedOp: op, played, rProb, humanizeVel, humanizeGate, humanizeTiming, humanizeProb }
 }
 
 // Cell sequencer walk. Returns the chord cursor at `pos`.
@@ -305,7 +314,7 @@ export function walkStepEvent(state: WalkState, pos: number): StepEvent | null {
     if (step % spt !== 0) continue
     const cellIdx = resolveCellIdx(transformIdx, cells.length, direction, rng)
     const cell = cells[cellIdx]!
-    const { resolvedOp, played, humanizeVel, humanizeGate, humanizeTiming } =
+    const { resolvedOp, played, rProb, humanizeVel, humanizeGate, humanizeTiming, humanizeProb } =
       stepBoundary(cursor, cell, jitter, rng)
     if (step === pos) {
       result = {
@@ -313,9 +322,11 @@ export function walkStepEvent(state: WalkState, pos: number): StepEvent | null {
         resolvedOp,
         chord: [cursor.chord[0], cursor.chord[1], cursor.chord[2]],
         played,
+        rProb,
         humanizeVel,
         humanizeGate,
         humanizeTiming,
+        humanizeProb,
       }
     }
     transformIdx += 1

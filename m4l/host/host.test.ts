@@ -27,6 +27,7 @@ function baseParams(overrides: Partial<HostParams> = {}): HostParams {
     humanizeVelocity: 0,
     humanizeGate: 0,
     humanizeTiming: 0,
+    humanizeProbability: 0,
     ...overrides,
   }
 }
@@ -1096,6 +1097,7 @@ describe('Host.step — humanize', () => {
       humanizeVelocity: 0.4,
       humanizeGate: 0.3,
       humanizeTiming: 0.2,
+      humanizeProbability: 0.1,
       stepsPerTransform: 4,
     })
     const a = new Host(params)
@@ -1103,6 +1105,90 @@ describe('Host.step — humanize', () => {
     a.step(0); b.step(0)
     for (const pos of [4, 8, 12, 16]) {
       assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} replay match`)
+    }
+  })
+
+  // ── ADR 005 Phase 5 — humanizeProbability ────────────────────────────────
+
+  test('humanizeProbability=0 leaves the probability roll unperturbed', () => {
+    // cell.probability=0.5 baseline, seed=42 → some fixed sequence of
+    // played/silent steps. With humanizeProbability=0, the per-event roll uses
+    // (raw < 0.5) verbatim. Two hosts (with/without amount=0) must match.
+    const stub = {
+      cells: [makeCell('P', { probability: 0.5 }), makeCell('L', { probability: 0.5 }), makeCell('R', { probability: 0.5 }), makeCell('hold', { probability: 0.5 })],
+      seed: 42,
+      stepsPerTransform: 4,
+    }
+    const baseline = new Host(baseParams(stub))
+    const zeroAmount = new Host(baseParams({ ...stub, humanizeProbability: 0 }))
+    baseline.step(0); zeroAmount.step(0)
+    for (const pos of [4, 8, 12, 16, 20, 24]) {
+      assert.deepEqual(zeroAmount.step(pos), baseline.step(pos), `pos=${pos} amount=0 must match baseline`)
+    }
+  })
+
+  test('humanizeProbability > 0 changes which steps fire (perturbs probability roll)', () => {
+    // cell.probability=0.5 with seed=42 produces some specific play/silent
+    // pattern. humanizeProbability=0.5 shifts the per-event probability by up
+    // to ±0.5 (uniform), so on draws where the perturbed prob crosses the
+    // roll value, the played outcome flips. Across 16 boundaries at least
+    // one must differ from the unperturbed run.
+    const stub = {
+      cells: [makeCell('P', { probability: 0.5 }), makeCell('L', { probability: 0.5 }), makeCell('R', { probability: 0.5 }), makeCell('hold', { probability: 0.5 })],
+      seed: 42,
+      stepsPerTransform: 4,
+    }
+    const baseline = new Host(baseParams(stub))
+    const humanized = new Host(baseParams({ ...stub, humanizeProbability: 0.5 }))
+    baseline.step(0); humanized.step(0)
+    let observedDifference = false
+    for (let pos = 4; pos <= 64; pos += 4) {
+      const base = baseline.step(pos)
+      const hum = humanized.step(pos)
+      const baseHasNoteOn = base.some(e => e.type === 'noteOn')
+      const humHasNoteOn = hum.some(e => e.type === 'noteOn')
+      if (baseHasNoteOn !== humHasNoteOn) {
+        observedDifference = true
+        break
+      }
+    }
+    assert.ok(observedDifference, 'humanizeProbability=0.5 must flip at least one step\'s play outcome')
+  })
+
+  test('humanizeProbability clamps perturbed probability to [0, 1]', () => {
+    // cell.probability=1.0 + humanizeProbability=1.0: signed noise in [-1, +1]
+    // shifts effective prob into [0, 2], then clamp to [0, 1]. With only the
+    // negative half of the noise distribution able to silence a step, we
+    // expect SOME steps to silence (~half of them on average).
+    const stub = {
+      cells: [makeCell('P', { probability: 1.0 }), makeCell('L', { probability: 1.0 }), makeCell('R', { probability: 1.0 }), makeCell('hold', { probability: 1.0 })],
+      seed: 42,
+      stepsPerTransform: 4,
+    }
+    const host = new Host(baseParams({ ...stub, humanizeProbability: 1.0 }))
+    host.step(0)
+    let silentSteps = 0
+    let totalSteps = 0
+    for (let pos = 4; pos <= 128; pos += 4) {
+      const ev = host.step(pos)
+      const hasNoteOn = ev.some(e => e.type === 'noteOn')
+      totalSteps++
+      if (!hasNoteOn) silentSteps++
+    }
+    assert.ok(silentSteps > 0, 'humanizeProbability=1 with cell.prob=1 must silence at least one step')
+    assert.ok(silentSteps < totalSteps, 'humanizeProbability=1 with cell.prob=1 must keep at least one step playing')
+  })
+
+  test('humanize-disabled host (all 4 amounts = 0) bit-identical regardless of humanizeProbability presence', () => {
+    // Phase 5 regression guard: setting humanizeProbability=0 alongside the
+    // existing 3 zero amounts must not perturb event streams vs. a host
+    // constructed without ever touching humanizeProbability (default 0).
+    const stub = { cells: cells('P', 'L', 'R', 'hold'), seed: 99, stepsPerTransform: 4 }
+    const a = new Host(baseParams(stub))
+    const b = new Host(baseParams({ ...stub, humanizeProbability: 0 }))
+    a.step(0); b.step(0)
+    for (const pos of [4, 8, 12, 16, 20]) {
+      assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} match`)
     }
   })
 })

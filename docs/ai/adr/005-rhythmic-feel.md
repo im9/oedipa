@@ -14,6 +14,22 @@ strategy, and subdivision options per second design-review pass.
 pinned (PPQN=24 patcher → host `ticksPerStep` multiplier → engine pos =
 subdivision-step). See §Subdivision for rationale and the future-feature
 implications (ratchet, polyrhythm, groove pool).
+**Revised**: 2026-04-29 — Phase 5 redirected. The original §UI prescription
+(jsui cell strip with 5 axes encoded per box) is withdrawn after a Phase 5
+implementation attempt: (a) per-cell numeric tweaking has no live-performance
+use case for this instrument — the desired runtime expressivity is "global
+ゆらぎ", not "per-step micro-edits"; (b) the strip's click-cycle op
+affordance regressed predictability vs the existing `live.tab` 1-click direct
+selection (see global feedback memory `feedback_avoid_cycle_press`); (c) the
+5-axis-in-one-box density was a misread of "consolidation" — the existing
+Cells region was already where consolidation should happen, but no native
+widget can carry 5 axes at once, and the jsui replacement loses the existing
+op affordance without paying back enough. Per-cell `Cell` fields remain in
+the engine (they shape how keyboard input dynamics translate to output, ADR
+004 velocity passthrough × per-cell `velocity`), and the patcher's hidden
+16 × `live.numbox` for vel/gate/probability/timing remains as the
+automation-lane-only setup path. The new Phase 5 scope is global humanize
+axis expansion (see §Humanize and §Phase 5).
 
 ## Context
 
@@ -239,6 +255,13 @@ behavior — peaks fall away, troughs lift up.
 Random source is the shared seeded PRNG → reproducible. Default 0 means
 humanize is opt-in; authored phrasing is the primary expression source.
 
+Phase 4 ships these three axes. Phase 5 extends humanize beyond what a
+classical step sequencer offers — see §Phase 5 for the open scope. At
+minimum a `humanizeProbability` axis is added; additional axes / shapes
+(non-uniform distributions, time-correlated noise, jitter-rate humanize,
+inter-axis correlation) are explored within Phase 5 once the device-strip
+real estate cost of each is concrete.
+
 ### PRNG draw order
 
 For deterministic reproducibility across playback restarts and across
@@ -253,6 +276,8 @@ order from the same seeded stream:
 4. **humanizeVelocity**
 5. **humanizeGate**
 6. **humanizeTiming**
+7. **humanizeProbability** (Phase 5) — perturbs cell.probability before
+   the per-event roll; the host re-derives `played` from `rProb < clamp01(cell.probability + (humanizeProb*2-1) * humanizeProbability)`
 
 Cross-target test vectors must reflect this order.
 
@@ -268,8 +293,8 @@ Cells persist as 20 hidden parameters per cell field:
 - 4 × `live.numbox` for `timing`
 
 Global layer parameters: `swing`, `subdivision`, `stepDirection`,
-`humanizeVelocity`, `humanizeGate`, `humanizeTiming` — each its own
-`live.*` object.
+`humanizeVelocity`, `humanizeGate`, `humanizeTiming`,
+`humanizeProbability` (Phase 5) — each its own `live.*` object.
 
 This continues ADR 003's pattern (live.* over pattr; per the project
 memory entry on pattr unreliability) and gives each field its own
@@ -293,28 +318,50 @@ saves until the user edits a cell.
 
 ## UI
 
-A custom **cell strip** is added to the jsui lattice surface, below the
-lattice. Each cell renders as a box where:
+The device-strip UI for rhythmic expression is split deliberately
+along the **performance vs setup** boundary:
 
-- height ∝ `velocity`
-- width ∝ `gate`
-- horizontal offset ∝ `timing`
-- opacity ∝ `probability`
-- color = `op`
+- **op (per cell)** — direct device-strip UI. 4 × `live.tab` (P / L / R / —
+  / ·, parameter IDs `OedipaCell0..3`), 1-click selection of any op. This
+  is performance-touchable.
+- **velocity / gate / probability / timing (per cell)** — **automation lane
+  only**, no device-strip widget. The 16 × hidden `live.numbox`
+  (`OedipaCell{0..3}{Vel,Gate,Prob,Time}`) keep `parameter_visible: 1` so
+  Live's automation list reaches them, but no device-strip control surfaces
+  them. Setup-time tuning is the only use case for per-cell numeric values
+  (e.g. ducking one cell's velocity, lengthening one cell's gate); the
+  performance-time variation comes from the global humanize layer below,
+  not from per-cell drags.
+- **swing / subdivision / stepDirection / humanize × N** — direct
+  device-strip UI in the FEEL section. Performance-touchable, drives the
+  whole walk.
 
-The model layer (hit testing, drag-to-value math, op cycling, value
-clamping) is pure TypeScript runnable in Node — testable per CLAUDE.md
-"GUI / UI components". The renderer reads model state.
+Why no per-cell numeric UI: an early Phase 5 design proposed a custom jsui
+"cell strip" encoding all 5 axes per box (height = velocity, width = gate,
+x-offset = timing, alpha = probability, color = op). The implementation
+attempt failed two tests:
 
-The 5-axis-per-box density is intentionally rich (one box conveys five
-musical dimensions). Phase 5 implementation will likely iterate on
-specific affordances — which drag axis maps to which field, modifier-key
-discovery, etc. The data contract (5 fields per cell) is fixed by this
-ADR; the affordances are not.
+1. **Op affordance regression**: collapsing op into "color of the box"
+   forces some interaction (cycle-on-click, scroll wheel, modifier-drag,
+   right-click menu, …) to set it. None matched the existing `live.tab`'s
+   1-click direct selection — the prototype's cycle-on-click made the next
+   state genuinely hard for the player to predict (general UX principle,
+   memory `feedback_avoid_cycle_press`). Replacing a working direct-select
+   widget with a less-direct one for the sake of iconographic compactness
+   is anti-musical.
+2. **Use-case mismatch**: per-cell numeric drags during performance is
+   not how this instrument is played. Bulk-feel control during performance
+   maps to global humanize, not per-cell micro-edits. Surface area spent on
+   per-cell numeric controls earns no performance utility.
 
-The 4 op `live.tab`, 16 `live.numbox` cell expression params, and 6
-global `live.*` are addressable for host automation. Continues ADR 003's
-"lattice = primary UI, `live.*` = automation surface" pattern.
+Per-cell `Cell` fields stay in the engine — they shape how keyboard input
+dynamics translate into output (ADR 004 velocity passthrough × per-cell
+`velocity` multiplier; per-cell `gate` shapes hold-cell sustain length;
+etc.). The automation lane is the access path for setup-time tuning.
+
+The 4 op `live.tab`, 16 hidden `live.numbox`, and 6 global `live.*` remain
+addressable for host automation. Continues ADR 003's "lattice = primary
+UI, `live.*` = automation surface" pattern.
 
 ## Scope
 
@@ -323,9 +370,11 @@ global `live.*` are addressable for host automation. Continues ADR 003's
 - 5-field cell record (op, velocity, gate, probability, timing)
 - 5-option `op` vocabulary including `rest`
 - Global rhythmic layer: swing, subdivision (5 opts), stepDirection
-- Humanize layer: 3 axes (velocity, gate, timing)
-- jsui cell strip UI (logic + render)
+- Humanize layer: 3 axes (velocity, gate, timing) in Phase 4; expanded in
+  Phase 5 (probability + step-sequencer-unusual axes — see §Phase 5)
 - Migration from ADR 003 op `live.tab` (ID-preserving)
+- per-cell numeric values (vel/gate/prob/timing) accessible via automation
+  lane only — no device-strip UI surface (see §UI)
 
 **Out of scope:**
 
@@ -392,9 +441,11 @@ Phases follow ADR 003's TDD pattern.
     via the existing `sel` cascade (now 5 outlets).
   - [x] Patcher: 16 × `live.numbox` (vel/gate/prob/timing per cell)
     added on the patching canvas. **Hidden from the device strip
-    until Phase 5** — Phase 5 cell-strip jsui is the proper UI for
-    these (per ADR §UI). Default `parameter_visible: 1` keeps them
-    surfaced in Live's automation list as a fallback. Each dumps via
+    permanently** — per the revised §UI, per-cell numeric values are
+    automation-lane-only (the original "Phase 5 cell-strip will surface
+    these" plan was withdrawn; see §UI rationale). Default
+    `parameter_visible: 1` keeps them in Live's automation list as the
+    setup-time access path. Each dumps via
     `prepend setCellField <idx> <field>` → `[node.script]`. Defaults
     match Phase 1: vel=1.0, gate=0.9, prob=1.0, timing=0.0; ranges
     0..1 except timing -0.5..+0.5. All 16 also wired into the
@@ -426,11 +477,34 @@ Phases follow ADR 003's TDD pattern.
     16th-note subdivision-step lines up with `ticksPerStep=6`,
     restoring 1 transform period = 1 quarter at the default
     subdivision.
-- [ ] **Phase 5 — jsui cell strip**
-  - Pure model layer (hit testing, drag math, op cycling, clamping)
-    tested in Node.
-  - Renderer in jsui, integrated below the existing lattice.
-  - UI affordance iteration permitted within Phase 5.
+- [x] **Phase 5 — Humanize axis expansion (replaces the withdrawn
+  cell-strip plan; see §UI for the rationale)**
+  - [x] **Required**: add `humanizeProbability` (`live.dial` 0–1, default 0).
+    Engine: extend the humanize draw vector to a 4th axis sharing the
+    seeded PRNG (drawn after `humanizeTiming`, see §PRNG draw order; this
+    keeps Phase 1–4 cross-target reproducibility intact). Engine also
+    exposes the raw probability roll `rProb` on `StepEvent` so the host
+    can re-derive `played` after applying the humanize amount. Host:
+    apply `(raw * 2 - 1) * humanizeProbability` to per-cell `probability`,
+    clamp `[0, 1]`, and re-roll `played = rProb < effectiveProb` (with
+    amount=0 collapsing to the engine-determined `played`, keeping the
+    Phase 4 regression contract). Patcher: 1 new `live.dial`
+    `OedipaHumanizeProbability` in the FEEL section's Humanize group
+    (devicewidth widened 1040 → 1080 for the 4th dial), wired through
+    `prepend setParams humanizeProbability` and the `obj-trig-hostready`
+    rehydrate cascade.
+  - **Open scope** (decide what makes the cut once each is concrete on
+    the device strip): non-uniform distributions per axis (e.g.
+    triangle / gaussian for "softer" humanize), time-correlated noise
+    (smoothed random walk vs per-event independent), inter-axis
+    correlation (single random source modulating multiple axes
+    coherently), `humanizeJitter` (humanize the jitter rate itself rather
+    than the resolved op), per-axis sensitivity asymmetry (e.g. timing
+    only-late). Anything Phase 5 adopts must beat the "another small
+    knob in FEEL" cost.
+  - The §UI partition (op direct on live.tab, vel/gate/prob/timing
+    automation-lane only, global humanize on device strip) is the fixed
+    surface for any axis added here.
 - [ ] **Phase 6 — Migration, doc sync, manual smoke**
   - Update [docs/ai/concept.md](../concept.md) velocity section —
     remove "single static velocity parameter intentionally not exposed"
@@ -445,10 +519,12 @@ Phases follow ADR 003's TDD pattern.
 
 **m4l**: as above.
 
-**VST/iOS**: APVTS parameters per cell field and per global. Custom UI
-component for the cell strip. Engine `Cell` shape and walk semantics
-are shared logic — cross-target test vectors enforce semantic parity,
-including PRNG draw order.
+**VST/iOS**: APVTS parameters per cell field and per global. Engine
+`Cell` shape and walk semantics are shared logic — cross-target test
+vectors enforce semantic parity, including PRNG draw order. The §UI
+partition (op direct, per-cell numeric automation-only, global humanize
+on the main UI) is the cross-target convention; native equivalents
+substitute (host automation lane on VST/AU, parameter list on AUv3).
 
 ## Supersedes
 

@@ -12,7 +12,7 @@
         "rect": [80.0, 80.0, 1400.0, 820.0],
         "bglocked": 0,
         "openinpresentation": 1,
-        "devicewidth": 1040.0,
+        "devicewidth": 1080.0,
         "default_fontsize": 12.0,
         "default_fontface": 0,
         "default_fontname": "Arial",
@@ -248,12 +248,14 @@
             {"box": {"id": "obj-humtime", "maxclass": "live.dial", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"], "parameter_enable": 1, "patching_rect": [970.0, 1660.0, 60.0, 40.0], "presentation": 1, "presentation_rect": [966.0, 104.0, 38.0, 38.0], "saved_attribute_attributes": {"valueof": {"parameter_initial": [0.0], "parameter_initial_enable": 1, "parameter_longname": "OedipaHumanizeTiming", "parameter_mmax": 1.0, "parameter_mmin": 0.0, "parameter_shortname": "Tim", "parameter_type": 0, "parameter_unitstyle": 1}}}},
             {"box": {"id": "obj-prep-humtime", "maxclass": "newobj", "text": "prepend setParams humanizeTiming", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [1040.0, 1660.0, 240.0, 22.0]}},
 
-            {"box": {"id": "obj-jsui-separator3", "maxclass": "jsui", "filename": "/Users/tn/src/vst/oedipa/m4l/separator-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 0, "patching_rect": [970.0, 1720.0, 1.0, 172.0], "presentation": 1, "presentation_rect": [869.0, 8.0, 1.0, 172.0]}},
+            {"box": {"id": "obj-jsui-separator3", "maxclass": "jsui", "filename": "/Users/tn/src/vst/oedipa/m4l/separator-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 0, "patching_rect": [970.0, 1780.0, 1.0, 172.0], "presentation": 1, "presentation_rect": [869.0, 8.0, 1.0, 172.0]}},
 
             {"box": {"id": "obj-lbl-feel-swing", "maxclass": "comment", "text": "Swing", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 1110.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [878.0, 8.0, 38.0, 14.0]}},
             {"box": {"id": "obj-lbl-feel-subdiv", "maxclass": "comment", "text": "Subdiv", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 1170.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [928.0, 8.0, 100.0, 14.0]}},
             {"box": {"id": "obj-lbl-feel-stepdir", "maxclass": "comment", "text": "Step Dir", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 1370.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [928.0, 48.0, 100.0, 14.0]}},
-            {"box": {"id": "obj-lbl-feel-humanize", "maxclass": "comment", "text": "Humanize", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 1530.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [878.0, 88.0, 126.0, 14.0]}}
+            {"box": {"id": "obj-lbl-feel-humanize", "maxclass": "comment", "text": "Humanize", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 1530.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [878.0, 88.0, 170.0, 14.0]}},
+            {"box": {"id": "obj-humprob", "maxclass": "live.dial", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"], "parameter_enable": 1, "patching_rect": [970.0, 1720.0, 60.0, 40.0], "presentation": 1, "presentation_rect": [1010.0, 104.0, 38.0, 38.0], "saved_attribute_attributes": {"valueof": {"parameter_initial": [0.0], "parameter_initial_enable": 1, "parameter_longname": "OedipaHumanizeProbability", "parameter_mmax": 1.0, "parameter_mmin": 0.0, "parameter_shortname": "Prob", "parameter_type": 0, "parameter_unitstyle": 1}}}},
+            {"box": {"id": "obj-prep-humprob", "maxclass": "newobj", "text": "prepend setParams humanizeProbability", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [1040.0, 1720.0, 270.0, 22.0]}}
         ],
         "lines": [
             {"patchline": {"source": ["obj-midiin", 0], "destination": ["obj-midiout", 0]}},
@@ -522,7 +524,11 @@
 
             {"patchline": {"source": ["obj-humtime", 0], "destination": ["obj-prep-humtime", 0]}},
             {"patchline": {"source": ["obj-prep-humtime", 0], "destination": ["obj-nodescript", 0]}},
-            {"patchline": {"source": ["obj-trig-hostready", 0], "destination": ["obj-humtime", 0]}}
+            {"patchline": {"source": ["obj-trig-hostready", 0], "destination": ["obj-humtime", 0]}},
+
+            {"patchline": {"source": ["obj-humprob", 0], "destination": ["obj-prep-humprob", 0]}},
+            {"patchline": {"source": ["obj-prep-humprob", 0], "destination": ["obj-nodescript", 0]}},
+            {"patchline": {"source": ["obj-trig-hostready", 0], "destination": ["obj-humprob", 0]}}
         ]
     }
 }
