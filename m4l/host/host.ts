@@ -68,6 +68,7 @@ export interface HostParams {
   humanizeGate: number         // 0..1 amount
   humanizeTiming: number       // 0..1 amount
   humanizeProbability: number  // 0..1 amount (ADR 005 Phase 5)
+  humanizeDrift: number        // 0..1 EMA factor for time-correlated humanize (ADR 005 Phase 5)
 }
 
 export class Host {
@@ -127,7 +128,7 @@ export class Host {
 
   cellIdx(pos: number): number {
     if (!this.walkerActive) return -1
-    const { stepsPerTransform: spt, cells, startChord, jitter, seed, stepDirection, ticksPerStep } = this.params
+    const { stepsPerTransform: spt, cells, startChord, jitter, seed, stepDirection, ticksPerStep, humanizeDrift } = this.params
     if (cells.length === 0) return -1
     const effectivePos = pos - this.startPos
     if (effectivePos <= 0) return -1
@@ -139,7 +140,7 @@ export class Host {
     if (lastBoundaryTicks <= 0) return -1
     const lastBoundarySubdivPos = lastBoundaryTicks / ticksPerStep
     const ev = walkStepEvent(
-      { startChord, cells, stepsPerTransform: spt, jitter, seed, stepDirection },
+      { startChord, cells, stepsPerTransform: spt, jitter, seed, stepDirection, humanizeDrift },
       lastBoundarySubdivPos,
     )
     return ev?.cellIdx ?? -1
@@ -204,7 +205,7 @@ export class Host {
       return []
     }
 
-    const { startChord, cells, stepsPerTransform: spt, jitter, seed, voicing, seventh, channel, stepDirection, ticksPerStep, swing } = this.params
+    const { startChord, cells, stepsPerTransform: spt, jitter, seed, voicing, seventh, channel, stepDirection, ticksPerStep, swing, humanizeDrift } = this.params
     // ADR 005 §Subdivision: patcher streams ticks at PPQN=24; ticksPerStep
     // collapses raw ticks into subdivision-steps before stepsPerTransform.
     // One transform period (cell consumption interval) = spt * ticksPerStep
@@ -235,7 +236,7 @@ export class Host {
     if (effectivePos % transformTicks !== 0) return []
 
     const subdivStepPos = effectivePos / ticksPerStep
-    const walkState: WalkState = { startChord, cells, stepsPerTransform: spt, jitter, seed, stepDirection }
+    const walkState: WalkState = { startChord, cells, stepsPerTransform: spt, jitter, seed, stepDirection, humanizeDrift }
     const stepEvent = walkStepEvent(walkState, subdivStepPos)
     if (stepEvent === null) {
       // Empty cells[]; fall back to walk() so the cursor is still defined.

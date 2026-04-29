@@ -554,6 +554,103 @@ test('walkStepEvent: humanize draws unaffected by probability values (downstream
   }
 })
 
+test('walkStepEvent: humanizeDrift=0 (default) is identity (raw draws unchanged)', () => {
+  // Drift defaults to 0 → EMA factor (1-α) = 1 → smoothed = raw. With this
+  // contract, all Phase 1–5 cross-target reproducibility holds bit-identically.
+  const cells = [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')]
+  const without: WalkState = { ...baseState, cells, seed: 42 }
+  const withZero: WalkState = { ...baseState, cells, seed: 42, humanizeDrift: 0 }
+  for (const pos of [1, 2, 3, 4, 5, 7, 11, 17]) {
+    const a = walkStepEvent(without, pos)!
+    const b = walkStepEvent(withZero, pos)!
+    assert.equal(a.humanizeVel, b.humanizeVel, `pos=${pos} vel must match`)
+    assert.equal(a.humanizeGate, b.humanizeGate, `pos=${pos} gate must match`)
+    assert.equal(a.humanizeTiming, b.humanizeTiming, `pos=${pos} timing must match`)
+    assert.equal(a.humanizeProb, b.humanizeProb, `pos=${pos} prob must match`)
+  }
+})
+
+test('walkStepEvent: humanizeDrift > 0 produces EMA-smoothed humanize values', () => {
+  // EMA contract: v_t = drift * v_{t-1} + (1-drift) * u_t, prev_init = 0.5.
+  // For drift=0.5 we can re-simulate the smoothing by hand using the raw draws
+  // (which are deterministic from mulberry32(seed)).
+  const drift = 0.5
+  const state: WalkState = {
+    ...baseState,
+    cells: [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')],
+    seed: 42,
+    humanizeDrift: drift,
+  }
+  // Re-simulate raw draws and EMA. PRNG draw order: probability, vel, gate,
+  // timing, prob (5 draws per step, with no jitter, no random direction).
+  const rng = mulberry32(42)
+  let prevVel = 0.5, prevGate = 0.5, prevTim = 0.5, prevProb = 0.5
+  for (let step = 1; step <= 6; step++) {
+    rng() // probability
+    const rawVel = rng()
+    const rawGate = rng()
+    const rawTim = rng()
+    const rawProb = rng()
+    const expVel = drift * prevVel + (1 - drift) * rawVel
+    const expGate = drift * prevGate + (1 - drift) * rawGate
+    const expTim = drift * prevTim + (1 - drift) * rawTim
+    const expProb = drift * prevProb + (1 - drift) * rawProb
+    prevVel = expVel; prevGate = expGate; prevTim = expTim; prevProb = expProb
+    const ev = walkStepEvent(state, step)!
+    assert.ok(Math.abs(ev.humanizeVel - expVel) < 1e-12, `pos=${step} vel ${ev.humanizeVel} vs ${expVel}`)
+    assert.ok(Math.abs(ev.humanizeGate - expGate) < 1e-12, `pos=${step} gate ${ev.humanizeGate} vs ${expGate}`)
+    assert.ok(Math.abs(ev.humanizeTiming - expTim) < 1e-12, `pos=${step} timing`)
+    assert.ok(Math.abs(ev.humanizeProb - expProb) < 1e-12, `pos=${step} prob`)
+  }
+})
+
+test('walkStepEvent: humanizeDrift smoothed values stay within [0, 1)', () => {
+  // EMA of [0,1) draws starting from prev=0.5 stays in [0, 1) because
+  // α*v + (1-α)*u with v,u ∈ [0,1) lies in [0, α + (1-α)) = [0, 1).
+  // Host's clamp01 math depends on the smoothed values being in the same
+  // domain as raw uniforms — this test pins that domain invariant.
+  for (const drift of [0.1, 0.5, 0.9, 0.99]) {
+    const state: WalkState = {
+      ...baseState,
+      cells: [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')],
+      seed: 7,
+      humanizeDrift: drift,
+    }
+    for (let pos = 1; pos <= 64; pos++) {
+      const ev = walkStepEvent(state, pos)!
+      for (const [name, v] of [['vel', ev.humanizeVel], ['gate', ev.humanizeGate], ['timing', ev.humanizeTiming], ['prob', ev.humanizeProb]] as const) {
+        assert.ok(v >= 0 && v < 1, `drift=${drift} pos=${pos} ${name}=${v} must be in [0, 1)`)
+      }
+    }
+  }
+})
+
+test('walkStepEvent: humanizeDrift produces autocorrelation (adjacent values are similar)', () => {
+  // The whole point of drift: independent draws have ~0 autocorrelation,
+  // smoothed walks have high autocorrelation. Compare mean |Δv| between
+  // adjacent steps for drift=0 (independent) vs drift=0.9 (heavy smoothing).
+  // Smoothed must produce smaller adjacent gaps on average.
+  const cells = [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')]
+  const independent: WalkState = { ...baseState, cells, seed: 13, humanizeDrift: 0 }
+  const smoothed: WalkState = { ...baseState, cells, seed: 13, humanizeDrift: 0.9 }
+  let independentSum = 0, smoothedSum = 0
+  let pairs = 0
+  let prevIndep: number | null = null, prevSmooth: number | null = null
+  for (let pos = 1; pos <= 200; pos++) {
+    const ind = walkStepEvent(independent, pos)!.humanizeVel
+    const sm = walkStepEvent(smoothed, pos)!.humanizeVel
+    if (prevIndep !== null) {
+      independentSum += Math.abs(ind - prevIndep)
+      smoothedSum += Math.abs(sm - prevSmooth!)
+      pairs++
+    }
+    prevIndep = ind; prevSmooth = sm
+  }
+  const meanIndep = independentSum / pairs
+  const meanSmooth = smoothedSum / pairs
+  assert.ok(meanSmooth < meanIndep * 0.5, `drift=0.9 mean adjacent Δ (${meanSmooth.toFixed(4)}) must be << drift=0 (${meanIndep.toFixed(4)})`)
+})
+
 test('walkStepEvent: humanizeProb draw is downstream of humanizeTiming (ADR 005 Phase 5)', () => {
   // Cross-target reproducibility contract: adding humanizeProbability as the
   // 7th PRNG draw must not perturb the first 6 draws — the same seed must

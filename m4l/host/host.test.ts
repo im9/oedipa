@@ -28,6 +28,7 @@ function baseParams(overrides: Partial<HostParams> = {}): HostParams {
     humanizeGate: 0,
     humanizeTiming: 0,
     humanizeProbability: 0,
+    humanizeDrift: 0,
     ...overrides,
   }
 }
@@ -1190,6 +1191,55 @@ describe('Host.step — humanize', () => {
     for (const pos of [4, 8, 12, 16, 20]) {
       assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} match`)
     }
+  })
+
+  test('humanizeDrift=0 (default) is bit-identical to a host that never touches drift', () => {
+    // Phase 5 regression guard for time-correlated humanize. Drift defaults
+    // to 0 (identity EMA) so any combination of non-zero humanize amounts +
+    // drift=0 must produce exactly the same event stream as the same host
+    // without drift wiring.
+    const stub = {
+      cells: cells('P', 'L', 'R', 'hold'),
+      seed: 7,
+      stepsPerTransform: 4,
+      humanizeVelocity: 0.3,
+      humanizeGate: 0.2,
+      humanizeTiming: 0.1,
+      humanizeProbability: 0.4,
+    }
+    const a = new Host(baseParams(stub))
+    const b = new Host(baseParams({ ...stub, humanizeDrift: 0 }))
+    a.step(0); b.step(0)
+    for (const pos of [4, 8, 12, 16, 20, 24]) {
+      assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} match`)
+    }
+  })
+
+  test('humanizeDrift > 0 changes the event stream from independent humanize', () => {
+    // With same seed and same per-axis amounts, drift>0 must produce a
+    // DIFFERENT event stream from drift=0 (the smoothed values are different
+    // from raw uniforms in general). Confirms the drift parameter is wired.
+    const stub = {
+      cells: cells('P', 'L', 'R', 'hold'),
+      seed: 7,
+      stepsPerTransform: 4,
+      humanizeVelocity: 0.5,
+    }
+    const independent = new Host(baseParams(stub))
+    const smoothed = new Host(baseParams({ ...stub, humanizeDrift: 0.7 }))
+    independent.step(0); smoothed.step(0)
+    let observedDifference = false
+    for (let pos = 4; pos <= 64; pos += 4) {
+      const a = independent.step(pos)
+      const b = smoothed.step(pos)
+      const aOn = a.find(e => e.type === 'noteOn')
+      const bOn = b.find(e => e.type === 'noteOn')
+      if (aOn && bOn && aOn.type === 'noteOn' && bOn.type === 'noteOn' && aOn.velocity !== bOn.velocity) {
+        observedDifference = true
+        break
+      }
+    }
+    assert.ok(observedDifference, 'humanizeDrift=0.7 must perturb at least one MIDI velocity vs drift=0')
   })
 })
 

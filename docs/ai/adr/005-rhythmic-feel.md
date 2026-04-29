@@ -279,6 +279,11 @@ order from the same seeded stream:
 7. **humanizeProbability** (Phase 5) — perturbs cell.probability before
    the per-event roll; the host re-derives `played` from `rProb < clamp01(cell.probability + (humanizeProb*2-1) * humanizeProbability)`
 
+`humanizeDrift` (Phase 5) does not consume any additional PRNG draws — it
+re-shapes the four humanize draws (4–7 above) via a per-axis EMA inside
+`walkStepEvent`. With drift=0 (default) the EMA collapses to identity, so
+the cross-target draw stream is bit-identical to a drift-unaware engine.
+
 Cross-target test vectors must reflect this order.
 
 ## Persistence
@@ -294,7 +299,8 @@ Cells persist as 20 hidden parameters per cell field:
 
 Global layer parameters: `swing`, `subdivision`, `stepDirection`,
 `humanizeVelocity`, `humanizeGate`, `humanizeTiming`,
-`humanizeProbability` (Phase 5) — each its own `live.*` object.
+`humanizeProbability` (Phase 5), `humanizeDrift` (Phase 5) — each its
+own `live.*` object.
 
 This continues ADR 003's pattern (live.* over pattr; per the project
 memory entry on pattr unreliability) and gives each field its own
@@ -493,27 +499,55 @@ Phases follow ADR 003's TDD pattern.
     (devicewidth widened 1040 → 1080 for the 4th dial), wired through
     `prepend setParams humanizeProbability` and the `obj-trig-hostready`
     rehydrate cascade.
-  - **Open scope** (decide what makes the cut once each is concrete on
-    the device strip): non-uniform distributions per axis (e.g.
-    triangle / gaussian for "softer" humanize), time-correlated noise
-    (smoothed random walk vs per-event independent), inter-axis
-    correlation (single random source modulating multiple axes
-    coherently), `humanizeJitter` (humanize the jitter rate itself rather
-    than the resolved op), per-axis sensitivity asymmetry (e.g. timing
-    only-late). Anything Phase 5 adopts must beat the "another small
-    knob in FEEL" cost.
+  - [x] **Adopted from Open scope — `humanizeDrift`** (time-correlated
+    noise, `live.dial` 0–1, default 0). Single global EMA factor
+    applied independently to each of the 4 humanize axes:
+    `v_t = drift * v_{t-1} + (1 - drift) * raw_t`, prev_init = 0.5.
+    Smoothed inside `walkStepEvent` so any-pos restart reproduces
+    (matches the chord cursor reseed contract). Smoothed values stay in
+    `[0, 1)` so the host's existing `(raw*2-1)*amount` math is unchanged.
+    Picked over the other Open-scope candidates because (a) it has no
+    dependency on existing knobs (unlike `humanizeJitter`), (b) it
+    strengthens all 4 axes via a single `Drift` dial (lowest UI cost),
+    and (c) it directly addresses the most likely smoke complaint —
+    independent uniforms sound jittery, smoothed walks sound like
+    drift/breath. Patcher: 1 new `OedipaHumanizeDrift` `live.dial`
+    (devicewidth widened 1080 → 1120 for the 5th dial); same wiring
+    pattern as the other humanize knobs.
+  - **Open scope** (deferred — re-evaluate after Phase 6 smoke):
+    non-uniform distributions per axis (e.g. triangle / gaussian for
+    "softer" humanize), inter-axis correlation (single random source
+    modulating multiple axes coherently), `humanizeJitter` (humanize
+    the jitter rate itself), per-axis sensitivity asymmetry (e.g.
+    timing only-late). If smoke surfaces a need, add the axis directly
+    via a small follow-up commit using the same Phase 5 pattern — no
+    new ADR required (per `feedback_dont_split_adrs`). Each addition
+    must still beat the "another small knob in FEEL" cost; the bar is
+    "smoke evidence", not "would be nice to have".
   - The §UI partition (op direct on live.tab, vel/gate/prob/timing
     automation-lane only, global humanize on device strip) is the fixed
     surface for any axis added here.
 - [ ] **Phase 6 — Migration, doc sync, manual smoke**
-  - Update [docs/ai/concept.md](../concept.md) velocity section —
-    remove "single static velocity parameter intentionally not exposed"
-    framing; replace with per-cell velocity × source-velocity ×
-    humanize stack.
-  - Load an ADR 003-era device; verify op live.tab IDs preserved,
+  - [x] Doc sync — broader-than-velocity pass on
+    [docs/ai/concept.md](../concept.md). Lead + "What Oedipa does"
+    rewritten around the Cell record, rest, per-cell expression, and the
+    global rhythmic layer. Traversal section walks through the 5-op
+    vocabulary, cell pointer vs. chord cursor distinction, and the
+    silent-advance contract. Rhythm section (previously a placeholder
+    "all / legato / custom patterns") replaced by the real global layer
+    (subdivision / swing / stepDirection / humanize × 4 + drift).
+    Velocity paragraph rewritten as the source × per-cell × humanize
+    stack per the original Phase 6 spec. Parameter surface table split
+    into Walk core / Per-cell record / Global rhythmic layer to match
+    ADR 005 types.
+  - [ ] Load an ADR 003-era device; verify op live.tab IDs preserved,
     defaults apply, audible behavior unchanged.
-  - Manual groove validation across tempos and styles; humanize amounts
-    feel organic, not random-noisy.
+  - [ ] Manual groove validation across tempos and styles; humanize
+    amounts feel organic, not random-noisy. Includes evaluating
+    `humanizeDrift` against independent humanize — does the smoothed
+    walk feel like breath/drift, or just slower noise? Outcome of this
+    smoke also gates whether any of the still-deferred Open-scope
+    humanize axes get added (small follow-up commits, no new ADR).
 
 ## Per-target notes
 

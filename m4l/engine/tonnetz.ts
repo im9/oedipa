@@ -54,6 +54,11 @@ export interface WalkState {
   seed: number
   // ADR 005 Phase 3 — defaults to 'forward' when omitted.
   stepDirection?: StepDirection
+  // ADR 005 Phase 5 — time-correlated humanize. EMA factor in [0, 1] applied
+  // independently to each of the 4 humanize axes:
+  //   v_t = drift * v_{t-1} + (1 - drift) * raw_t,  prev_init = 0.5
+  // drift=0 (default/omitted) → identity (raw uniform draws). drift→1 → frozen.
+  humanizeDrift?: number
 }
 
 export interface StepEvent {
@@ -310,12 +315,23 @@ export function walkStepEvent(state: WalkState, pos: number): StepEvent | null {
   const rng = mulberry32(seed)
   let transformIdx = 0
   let result: StepEvent | null = null
+  // ADR 005 Phase 5 — per-axis EMA prev state for time-correlated humanize.
+  // Initialized at 0.5 (the midpoint of the [0, 1) raw-draw domain → maps to
+  // signed 0.0). Reseed-fresh-per-call (matching the chord cursor + PRNG
+  // contract) means any-pos restart reproduces identical smoothed sequences.
+  const drift = state.humanizeDrift ?? 0
+  let prevVel = 0.5, prevGate = 0.5, prevTim = 0.5, prevProb = 0.5
   for (let step = 1; step <= pos; step++) {
     if (step % spt !== 0) continue
     const cellIdx = resolveCellIdx(transformIdx, cells.length, direction, rng)
     const cell = cells[cellIdx]!
-    const { resolvedOp, played, rProb, humanizeVel, humanizeGate, humanizeTiming, humanizeProb } =
+    const { resolvedOp, played, rProb, humanizeVel: rawVel, humanizeGate: rawGate, humanizeTiming: rawTim, humanizeProb: rawProb } =
       stepBoundary(cursor, cell, jitter, rng)
+    const humanizeVel = drift * prevVel + (1 - drift) * rawVel
+    const humanizeGate = drift * prevGate + (1 - drift) * rawGate
+    const humanizeTiming = drift * prevTim + (1 - drift) * rawTim
+    const humanizeProb = drift * prevProb + (1 - drift) * rawProb
+    prevVel = humanizeVel; prevGate = humanizeGate; prevTim = humanizeTiming; prevProb = humanizeProb
     if (step === pos) {
       result = {
         cellIdx,

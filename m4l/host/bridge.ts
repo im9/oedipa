@@ -59,6 +59,7 @@ const DEFAULT_PARAMS: HostParams = {
   humanizeGate: 0,
   humanizeTiming: 0,
   humanizeProbability: 0,
+  humanizeDrift: 0,
 }
 
 export class Bridge {
