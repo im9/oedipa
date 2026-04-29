@@ -8,6 +8,7 @@ import {
   applyVoicing,
   addSeventh,
   walk,
+  findTriadInHeldNotes,
   type Triad,
   type Transform,
   type Cell,
@@ -62,6 +63,12 @@ interface WalkCase {
   samples: WalkSample[]
 }
 
+interface FindTriadCase {
+  name: string
+  input: number[]
+  expected: number[] | null
+}
+
 interface Vectors {
   identify_triad: IdentifyCase[]
   apply_transform: TransformCase[]
@@ -69,6 +76,7 @@ interface Vectors {
   voicing: VoicingCase[]
   seventh: SeventhCase[]
   walk_deterministic: WalkCase[]
+  find_triad_in_held_notes: { description: string; cases: FindTriadCase[] }
 }
 
 const vectorsPath = path.join(import.meta.dirname, '..', '..', 'docs', 'ai', 'tonnetz-test-vectors.json')
@@ -137,6 +145,19 @@ test('walk (deterministic, jitter=0)', async (t) => {
           const result = walk(tc.state, sample.pos)
           assert.deepEqual(pcSet(result), sample.expected_pcs)
         })
+      }
+    })
+  }
+})
+
+test('findTriadInHeldNotes', async (t) => {
+  for (const tc of vectors.find_triad_in_held_notes.cases) {
+    await t.test(tc.name, () => {
+      const result = findTriadInHeldNotes(tc.input)
+      if (tc.expected === null) {
+        assert.equal(result, null, `expected null for input ${JSON.stringify(tc.input)}`)
+      } else {
+        assert.deepEqual(result, tc.expected)
       }
     })
   }

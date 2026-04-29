@@ -43,6 +43,44 @@ export function identifyTriad(triad: Triad): { rootPc: PitchClass; quality: Qual
   throw new Error('identifyTriad: input is not a major or minor triad')
 }
 
+// Subset search for triad recognition from held MIDI notes (ADR 004 Axis 1).
+// Iterates every 3-element subset of `notes` and runs identifyTriad on each.
+// Among matching subsets, picks the one whose root MIDI value (the held note
+// matching identifyTriad's rootPc) is lowest, and returns
+// buildTriad(rootPc, quality, rootMidi). Returns null if no subset matches.
+//
+// Inputs are treated as a set: duplicate MIDI values produce undefined
+// behavior. Sorted ascending internally so enumeration order is deterministic
+// regardless of caller input order.
+export function findTriadInHeldNotes(notes: MidiNote[]): Triad | null {
+  if (notes.length < 3) return null
+  const sorted = [...notes].sort((a, b) => a - b)
+  let bestRootPc: PitchClass | null = null
+  let bestQuality: Quality | null = null
+  let bestRootMidi = Infinity
+  for (let i = 0; i < sorted.length - 2; i++) {
+    for (let j = i + 1; j < sorted.length - 1; j++) {
+      for (let k = j + 1; k < sorted.length; k++) {
+        const subset: Triad = [sorted[i]!, sorted[j]!, sorted[k]!]
+        let id: { rootPc: PitchClass; quality: Quality }
+        try {
+          id = identifyTriad(subset)
+        } catch {
+          continue
+        }
+        const rootMidi = subset.find(n => mod12(n) === id.rootPc)!
+        if (rootMidi < bestRootMidi) {
+          bestRootPc = id.rootPc
+          bestQuality = id.quality
+          bestRootMidi = rootMidi
+        }
+      }
+    }
+  }
+  if (bestRootPc === null) return null
+  return buildTriad(bestRootPc, bestQuality!, bestRootMidi)
+}
+
 export function buildTriad(rootPc: PitchClass, quality: Quality, reference: MidiNote): Triad {
   let root = Math.floor(reference / 12) * 12 + rootPc
   if (root - reference > 6) root -= 12

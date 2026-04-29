@@ -167,6 +167,27 @@
     "samples": "FILLED_BY_ENGINE_IMPLEMENTATION (run scripts/dump-mulberry32.ts after Phase 3 engine lands)"
   },
 
+  "find_triad_in_held_notes": {
+    "description": "Subset search for triad recognition from held MIDI notes per ADR 004 Axis 1. The host pipeline tracks currently-held notes and runs this helper on every note-on/off. Algorithm: iterate every 3-element subset of `notes`, run identifyTriad on each (catching the throw for non-triads); among matching subsets, pick the one whose root MIDI value (the held note matching identifyTriad's rootPc) is lowest; return buildTriad(rootPc, quality, rootMidi) for the winner, or null if no subset matches. Inputs are treated as a set (no duplicate MIDI values); enumeration order is sorted-ascending for deterministic tiebreaking on the rare case where two subsets share the same root MIDI.",
+    "cases": [
+      { "name": "exact triad C major",                                          "input": [60, 64, 67],         "expected": [60, 64, 67] },
+      { "name": "Cmaj7 prefers Cmaj over Em (root=60 < 64)",                    "input": [60, 64, 67, 71],     "expected": [60, 64, 67] },
+      { "name": "Dm7 prefers Dm over Fmaj (root=62 < 65)",                      "input": [62, 65, 69, 72],     "expected": [62, 65, 69] },
+      { "name": "C7 single matching subset (Cmaj)",                             "input": [60, 64, 67, 70],     "expected": [60, 64, 67] },
+      { "name": "C6 / Am7-over-C: Cmaj (60) beats Am (69)",                     "input": [60, 64, 67, 69],     "expected": [60, 64, 67] },
+      { "name": "Csus2: no major/minor triad subset → null",                    "input": [60, 62, 67],         "expected": null },
+      { "name": "Csus4: no major/minor triad subset → null",                    "input": [60, 65, 67],         "expected": null },
+      { "name": "Cdim: no major/minor triad subset → null",                     "input": [60, 63, 66],         "expected": null },
+      { "name": "Caug: no major/minor triad subset → null",                     "input": [60, 64, 68],         "expected": null },
+      { "name": "first inversion C/E: Cmaj rooted at the held C (72)",         "input": [64, 67, 72],         "expected": [72, 76, 79] },
+      { "name": "octave doubling: lowest root MIDI (48) wins",                  "input": [48, 60, 64, 67],     "expected": [48, 52, 55] },
+      { "name": "input order independence: same set, different order",          "input": [67, 60, 64],         "expected": [60, 64, 67] },
+      { "name": "0 notes → null",                                                "input": [],                   "expected": null },
+      { "name": "1 note → null",                                                 "input": [60],                 "expected": null },
+      { "name": "2 notes → null",                                                "input": [60, 64],             "expected": null }
+    ]
+  },
+
   "walk_jitter": {
     "description": "Jitter behavior. expected_pcs values FILLED_BY_ENGINE_IMPLEMENTATION once the mulberry32 reference outputs are in place. Cases below describe the structural assertions; concrete pcs emerge from running the engine and copying back.",
     "cases": [
