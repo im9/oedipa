@@ -21,6 +21,8 @@
 //     setStartChord <p1> <p2> <p3>        triad as MIDI notes
 //     setCell <idx> <op>                  single-cell op update
 //     setCells <op0> <op1> <op2> <op3>    bulk-set the whole cell op array
+//     setCellField <idx> <field> <value>  per-cell numeric field update
+//                                         (field ∈ velocity|gate|probability|timing)
 //     noteIn <pitch> <velocity> <channel> incoming MIDI note-on (ADR 004)
 //     noteOff <pitch> <channel>           incoming MIDI note-off (ADR 004)
 //     transportStart                      pre-roll snapshot at transport 0→1
@@ -51,6 +53,8 @@ Max.addHandler('setParams', (key, value) => bridge.setParams(key, value))
 Max.addHandler('setStartChord', (p1, p2, p3) => bridge.setStartChord(Number(p1), Number(p2), Number(p3)))
 Max.addHandler('setCell', (idx, op) => bridge.setCell(Number(idx), String(op)))
 Max.addHandler('setCells', (...ops) => bridge.setCells(ops.map(String)))
+Max.addHandler('setCellField', (idx, field, value) =>
+  bridge.setCellField(Number(idx), String(field), Number(value)))
 Max.addHandler('noteIn', (pitch, velocity, channel) =>
   bridge.noteIn(Number(pitch), Number(velocity), Number(channel)))
 Max.addHandler('noteOff', (pitch, channel) =>

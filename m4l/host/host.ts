@@ -39,6 +39,11 @@ export type NoteEvent =
 
 export type TriggerMode = 0 | 1 // 0 = hybrid (default), 1 = hold-to-play
 
+// The four numeric per-cell fields owned by the 16 hidden live.numbox in the
+// patcher (ADR 005 Phase 4). `op` is owned separately by the four live.tab
+// and reaches the host via setCell / setCells.
+export type CellNumericField = 'velocity' | 'gate' | 'probability' | 'timing'
+
 export interface HostParams {
   startChord: Triad
   cells: Cell[]
@@ -100,6 +105,14 @@ export class Host {
     if (idx < 0 || idx >= this.params.cells.length) return
     const cells = this.params.cells.slice()
     cells[idx] = { ...cells[idx]!, op }
+    this.params = { ...this.params, cells }
+  }
+
+  setCellField(idx: number, field: CellNumericField, value: number): void {
+    if (idx < 0 || idx >= this.params.cells.length) return
+    if (Number.isNaN(value)) return
+    const cells = this.params.cells.slice()
+    cells[idx] = { ...cells[idx]!, [field]: value }
     this.params = { ...this.params, cells }
   }
 

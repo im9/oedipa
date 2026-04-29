@@ -444,6 +444,98 @@ describe('Host.setCell', () => {
   })
 })
 
+describe('Host.setCellField', () => {
+  // Phase 4 entry point for the 16 hidden live.numbox per-cell fields. The
+  // patcher dumps `setCellField <idx> <field> <value>` per numbox change;
+  // host updates the indexed cell record while preserving the other fields
+  // and the existing op (which is owned by the four live.tab parameters).
+
+  test('velocity scales the source velocity for the next cell-driven noteOn', () => {
+    // baseParams: spt=1, lastInputVelocity default 100. cell[0]=P at step(1)
+    // → Cmin noteOns. cellVel=0.5 → 100 * 0.5 = 50, clamped 1..127.
+    const host = new Host(baseParams())
+    host.setCellField(0, 'velocity', 0.5)
+    host.step(0)
+    const events = host.step(1)
+    const ons = events.filter((e): e is Extract<NoteEvent, { type: 'noteOn' }> => e.type === 'noteOn')
+    assert.equal(ons.length, 3)
+    for (const e of ons) assert.equal(e.velocity, 50)
+  })
+
+  test('gate sets the noteOff delayPos relative to the step', () => {
+    // gate=0.5, transformTicks = spt(1) * ticksPerStep(1) = 1 → noteOff
+    // delayPos = timingOffset(0) + 0.5 * 1 = 0.5. Filter by delayPos to
+    // separate gate-end offs from the legato handoff offs (which fire at
+    // delayPos=0 alongside the new chord's noteOns).
+    const host = new Host(baseParams())
+    host.setCellField(0, 'gate', 0.5)
+    host.step(0)
+    const events = host.step(1)
+    const gateOffs = events.filter(e => e.type === 'noteOff' && e.delayPos === 0.5)
+    assert.equal(gateOffs.length, 3, 'three gate-end noteOffs for the new chord')
+    const pitches = gateOffs.map(e => e.pitch).sort((a, b) => a - b)
+    assert.deepEqual(pitches, [60, 63, 67], 'targets the new Cmin chord')
+  })
+
+  test('timing offsets the noteOn delayPos within the step', () => {
+    // timing=0.25, transformTicks=1 → timingOffset = max(0, 0 + 0.25) = 0.25.
+    const host = new Host(baseParams())
+    host.setCellField(0, 'timing', 0.25)
+    host.step(0)
+    const events = host.step(1)
+    const ons = events.filter(e => e.type === 'noteOn')
+    assert.equal(ons.length, 3)
+    for (const e of ons) assert.equal(e.delayPos, 0.25)
+  })
+
+  test('probability=0 silences the step without stalling the cursor', () => {
+    // rProb < 0 always false → played=false → silent advance. Cursor still
+    // applies P (Cmaj → Cmin); no noteOns emitted at step(1).
+    const host = new Host(baseParams())
+    host.setCellField(0, 'probability', 0)
+    host.step(0)
+    const events = host.step(1)
+    assert.deepEqual(events, [], 'silent advance emits nothing')
+    const pcs = host.currentTriad!.map(p => ((p % 12) + 12) % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs, [0, 3, 7], 'cursor still moved to Cmin')
+  })
+
+  test('out-of-range index is a no-op', () => {
+    const host = new Host(baseParams())
+    host.setCellField(-1, 'velocity', 0.5)
+    host.setCellField(99, 'velocity', 0.5)
+    host.step(0)
+    const events = host.step(1)
+    const ons = events.filter((e): e is Extract<NoteEvent, { type: 'noteOn' }> => e.type === 'noteOn')
+    assert.equal(ons.length, 3)
+    for (const e of ons) assert.equal(e.velocity, 100, 'cells unchanged → default vel=1.0')
+  })
+
+  test('preserves the cell op and other fields on a single-field update', () => {
+    // setCellField touches one field; op (owned by live.tab) and the other
+    // numeric fields keep their prior values.
+    const host = new Host(baseParams({
+      cells: [
+        makeCell('R', { velocity: 0.7, gate: 0.6, probability: 0.8, timing: 0.1 }),
+        makeCell('L'),
+        makeCell('R'),
+        makeCell('hold'),
+      ],
+    }))
+    host.setCellField(0, 'velocity', 0.4)
+    host.step(0)
+    const events = host.step(1)
+    // op stayed R: Cmaj → R = A min = [57, 60, 64].
+    const onPitches = events.filter(e => e.type === 'noteOn').map(e => e.pitch).sort((a, b) => a - b)
+    assert.deepEqual(onPitches, [57, 60, 64], 'op preserved')
+    const onEvents = events.filter((e): e is Extract<NoteEvent, { type: 'noteOn' }> => e.type === 'noteOn')
+    for (const e of onEvents) {
+      assert.equal(e.velocity, 40, 'velocity reflects the new 0.4')
+      assert.equal(e.delayPos, 0.1, 'timing field preserved')
+    }
+  })
+})
+
 describe('Host.cellIdx — for active-cell LED', () => {
   // cellIdx(pos) returns the index of the cell whose op produced the chord
   // currently sounding. -1 when no transform has fired yet (pos < spt).

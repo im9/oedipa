@@ -11,7 +11,7 @@
 // - Track msPerPos across step calls; reset on transport stop / panic.
 // - Emit lattice/cellIdx side-channels at the right moments.
 
-import { Host, type HostParams, type NoteEvent } from './host.ts'
+import { Host, type CellNumericField, type HostParams, type NoteEvent } from './host.ts'
 import type { MidiNote, Op, Triad } from '../engine/tonnetz.ts'
 
 export interface BridgeDeps {
@@ -137,6 +137,14 @@ export class Bridge {
 
   setCell(idx: number, op: Op): void {
     this.host.setCell(idx, op)
+  }
+
+  // Patcher entry point for the per-cell numbox dumps (ADR 005 Phase 4).
+  // Validates `field` at the Max boundary so a typo or stale dump path is a
+  // silent no-op rather than a typed-cast failure in the host.
+  setCellField(idx: number, field: string, value: number): void {
+    if (field !== 'velocity' && field !== 'gate' && field !== 'probability' && field !== 'timing') return
+    this.host.setCellField(idx, field as CellNumericField, value)
   }
 
   setCells(ops: Op[]): void {
