@@ -381,11 +381,51 @@ Phases follow ADR 003's TDD pattern.
     `swing=0.5`, all `humanize*=0`, the host is bit-identical to the
     Phase 2 contract (regression-pinned by an explicit deepEqual test).
     Patcher / Live UI surfacing of these params is deferred to Phase 4.
-- [ ] **Phase 4 — Patcher: parameters**
-  - Keep 4 × `live.tab` (op), extend option count 4 → 5.
-  - Add 16 × hidden `live.numbox` (vel/gate/prob/timing per cell).
-  - Add 6 × `live.*` globals (swing, subdivision, stepDirection, 3 ×
-    humanize). Dump paths per field.
+- [x] **Phase 4 — Patcher: parameters**
+  - [x] Bridge: `setCellField <idx> <field> <value>` entry point for
+    the per-cell numeric numbox dumps; `Host.setCellField` mirrors
+    `setCell`'s idx-bounds + NaN guard and preserves op + untouched
+    fields. (commit `242e759`; 6 host tests)
+  - [x] Patcher: 4 × `live.tab` op extended 4 → 5 (added `·` = rest).
+    Same parameter IDs (`OedipaCell{0..3}`) preserved; old saves load
+    unchanged with values 0..3. New `setCell N rest` messages wired
+    via the existing `sel` cascade (now 5 outlets).
+  - [x] Patcher: 16 × `live.numbox` (vel/gate/prob/timing per cell)
+    added on the patching canvas. **Hidden from the device strip
+    until Phase 5** — Phase 5 cell-strip jsui is the proper UI for
+    these (per ADR §UI). Default `parameter_visible: 1` keeps them
+    surfaced in Live's automation list as a fallback. Each dumps via
+    `prepend setCellField <idx> <field>` → `[node.script]`. Defaults
+    match Phase 1: vel=1.0, gate=0.9, prob=1.0, timing=0.0; ranges
+    0..1 except timing -0.5..+0.5. All 16 also wired into the
+    `obj-trig-hostready` cascade for rehydrate.
+  - [x] Patcher: 6 × `live.*` globals (swing, subdivision,
+    stepDirection, 3 × humanize) added with **device-strip UI** in a
+    dedicated FEEL section right of the existing strip
+    (`devicewidth: 880 → 1040`, separator at x=849). Layout
+    prioritizes musical use: Swing as a primary dial, Subdivision
+    and StepDirection as compact tabs (5 / 4 segments respectively),
+    Humanize ×3 grouped as small dials with a shared section header.
+    Numeric dials (swing 0.5..0.75, humanize 0..1) → `prepend
+    setParams <key>`. Subdivision `live.tab` 5 opts (`8 / 16 / 32 /
+    8T / 16T`, default 16th) → `sel` → 5 `setParams ticksPerStep N`
+    messages (12, 6, 3, 8, 4 per ADR §Subdivision table).
+    Step-direction `live.tab` 4 opts (`Fwd / Rev / PPng / Rnd`) →
+    `sel` → 4 `setParams stepDirection {forward,reverse,pingpong,
+    random}` messages. All 6 wired into `obj-trig-hostready` for
+    rehydrate.
+  - [x] Patcher: `metro 16n @quantize 16n` → `metro 96n @quantize
+    96n`. Phase 3 §Subdivision specified the patcher would stream
+    raw transport ticks at PPQN=24, but the engine/host commits
+    (`0dc7a0f` / `9a08b40`) didn't update the metro — a Phase 3
+    patcher gap. With Phase 4's subdivision rehydrate setting
+    `ticksPerStep=6` (default 16th) on `hostReady`, the legacy
+    16n-rate metro made every cell run 6 × longer than intended
+    (one transform period stretched from 1 quarter to 6 quarters).
+    96n = 24 ticks/quarter = PPQN=24, so 6 raw ticks per
+    16th-note subdivision-step lines up with `ticksPerStep=6`,
+    restoring 1 transform period = 1 quarter at the default
+    subdivision.
 - [ ] **Phase 5 — jsui cell strip**
   - Pure model layer (hit testing, drag math, op cycling, clamping)
     tested in Node.
