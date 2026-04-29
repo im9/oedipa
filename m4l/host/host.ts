@@ -67,8 +67,11 @@ export interface HostParams {
   humanizeVelocity: number     // 0..1 amount
   humanizeGate: number         // 0..1 amount
   humanizeTiming: number       // 0..1 amount
-  humanizeProbability: number  // 0..1 amount (ADR 005 Phase 5)
   humanizeDrift: number        // 0..1 EMA factor for time-correlated humanize (ADR 005 Phase 5)
+  // Global output velocity multiplier applied AFTER per-cell velocity and
+  // humanize. Single dial for "make everything quieter / louder" without
+  // touching per-cell automation. 0..1, default 1.0 (no attenuation).
+  outputLevel: number
 }
 
 export class Host {
@@ -214,15 +217,17 @@ export class Host {
     const transformTicks = spt * ticksPerStep
 
     // pos=0 (or first call after reset): emit startChord once. No cell has
-    // fired yet, so vel/gate/timing don't apply.
+    // fired yet, so vel/gate/timing don't apply — but outputLevel still
+    // scales the source velocity so "Level=0" mutes uniformly.
     if (effectivePos === 0) {
       const events: NoteEvent[] = []
       for (const pitch of this.held) events.push({ type: 'noteOff', pitch, channel })
       this.held.clear()
       let voiced = applyVoicing(startChord, voicing)
       if (seventh) voiced = addSeventh(voiced, startChord)
+      const startVel = clampVelocity(this.lastInputVelocity * this.params.outputLevel)
       for (const pitch of voiced) {
-        events.push({ type: 'noteOn', pitch, velocity: this.lastInputVelocity, channel })
+        events.push({ type: 'noteOn', pitch, velocity: startVel, channel })
         this.held.add(pitch)
       }
       this.lastTriad = startChord
@@ -244,26 +249,18 @@ export class Host {
       return []
     }
 
-    const cell = cells[stepEvent.cellIdx]!
-    // ADR 005 §"Humanize": apply signed uniform noise to cell vel/gate/timing
-    // with the cell-amount knobs. Engine produces raw [0, 1) draws; map to
-    // [-1, +1] via (raw*2-1) and scale by amount. Clamp per ADR table.
-    // Phase 5: humanizeProbability perturbs cell.probability before the per-
-    // event roll. Re-derive `played` from rProb < effectiveProb so amount > 0
-    // can flip outcomes both ways (more silent on 1.0 cells, more played on
-    // low-prob cells). With humanizeProbability=0, effectiveProb collapses to
-    // cell.probability and the played decision matches stepEvent.played.
-    const { humanizeVelocity, humanizeGate, humanizeTiming, humanizeProbability } = this.params
-    const effectiveProb = clamp01(cell.probability + (stepEvent.humanizeProb * 2 - 1) * humanizeProbability)
-    const played = stepEvent.resolvedOp !== 'rest' && stepEvent.rProb < effectiveProb
-
-    if (!played) {
+    if (!stepEvent.played) {
       // rest or probability fail: silent advance. Cursor still moves; no audio.
       this.lastTriad = stepEvent.chord
       this.lastEmittedEffectivePos = effectivePos
       return []
     }
 
+    const cell = cells[stepEvent.cellIdx]!
+    // ADR 005 §"Humanize": apply signed uniform noise to cell vel/gate/timing
+    // with the cell-amount knobs. Engine produces raw [0, 1) draws; map to
+    // [-1, +1] via (raw*2-1) and scale by amount. Clamp per ADR table.
+    const { humanizeVelocity, humanizeGate, humanizeTiming, outputLevel } = this.params
     const cellVel = clamp01(cell.velocity + (stepEvent.humanizeVel * 2 - 1) * humanizeVelocity)
     const cellGate = clamp01(cell.gate + (stepEvent.humanizeGate * 2 - 1) * humanizeGate)
     const cellTiming = clampSigned05(cell.timing + (stepEvent.humanizeTiming * 2 - 1) * humanizeTiming)
@@ -283,7 +280,9 @@ export class Host {
 
     let voiced = applyVoicing(stepEvent.chord, voicing)
     if (seventh) voiced = addSeventh(voiced, stepEvent.chord)
-    const velocity = clampVelocity(this.lastInputVelocity * cellVel)
+    // outputLevel scales the entire stack uniformly — applied LAST so it
+    // composes cleanly with source velocity, per-cell velocity, and humanize.
+    const velocity = clampVelocity(this.lastInputVelocity * cellVel * outputLevel)
 
     const events: NoteEvent[] = []
     if (this.handoffPending) {

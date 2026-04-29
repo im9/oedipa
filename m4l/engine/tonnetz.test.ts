@@ -506,8 +506,7 @@ test('walkStepEvent: humanize draws are uniform [0, 1) and seed-deterministic', 
     assert.equal(a!.humanizeVel, b!.humanizeVel, `pos=${pos} vel determinism`)
     assert.equal(a!.humanizeGate, b!.humanizeGate, `pos=${pos} gate determinism`)
     assert.equal(a!.humanizeTiming, b!.humanizeTiming, `pos=${pos} timing determinism`)
-    assert.equal(a!.humanizeProb, b!.humanizeProb, `pos=${pos} prob determinism`)
-    for (const [name, v] of [['vel', a!.humanizeVel], ['gate', a!.humanizeGate], ['timing', a!.humanizeTiming], ['prob', a!.humanizeProb]] as const) {
+    for (const [name, v] of [['vel', a!.humanizeVel], ['gate', a!.humanizeGate], ['timing', a!.humanizeTiming]] as const) {
       assert.ok(v >= 0 && v < 1, `pos=${pos} humanize ${name}=${v} must be in [0, 1)`)
     }
   }
@@ -521,7 +520,6 @@ test('walkStepEvent: humanize draws populated even on rest and probability-fail 
   assert.ok(evRest.humanizeVel >= 0 && evRest.humanizeVel < 1)
   assert.ok(evRest.humanizeGate >= 0 && evRest.humanizeGate < 1)
   assert.ok(evRest.humanizeTiming >= 0 && evRest.humanizeTiming < 1)
-  assert.ok(evRest.humanizeProb >= 0 && evRest.humanizeProb < 1)
 
   const probFailState: WalkState = {
     ...baseState,
@@ -533,7 +531,6 @@ test('walkStepEvent: humanize draws populated even on rest and probability-fail 
   assert.ok(evProb.humanizeVel >= 0 && evProb.humanizeVel < 1)
   assert.ok(evProb.humanizeGate >= 0 && evProb.humanizeGate < 1)
   assert.ok(evProb.humanizeTiming >= 0 && evProb.humanizeTiming < 1)
-  assert.ok(evProb.humanizeProb >= 0 && evProb.humanizeProb < 1)
 })
 
 test('walkStepEvent: humanize draws unaffected by probability values (downstream of probability)', () => {
@@ -550,7 +547,6 @@ test('walkStepEvent: humanize draws unaffected by probability values (downstream
     assert.equal(a.humanizeVel, b.humanizeVel, `pos=${pos} humanize vel must match`)
     assert.equal(a.humanizeGate, b.humanizeGate, `pos=${pos} humanize gate must match`)
     assert.equal(a.humanizeTiming, b.humanizeTiming, `pos=${pos} humanize timing must match`)
-    assert.equal(a.humanizeProb, b.humanizeProb, `pos=${pos} humanize prob must match`)
   }
 })
 
@@ -566,7 +562,6 @@ test('walkStepEvent: humanizeDrift=0 (default) is identity (raw draws unchanged)
     assert.equal(a.humanizeVel, b.humanizeVel, `pos=${pos} vel must match`)
     assert.equal(a.humanizeGate, b.humanizeGate, `pos=${pos} gate must match`)
     assert.equal(a.humanizeTiming, b.humanizeTiming, `pos=${pos} timing must match`)
-    assert.equal(a.humanizeProb, b.humanizeProb, `pos=${pos} prob must match`)
   }
 })
 
@@ -582,25 +577,22 @@ test('walkStepEvent: humanizeDrift > 0 produces EMA-smoothed humanize values', (
     humanizeDrift: drift,
   }
   // Re-simulate raw draws and EMA. PRNG draw order: probability, vel, gate,
-  // timing, prob (5 draws per step, with no jitter, no random direction).
+  // timing (4 draws per step, with no jitter, no random direction).
   const rng = mulberry32(42)
-  let prevVel = 0.5, prevGate = 0.5, prevTim = 0.5, prevProb = 0.5
+  let prevVel = 0.5, prevGate = 0.5, prevTim = 0.5
   for (let step = 1; step <= 6; step++) {
     rng() // probability
     const rawVel = rng()
     const rawGate = rng()
     const rawTim = rng()
-    const rawProb = rng()
     const expVel = drift * prevVel + (1 - drift) * rawVel
     const expGate = drift * prevGate + (1 - drift) * rawGate
     const expTim = drift * prevTim + (1 - drift) * rawTim
-    const expProb = drift * prevProb + (1 - drift) * rawProb
-    prevVel = expVel; prevGate = expGate; prevTim = expTim; prevProb = expProb
+    prevVel = expVel; prevGate = expGate; prevTim = expTim
     const ev = walkStepEvent(state, step)!
     assert.ok(Math.abs(ev.humanizeVel - expVel) < 1e-12, `pos=${step} vel ${ev.humanizeVel} vs ${expVel}`)
     assert.ok(Math.abs(ev.humanizeGate - expGate) < 1e-12, `pos=${step} gate ${ev.humanizeGate} vs ${expGate}`)
     assert.ok(Math.abs(ev.humanizeTiming - expTim) < 1e-12, `pos=${step} timing`)
-    assert.ok(Math.abs(ev.humanizeProb - expProb) < 1e-12, `pos=${step} prob`)
   }
 })
 
@@ -618,7 +610,7 @@ test('walkStepEvent: humanizeDrift smoothed values stay within [0, 1)', () => {
     }
     for (let pos = 1; pos <= 64; pos++) {
       const ev = walkStepEvent(state, pos)!
-      for (const [name, v] of [['vel', ev.humanizeVel], ['gate', ev.humanizeGate], ['timing', ev.humanizeTiming], ['prob', ev.humanizeProb]] as const) {
+      for (const [name, v] of [['vel', ev.humanizeVel], ['gate', ev.humanizeGate], ['timing', ev.humanizeTiming]] as const) {
         assert.ok(v >= 0 && v < 1, `drift=${drift} pos=${pos} ${name}=${v} must be in [0, 1)`)
       }
     }
@@ -651,19 +643,12 @@ test('walkStepEvent: humanizeDrift produces autocorrelation (adjacent values are
   assert.ok(meanSmooth < meanIndep * 0.5, `drift=0.9 mean adjacent Δ (${meanSmooth.toFixed(4)}) must be << drift=0 (${meanIndep.toFixed(4)})`)
 })
 
-test('walkStepEvent: humanizeProb draw is downstream of humanizeTiming (ADR 005 Phase 5)', () => {
-  // Cross-target reproducibility contract: adding humanizeProbability as the
-  // 7th PRNG draw must not perturb the first 6 draws — the same seed must
-  // produce the same humanizeVel/Gate/Timing as before Phase 5. Pin the first
-  // three humanize draws against known mulberry32(seed=7) outputs to lock in
-  // the order. Values derived by running mulberry32(7) and noting which draws
-  // land at the indices reserved for humanize (4, 5, 6 — after random-direction
-  // skip + jitter skip + probability draw).
-  //
+test('walkStepEvent: PRNG draw order pins humanize draws at fixed indices', () => {
+  // Cross-target reproducibility contract: the per-step PRNG sequence is
+  // (1) probability, (2) humanizeVel, (3) humanizeGate, (4) humanizeTiming.
   // Direct derivation (no jitter, forward direction, single cell, pos=1):
   //   draw 0 = probability (cell.probability=1, always passes)
-  //   draw 1 = humanizeVel, draw 2 = humanizeGate,
-  //   draw 3 = humanizeTiming, draw 4 = humanizeProb.
+  //   draw 1 = humanizeVel, draw 2 = humanizeGate, draw 3 = humanizeTiming.
   const state: WalkState = {
     ...baseState,
     cells: [makeCell('P', { probability: 1.0 })],
@@ -672,15 +657,13 @@ test('walkStepEvent: humanizeProb draw is downstream of humanizeTiming (ADR 005 
   }
   const ev = walkStepEvent(state, 1)!
   // Reproduce the expected stream from mulberry32(7) directly. Skipping draw 0
-  // (probability) leaves draws 1..4 for vel/gate/timing/prob in that order.
+  // (probability) leaves draws 1..3 for vel/gate/timing in that order.
   const rng = mulberry32(7)
   rng() // probability
   const expVel = rng()
   const expGate = rng()
   const expTiming = rng()
-  const expProb = rng()
   assert.equal(ev.humanizeVel, expVel, 'humanizeVel is the 2nd draw')
   assert.equal(ev.humanizeGate, expGate, 'humanizeGate is the 3rd draw')
   assert.equal(ev.humanizeTiming, expTiming, 'humanizeTiming is the 4th draw')
-  assert.equal(ev.humanizeProb, expProb, 'humanizeProb is the 5th draw (after timing)')
 })

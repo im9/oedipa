@@ -48,6 +48,13 @@ var startPcs = null // [pc, pc, pc] or null
 var currentCell = null // {row, col, kind} or null
 var startCell = null // same
 
+// User-clicked cell that pins the startChord marker to a specific position.
+// Mirrors engine/lattice.ts resolveStartCellWithPin. Survives until the
+// startChord pcs no longer match the pin's triangle (e.g. MIDI input changes
+// startChord). Without this, clicking a non-center duplicate of a chord
+// would snap the marker to the closer-to-center cell instead of the click.
+var manualStartCell = null
+
 // --- Message dispatch ---
 //
 // Max routes a message named X to a global function named X. We also use
@@ -89,7 +96,19 @@ function anything() {
 }
 
 function resolveCells() {
-  startCell = startPcs !== null ? findClosestCell(startPcs) : null
+  if (startPcs === null) {
+    startCell = null
+    manualStartCell = null
+  } else if (manualStartCell !== null
+             && pcSetEqual(trianglePcs(manualStartCell.row, manualStartCell.col, manualStartCell.kind), startPcs)) {
+    // User-clicked cell still matches the current startChord — keep the pin
+    // so the marker stays at the clicked position rather than the
+    // closest-to-center duplicate.
+    startCell = manualStartCell
+  } else {
+    manualStartCell = null
+    startCell = findClosestCell(startPcs)
+  }
   // currentPcs uses the same formula; recompute since centerPc may have moved.
   currentCell = currentPcs !== null ? findClosestCell(currentPcs) : null
 }
@@ -282,6 +301,10 @@ function onclick(x, y, button, cmd, shift, capslock, option, ctrl) {
   if (cell === null) return
   var triad = cellToTriad(cell.row, cell.col, cell.kind)
   if (triad === null) return
+  // Pin the clicked cell so the subsequent lattice-center round-trip keeps
+  // the marker on this exact triangle (rather than snapping to the
+  // closest-to-center duplicate via findClosestCell).
+  manualStartCell = { row: cell.row, col: cell.col, kind: cell.kind }
   outlet(0, 'setStartChord', triad[0], triad[1], triad[2])
 }
 

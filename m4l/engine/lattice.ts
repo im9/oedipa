@@ -126,6 +126,31 @@ export function cellToTriad(
   return buildTriad(rootPc, quality, reference)
 }
 
+// Resolves the cell to mark for `triad`, preferring an explicit `pin` over
+// the closest-to-center default. The pin survives as long as its triangle's
+// pc set matches the target triad — i.e. the user-clicked cell stays marked
+// for as long as that chord remains the startChord. When the chord changes
+// (e.g. MIDI input updates startChord to a new triad), the pin is cleared
+// and the marker falls back to `findTriadCell`'s closest-match.
+//
+// Without this pin, clicking a non-center duplicate of a chord (e.g. the
+// upper-right G major in the 7×4 viewport) would always snap the marker to
+// the closer-to-center G major — confusing as a click affordance.
+export function resolveStartCellWithPin(
+  triad: Triad,
+  pin: TriangleCell | null,
+  config: LatticeConfig,
+): { cell: TriangleCell | null; pin: TriangleCell | null } {
+  if (pin !== null) {
+    const pinPcs = trianglePcs(pin, config)
+    const targetPcs = new Set(triad.map(n => ((n % 12) + 12) % 12))
+    if (pinPcs.every(pc => targetPcs.has(pc))) {
+      return { cell: pin, pin }
+    }
+  }
+  return { cell: findTriadCell(triad, config), pin: null }
+}
+
 // Returns the visible cell whose pc set matches `triad`, picking the cell
 // whose centroid is closest to the lattice center vertex when the same chord
 // appears in multiple positions (the 7×3 viewport is shorter than the natural

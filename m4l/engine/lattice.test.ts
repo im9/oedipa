@@ -4,6 +4,7 @@ import {
   noteAt,
   trianglePcs,
   findTriadCell,
+  resolveStartCellWithPin,
   viewportCells,
   computeLayout,
   pointToCell,
@@ -158,6 +159,68 @@ describe('findTriadCell', () => {
     // closest-of-one is itself.
     const triad: Triad = [60, 64, 67]
     assert.deepEqual(findTriadCell(triad, config), { row: 1, col: 3, kind: 'major' })
+  })
+})
+
+describe('resolveStartCellWithPin', () => {
+  // Bug context: with closest-to-center selection (findTriadCell), a chord
+  // appearing at multiple cells in the viewport always paints at the same
+  // single position regardless of where the user actually clicked. The pin
+  // mechanism remembers the clicked cell so the marker stays where the user
+  // pointed, until the chord identity changes (e.g. via MIDI input on the
+  // next chord).
+
+  test('returns pin verbatim when pin\'s pcs match the target triad', () => {
+    // Bb major (pcs {2, 5, 10}) sits at both (0, 5, major) and (1, 1, major)
+    // when centerPc=0. findTriadCell prefers (1, 1) (closer to center). If
+    // the user clicked the (0, 5) cell, the pin should preserve that choice.
+    const triad: Triad = [70, 74, 77]
+    const pin: TriangleCell = { row: 0, col: 5, kind: 'major' }
+    const result = resolveStartCellWithPin(triad, pin, config)
+    assert.deepEqual(result.cell, pin, 'pin retained instead of closest-match (1,1)')
+    assert.deepEqual(result.pin, pin, 'pin returned unchanged')
+  })
+
+  test('falls back to findTriadCell when pin\'s triangle no longer matches the triad', () => {
+    // User pinned a Bb major cell, then the chord changes to D minor (e.g.
+    // via MIDI input). The pin's triangle no longer matches the new triad,
+    // so we fall back to closest-match and clear the pin.
+    const oldPin: TriangleCell = { row: 0, col: 5, kind: 'major' } // Bb major
+    const newTriad: Triad = [62, 65, 69] // D minor
+    const result = resolveStartCellWithPin(newTriad, oldPin, config)
+    assert.deepEqual(result.cell, findTriadCell(newTriad, config))
+    assert.equal(result.pin, null, 'pin cleared so subsequent updates use closest-match')
+  })
+
+  test('null pin returns findTriadCell verbatim (closest-to-center)', () => {
+    const triad: Triad = [70, 74, 77] // Bb major (multi-position)
+    const result = resolveStartCellWithPin(triad, null, config)
+    assert.deepEqual(result.cell, findTriadCell(triad, config))
+    assert.equal(result.pin, null)
+  })
+
+  test('pin with mismatched kind drops the pin (e.g. major pin → minor target)', () => {
+    // Pin a Bb major cell; target the Bb major chord's RELATIVE minor (G minor,
+    // pcs {2, 7, 10}) — overlapping pcs but a minor triad. Pin's triangle has
+    // kind=major and produces Bb major's pcs, not G minor's, so the pcs
+    // shouldn't match and the pin should be cleared.
+    const pin: TriangleCell = { row: 0, col: 5, kind: 'major' } // Bb major
+    const gMinor: Triad = [67, 70, 74] // G minor — pcs {2, 7, 10}, no full pc-set match
+    const result = resolveStartCellWithPin(gMinor, pin, config)
+    assert.equal(result.pin, null)
+  })
+
+  test('pin survives across pos/walker changes that re-emit the same startChord', () => {
+    // The renderer calls resolveCells() on every lattice-center / latticeRefresh.
+    // If startPcs are unchanged, the pin must persist across consecutive calls.
+    const triad: Triad = [70, 74, 77]
+    const pin: TriangleCell = { row: 0, col: 5, kind: 'major' }
+    const first = resolveStartCellWithPin(triad, pin, config)
+    const second = resolveStartCellWithPin(triad, first.pin, config)
+    const third = resolveStartCellWithPin(triad, second.pin, config)
+    assert.deepEqual(first.cell, pin)
+    assert.deepEqual(second.cell, pin)
+    assert.deepEqual(third.cell, pin)
   })
 })
 

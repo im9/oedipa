@@ -27,8 +27,8 @@ function baseParams(overrides: Partial<HostParams> = {}): HostParams {
     humanizeVelocity: 0,
     humanizeGate: 0,
     humanizeTiming: 0,
-    humanizeProbability: 0,
     humanizeDrift: 0,
+    outputLevel: 1.0,
     ...overrides,
   }
 }
@@ -1098,7 +1098,6 @@ describe('Host.step — humanize', () => {
       humanizeVelocity: 0.4,
       humanizeGate: 0.3,
       humanizeTiming: 0.2,
-      humanizeProbability: 0.1,
       stepsPerTransform: 4,
     })
     const a = new Host(params)
@@ -1106,90 +1105,6 @@ describe('Host.step — humanize', () => {
     a.step(0); b.step(0)
     for (const pos of [4, 8, 12, 16]) {
       assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} replay match`)
-    }
-  })
-
-  // ── ADR 005 Phase 5 — humanizeProbability ────────────────────────────────
-
-  test('humanizeProbability=0 leaves the probability roll unperturbed', () => {
-    // cell.probability=0.5 baseline, seed=42 → some fixed sequence of
-    // played/silent steps. With humanizeProbability=0, the per-event roll uses
-    // (raw < 0.5) verbatim. Two hosts (with/without amount=0) must match.
-    const stub = {
-      cells: [makeCell('P', { probability: 0.5 }), makeCell('L', { probability: 0.5 }), makeCell('R', { probability: 0.5 }), makeCell('hold', { probability: 0.5 })],
-      seed: 42,
-      stepsPerTransform: 4,
-    }
-    const baseline = new Host(baseParams(stub))
-    const zeroAmount = new Host(baseParams({ ...stub, humanizeProbability: 0 }))
-    baseline.step(0); zeroAmount.step(0)
-    for (const pos of [4, 8, 12, 16, 20, 24]) {
-      assert.deepEqual(zeroAmount.step(pos), baseline.step(pos), `pos=${pos} amount=0 must match baseline`)
-    }
-  })
-
-  test('humanizeProbability > 0 changes which steps fire (perturbs probability roll)', () => {
-    // cell.probability=0.5 with seed=42 produces some specific play/silent
-    // pattern. humanizeProbability=0.5 shifts the per-event probability by up
-    // to ±0.5 (uniform), so on draws where the perturbed prob crosses the
-    // roll value, the played outcome flips. Across 16 boundaries at least
-    // one must differ from the unperturbed run.
-    const stub = {
-      cells: [makeCell('P', { probability: 0.5 }), makeCell('L', { probability: 0.5 }), makeCell('R', { probability: 0.5 }), makeCell('hold', { probability: 0.5 })],
-      seed: 42,
-      stepsPerTransform: 4,
-    }
-    const baseline = new Host(baseParams(stub))
-    const humanized = new Host(baseParams({ ...stub, humanizeProbability: 0.5 }))
-    baseline.step(0); humanized.step(0)
-    let observedDifference = false
-    for (let pos = 4; pos <= 64; pos += 4) {
-      const base = baseline.step(pos)
-      const hum = humanized.step(pos)
-      const baseHasNoteOn = base.some(e => e.type === 'noteOn')
-      const humHasNoteOn = hum.some(e => e.type === 'noteOn')
-      if (baseHasNoteOn !== humHasNoteOn) {
-        observedDifference = true
-        break
-      }
-    }
-    assert.ok(observedDifference, 'humanizeProbability=0.5 must flip at least one step\'s play outcome')
-  })
-
-  test('humanizeProbability clamps perturbed probability to [0, 1]', () => {
-    // cell.probability=1.0 + humanizeProbability=1.0: signed noise in [-1, +1]
-    // shifts effective prob into [0, 2], then clamp to [0, 1]. With only the
-    // negative half of the noise distribution able to silence a step, we
-    // expect SOME steps to silence (~half of them on average).
-    const stub = {
-      cells: [makeCell('P', { probability: 1.0 }), makeCell('L', { probability: 1.0 }), makeCell('R', { probability: 1.0 }), makeCell('hold', { probability: 1.0 })],
-      seed: 42,
-      stepsPerTransform: 4,
-    }
-    const host = new Host(baseParams({ ...stub, humanizeProbability: 1.0 }))
-    host.step(0)
-    let silentSteps = 0
-    let totalSteps = 0
-    for (let pos = 4; pos <= 128; pos += 4) {
-      const ev = host.step(pos)
-      const hasNoteOn = ev.some(e => e.type === 'noteOn')
-      totalSteps++
-      if (!hasNoteOn) silentSteps++
-    }
-    assert.ok(silentSteps > 0, 'humanizeProbability=1 with cell.prob=1 must silence at least one step')
-    assert.ok(silentSteps < totalSteps, 'humanizeProbability=1 with cell.prob=1 must keep at least one step playing')
-  })
-
-  test('humanize-disabled host (all 4 amounts = 0) bit-identical regardless of humanizeProbability presence', () => {
-    // Phase 5 regression guard: setting humanizeProbability=0 alongside the
-    // existing 3 zero amounts must not perturb event streams vs. a host
-    // constructed without ever touching humanizeProbability (default 0).
-    const stub = { cells: cells('P', 'L', 'R', 'hold'), seed: 99, stepsPerTransform: 4 }
-    const a = new Host(baseParams(stub))
-    const b = new Host(baseParams({ ...stub, humanizeProbability: 0 }))
-    a.step(0); b.step(0)
-    for (const pos of [4, 8, 12, 16, 20]) {
-      assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} match`)
     }
   })
 
@@ -1205,7 +1120,6 @@ describe('Host.step — humanize', () => {
       humanizeVelocity: 0.3,
       humanizeGate: 0.2,
       humanizeTiming: 0.1,
-      humanizeProbability: 0.4,
     }
     const a = new Host(baseParams(stub))
     const b = new Host(baseParams({ ...stub, humanizeDrift: 0 }))
@@ -1240,6 +1154,101 @@ describe('Host.step — humanize', () => {
       }
     }
     assert.ok(observedDifference, 'humanizeDrift=0.7 must perturb at least one MIDI velocity vs drift=0')
+  })
+})
+
+// ── ADR 005 Phase 5 — outputLevel ────────────────────────────────────────
+
+describe('Host.step — outputLevel', () => {
+  // outputLevel is a global multiplier on output velocity, applied AFTER
+  // source × cell.velocity × humanize. Default 1.0 (no attenuation).
+  // Useful when no MIDI input is wired (source velocity defaults to 100 and
+  // there's no other single knob to scale all output uniformly).
+
+  test('outputLevel=1.0 (default) is bit-identical to a host that never touches it', () => {
+    const stub = { cells: cells('P', 'L', 'R', 'hold'), seed: 42, stepsPerTransform: 4 }
+    const a = new Host(baseParams(stub))
+    const b = new Host(baseParams({ ...stub, outputLevel: 1.0 }))
+    a.step(0); b.step(0)
+    for (const pos of [4, 8, 12, 16, 20]) {
+      assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} match`)
+    }
+  })
+
+  test('outputLevel=0.5 halves MIDI velocity at startChord and at every cell emission', () => {
+    // Source vel = 100 (default), cell.velocity = 1.0, humanize = 0 →
+    // baseline MIDI velocity = 100. With outputLevel=0.5: 100 * 1.0 * 0.5 = 50.
+    const host = new Host(baseParams({ outputLevel: 0.5, cells: cells('P', 'L', 'R', 'hold') }))
+    const startEvents = host.step(0)
+    for (const ev of startEvents) {
+      if (ev.type === 'noteOn') {
+        assert.equal(ev.velocity, 50, 'startChord noteOn at outputLevel=0.5')
+      }
+    }
+    // Cell-driven step at pos=1.
+    const cellEvents = host.step(1)
+    const ons = cellEvents.filter(e => e.type === 'noteOn')
+    for (const ev of ons) {
+      if (ev.type === 'noteOn') {
+        assert.equal(ev.velocity, 50, 'cell-driven noteOn at outputLevel=0.5')
+      }
+    }
+  })
+
+  test('outputLevel=0 produces MIDI velocity 1 (clamped from 0)', () => {
+    // 100 * 1 * 0 = 0 → clampVelocity floors to 1 (note-on with velocity 0
+    // is conventionally a note-off, so we keep it audible-but-quiet).
+    const host = new Host(baseParams({ outputLevel: 0 }))
+    const events = host.step(0)
+    for (const ev of events) {
+      if (ev.type === 'noteOn') {
+        assert.equal(ev.velocity, 1, 'velocity floored to 1 at outputLevel=0')
+      }
+    }
+  })
+
+  test('outputLevel composes with humanizeVelocity', () => {
+    // humanize-driven cellVel ∈ [0.5, 1.0] (with humanizeVelocity=0.5,
+    // cell.vel=1.0). outputLevel=0.5 then halves output → MIDI velocity ∈
+    // [25, 50]. Confirm at least one emitted velocity falls in this range
+    // and none exceed 50.
+    const host = new Host(baseParams({
+      cells: cells('P', 'L', 'R', 'hold'),
+      seed: 42,
+      humanizeVelocity: 0.5,
+      outputLevel: 0.5,
+      stepsPerTransform: 1,
+    }))
+    host.step(0)
+    let observedAtCap = false
+    for (let pos = 1; pos <= 8; pos++) {
+      const events = host.step(pos)
+      for (const ev of events) {
+        if (ev.type === 'noteOn') {
+          assert.ok(ev.velocity <= 50, `velocity ${ev.velocity} must not exceed cap 50`)
+          assert.ok(ev.velocity >= 1, `velocity ${ev.velocity} must be valid MIDI`)
+          if (ev.velocity === 50) observedAtCap = true
+        }
+      }
+    }
+    // The humanizeVel uniform [0,1) hits 0.5+ frequently → cellVel hits 1.0
+    // (clamped from above), so we expect to see vel=50 (the cap) at least
+    // once across 8 boundaries.
+    assert.ok(observedAtCap, 'expected at least one note at the outputLevel cap (50)')
+  })
+
+  test('outputLevel respects MIDI input velocity (multiplies the source)', () => {
+    // ADR 004 input passthrough: incoming MIDI vel becomes the source vel.
+    // With input vel = 60, cell.vel = 1.0, outputLevel = 0.5 →
+    // output velocity = 60 * 1.0 * 0.5 = 30.
+    const host = new Host(baseParams({ outputLevel: 0.5 }))
+    host.noteIn(60, 60, 1) // input velocity 60, channel 1
+    const events = host.step(0)
+    for (const ev of events) {
+      if (ev.type === 'noteOn') {
+        assert.equal(ev.velocity, 30, 'startChord velocity = inputVel * outputLevel')
+      }
+    }
   })
 })
 

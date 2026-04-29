@@ -148,21 +148,28 @@ the cells fire against:
 - **stepDirection** — `forward` (default), `reverse`, `pingpong` (traverse
   without replaying endpoints), or `random` (each step picks the next cell
   uniformly from the seeded PRNG; consecutive same-cell picks allowed).
-- **humanize** — opt-in non-authored variation. Four independent axes:
-  `humanizeVelocity`, `humanizeGate`, `humanizeTiming`, `humanizeProbability`,
-  each `0..1`. Per output event, each axis applies signed uniform noise of
-  amplitude `(amount × ±1)` to the corresponding per-cell field, then clamps
-  per the field's range. Defaults are 0 — authored phrasing is the primary
-  expression source; humanize is the layer that takes the edge off the grid.
+- **humanize** — opt-in non-authored variation. Three independent axes:
+  `humanizeVelocity`, `humanizeGate`, `humanizeTiming`, each `0..1`. Per
+  output event, each axis applies signed uniform noise of amplitude
+  `(amount × ±1)` to the corresponding per-cell field, then clamps per the
+  field's range. Defaults are 0 — authored phrasing is the primary expression
+  source; humanize is the layer that takes the edge off the grid.
 - **humanizeDrift** — global EMA factor (`0..1`, default 0) shared across all
-  4 humanize axes. With `drift = 0` the humanize draws are independent
+  humanize axes. With `drift = 0` the humanize draws are independent
   uniforms (default behavior). As drift rises, each axis becomes a smoothed
   random walk: `v_t = drift × v_{t-1} + (1-drift) × raw_t`. Independent
   noise sounds jittery; smoothed walks sound like drift / breath — the
   parameter's job is to swap "jittery humanize" for "breathing humanize"
   without giving up the seeded determinism contract.
+- **outputLevel** — global multiplier (`0..1`, default 1.0) on the output
+  MIDI velocity stack. Composes as
+  `velocity = source × cell.velocity × (1 + signed_humanize) × outputLevel`,
+  applied last. Single dial for "make everything quieter" without touching
+  per-cell automation; useful in particular when no MIDI input is wired
+  (source velocity defaults to 100 with no other quick way to scale the
+  whole output down).
 
-All four humanize draws share the same seeded PRNG as `jitter`, per-cell
+The humanize draws share the same seeded PRNG as `jitter`, per-cell
 `probability`, and `random` step direction — same `seed` reproduces the same
 output bit-for-bit. Drift smoothing is also seeded-deterministic (per-axis
 `prev` state initialized at 0.5 and rebuilt from pos=0 on every walk call).
@@ -179,8 +186,8 @@ restarts from there and continues advancing through the cells. Targets that
 have no notion of MIDI input may omit this.
 
 **Velocity stack** — output velocity per emitted note is
-`source × cell.velocity × (1 + (humanizeVel*2-1) × humanizeVelocity)`,
-clamped to MIDI 1..127. Three layers compose:
+`source × cell.velocity × (1 + (humanizeVel*2-1) × humanizeVelocity) × outputLevel`,
+clamped to MIDI 1..127. Four layers compose:
 
 - **Source velocity** — incoming MIDI note velocity (most recent note-on
   within the held set when input is wired, default 100 otherwise). The
@@ -190,11 +197,10 @@ clamped to MIDI 1..127. Three layers compose:
   automation.
 - **Global `humanizeVelocity` (0..1)** — opt-in signed uniform noise on top.
   Default 0; the player turns it up when the grid feels too rigid.
-
-A single static "all chords play at X" velocity knob is intentionally not
-exposed — the source-velocity passthrough handles dynamic touch, the per-cell
-layer handles authored shape, and humanize handles organic variation. None of
-these collapse into one knob.
+- **Global `outputLevel` (0..1, default 1.0)** — single dial that scales the
+  entire stack uniformly. Useful in particular for the "no MIDI input wired"
+  use case where source velocity is fixed at 100 and there's no other knob
+  to bring the whole output down.
 
 **MIDI channel** — output channel is a target-level parameter (default 1).
 
@@ -271,8 +277,8 @@ The minimum parameter set each target must expose:
 | `humanizeVelocity`     | float 0..1                                                     | signed-noise amplitude on per-cell velocity        |
 | `humanizeGate`         | float 0..1                                                     | signed-noise amplitude on per-cell gate            |
 | `humanizeTiming`       | float 0..1                                                     | signed-noise amplitude on per-cell timing          |
-| `humanizeProbability`  | float 0..1                                                     | signed-noise amplitude on per-cell probability     |
-| `humanizeDrift`        | float 0..1                                                     | EMA smoothing factor for all 4 humanize axes        |
+| `humanizeDrift`        | float 0..1                                                     | EMA smoothing factor for all humanize axes         |
+| `outputLevel`          | float 0..1                                                     | global output velocity multiplier (default 1.0)    |
 
 Targets may add parameters (MIDI routing, MPE configuration, etc.) but must
 support this core set for conceptual compatibility.
