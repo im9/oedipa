@@ -17,6 +17,7 @@ import {
   walk,
   type Cell,
   type MidiNote,
+  type Op,
   type Triad,
   type Voicing,
   type WalkState,
@@ -71,10 +72,10 @@ export class Host {
     this.params = { ...this.params, ...patch }
   }
 
-  setCell(idx: number, op: Cell): void {
+  setCell(idx: number, op: Op): void {
     if (idx < 0 || idx >= this.params.cells.length) return
     const cells = this.params.cells.slice()
-    cells[idx] = op
+    cells[idx] = { ...cells[idx]!, op }
     this.params = { ...this.params, cells }
   }
 

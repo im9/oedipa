@@ -1,6 +1,7 @@
 // Tonnetz engine for Oedipa.
 // Spec: docs/ai/adr/archive/001-tonnetz-engine-interface.md (engine ops),
-//       docs/ai/adr/003-m4l-parameters-state.md (cell sequencer + jitter)
+//       docs/ai/adr/005-rhythmic-feel.md (cell record, ops, probability,
+//       PRNG draw order)
 //
 // Emitted as an ES module (see tsconfig.json, package.json "type": "module")
 // and consumed in two environments:
@@ -12,8 +13,37 @@ export type MidiNote = number
 export type Quality = 'major' | 'minor'
 export type Triad = [MidiNote, MidiNote, MidiNote]
 export type Transform = 'P' | 'L' | 'R'
-export type Cell = Transform | 'hold'
+export type Op = 'P' | 'L' | 'R' | 'hold' | 'rest'
 export type Voicing = 'close' | 'spread' | 'drop2'
+
+export interface Cell {
+  op: Op
+  velocity: number     // 0..1, multiplier on source velocity
+  gate: number         // 0..1, fraction of step length
+  probability: number  // 0..1, chance the step plays this visit
+  timing: number       // -0.5..+0.5, step-length fraction
+}
+
+export const DEFAULT_CELL_FIELDS: Readonly<Omit<Cell, 'op'>> = Object.freeze({
+  velocity: 1.0,
+  gate: 0.9,
+  probability: 1.0,
+  timing: 0.0,
+})
+
+export function makeCell(op: Op, overrides: Partial<Omit<Cell, 'op'>> = {}): Cell {
+  return {
+    op,
+    velocity: overrides.velocity ?? DEFAULT_CELL_FIELDS.velocity,
+    gate: overrides.gate ?? DEFAULT_CELL_FIELDS.gate,
+    probability: overrides.probability ?? DEFAULT_CELL_FIELDS.probability,
+    timing: overrides.timing ?? DEFAULT_CELL_FIELDS.timing,
+  }
+}
+
+// Jitter substitution pool — 'rest' is intentionally excluded so random op
+// substitution never injects unintended silence (ADR 005).
+const CELL_OPS: readonly Op[] = ['P', 'L', 'R', 'hold']
 
 export interface WalkState {
   startChord: Triad
@@ -23,7 +53,12 @@ export interface WalkState {
   seed: number
 }
 
-const CELL_OPS: readonly Cell[] = ['P', 'L', 'R', 'hold']
+export interface StepEvent {
+  cellIdx: number     // index into cells[] of the consumed cell
+  resolvedOp: Op      // op after jitter substitution
+  chord: Triad        // chord cursor AFTER this step's transform
+  played: boolean     // false on rest or failed probability roll
+}
 
 function mod12(n: number): PitchClass {
   return ((n % 12) + 12) % 12
@@ -138,35 +173,103 @@ export function mulberry32(seed: number): () => number {
   }
 }
 
-// Cell sequencer walk.
-// At each transform boundary the next cell is consumed. With probability
-// `jitter`, the cell's op is replaced by a uniformly-random pick from CELL_OPS
-// (using two PRNG floats per transform: substitute-or-not, then which op).
-// `hold` (whether authored or rolled) leaves the chord unchanged.
+// Per-step boundary simulation. Advances `cursor.chord` for P/L/R, leaves
+// it untouched for hold/rest, consumes PRNG draws in the documented order,
+// and returns the resolved op + played flag.
 //
-// PRNG is reseeded fresh from `seed` on every call so any-pos restart yields
-// the same triad — this is the "transport restart" contract.
-export function walk(state: WalkState, pos: number): Triad {
-  const { startChord, cells, stepsPerTransform: spt, jitter, seed } = state
-  let chord: Triad = [startChord[0], startChord[1], startChord[2]]
-  if (pos <= 0 || cells.length === 0) return chord
+// PRNG draw order (ADR 005 §"PRNG draw order"):
+// 1. stepDirection — 1 draw iff stepDirection=='random' (Phase 3; not here)
+// 2. jitter — 2 draws iff jitter > 0 AND cell.op !== 'rest', else 0
+// 3. probability — 1 draw, always
+// 4. humanizeVelocity — 1 draw, always (reserved; surfaced in Phase 3)
+// 5. humanizeGate — 1 draw, always (reserved)
+// 6. humanizeTiming — 1 draw, always (reserved)
+function stepBoundary(
+  cursor: { chord: Triad },
+  cell: Cell,
+  jitter: number,
+  rng: () => number,
+): { resolvedOp: Op; played: boolean } {
+  let op: Op = cell.op
 
-  const rng = mulberry32(seed)
-  let transformIdx = 0
-  for (let step = 1; step <= pos; step++) {
-    if (step % spt !== 0) continue
-
-    let op: Cell = cells[transformIdx % cells.length]!
+  if (jitter > 0 && op !== 'rest') {
     const rSubstitute = rng()
     const rPick = rng()
     if (rSubstitute < jitter) {
       op = CELL_OPS[Math.floor(rPick * CELL_OPS.length)]!
     }
+  }
 
-    if (op !== 'hold') {
-      chord = applyTransform(chord, op)
+  const rProb = rng()
+  rng() // humanizeVelocity (reserved)
+  rng() // humanizeGate (reserved)
+  rng() // humanizeTiming (reserved)
+
+  if (op === 'P' || op === 'L' || op === 'R') {
+    cursor.chord = applyTransform(cursor.chord, op)
+  }
+  // 'hold' and 'rest' leave the cursor untouched.
+
+  // rest is silent by definition; otherwise probability fail = silent-advance.
+  const played = op !== 'rest' && rProb < cell.probability
+  return { resolvedOp: op, played }
+}
+
+// Cell sequencer walk. Returns the chord cursor at `pos`.
+//
+// The chord cursor is independent of probability rolls (probability fail is
+// silent-advance — cursor still applies the transform). Use walkStepEvent
+// to observe per-step audio outcome.
+//
+// PRNG is reseeded fresh from `seed` on every call so any-pos restart yields
+// the same triad — this is the "transport restart" contract.
+export function walk(state: WalkState, pos: number): Triad {
+  const { startChord, cells, stepsPerTransform: spt, jitter, seed } = state
+  const cursor: { chord: Triad } = { chord: [startChord[0], startChord[1], startChord[2]] }
+  if (pos <= 0 || cells.length === 0) return cursor.chord
+
+  const rng = mulberry32(seed)
+  let transformIdx = 0
+  for (let step = 1; step <= pos; step++) {
+    if (step % spt !== 0) continue
+    const cell = cells[transformIdx % cells.length]!
+    stepBoundary(cursor, cell, jitter, rng)
+    transformIdx += 1
+  }
+  return cursor.chord
+}
+
+// Returns the per-step event for the cell consumed at transform boundary
+// `pos`. Returns null when pos <= 0, cells is empty, or pos is not a
+// boundary (pos % stepsPerTransform !== 0).
+//
+// Re-simulates from pos=0 with a fresh PRNG, matching walk()'s reseeding
+// contract. The host can call this at boundary ticks to learn cellIdx,
+// resolvedOp (post-jitter), the post-step chord cursor, and whether the
+// step plays audio.
+export function walkStepEvent(state: WalkState, pos: number): StepEvent | null {
+  if (pos <= 0) return null
+  const { startChord, cells, stepsPerTransform: spt, jitter, seed } = state
+  if (cells.length === 0 || pos % spt !== 0) return null
+
+  const cursor: { chord: Triad } = { chord: [startChord[0], startChord[1], startChord[2]] }
+  const rng = mulberry32(seed)
+  let transformIdx = 0
+  let result: StepEvent | null = null
+  for (let step = 1; step <= pos; step++) {
+    if (step % spt !== 0) continue
+    const cellIdx = transformIdx % cells.length
+    const cell = cells[cellIdx]!
+    const { resolvedOp, played } = stepBoundary(cursor, cell, jitter, rng)
+    if (step === pos) {
+      result = {
+        cellIdx,
+        resolvedOp,
+        chord: [cursor.chord[0], cursor.chord[1], cursor.chord[2]],
+        played,
+      }
     }
     transformIdx += 1
   }
-  return chord
+  return result
 }

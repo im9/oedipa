@@ -1,14 +1,14 @@
 {
-  "version": 2,
-  "description": "Cross-target conformance test vectors for the Tonnetz engine (see docs/ai/adr/archive/001-tonnetz-engine-interface.md and docs/ai/adr/003-m4l-parameters-state.md). All target implementations (m4l, vst, app) must pass these. Binding assertion: pitch-class set of output equals expected_pcs (order-independent). Realized octaves may vary by integer multiples of 12 due to target-specific boundary behavior in buildTriad; pitch-class identity is the contract.",
+  "version": 3,
+  "description": "Cross-target conformance test vectors for the Tonnetz engine (see docs/ai/adr/archive/001-tonnetz-engine-interface.md and docs/ai/adr/005-rhythmic-feel.md). All target implementations (m4l, vst, app) must pass these. Binding assertion: pitch-class set of output equals expected_pcs (order-independent). Realized octaves may vary by integer multiples of 12 due to target-specific boundary behavior in buildTriad; pitch-class identity is the contract.",
   "conventions": {
     "triad": "[a, b, c] MIDI note numbers. For inputs in close position, a=root, b=root+3 or +4, c=root+7. identify_triad cases also include inversions.",
     "pitch_classes": "integer 0..11 (C=0, ..., B=11), sorted ascending for set equality",
     "transforms": "P | L | R. Sequences of single-char strings.",
     "voicings": "close | spread | drop2",
-    "cells": "Each cell is one of 'P' | 'L' | 'R' | 'hold'. Sequencer iterates cells cyclically; one cell consumed per stepsPerTransform host ticks. 'hold' leaves walker on the current triad.",
-    "jitter": "float 0..1. Per-step probability that the cell's op is replaced by a uniform-random pick from {P, L, R, hold}.",
-    "seed": "int. Seeds a mulberry32 PRNG. For each transform tick, two floats are sampled: first decides substitute-or-not (substitute iff r < jitter); second selects the substitute op (idx = floor(r * 4) ∈ {0=P, 1=L, 2=R, 3=hold}). The PRNG is seeded fresh from `seed` at the start of every walk(state, pos) call so any-pos restart reproduces."
+    "cells": "Each cell is a record { op, velocity, gate, probability, timing }. Loader fills defaults for missing fields: velocity=1.0, gate=0.9, probability=1.0, timing=0.0 (ADR 005 §'Default cell values'). 'op' ∈ {P, L, R, hold, rest}. 'hold' leaves the chord cursor untouched but re-emits audio; 'rest' leaves the cursor untouched and is silent. Sequencer iterates cells cyclically; one cell consumed per stepsPerTransform host ticks.",
+    "jitter": "float 0..1. Per-step probability that the cell's op is replaced by a uniform-random pick from CELL_OPS = {P, L, R, hold} (rest is excluded so jitter never injects unintended silence — ADR 005). Jitter draws are SKIPPED when jitter == 0 or when the cell's authored op is 'rest'.",
+    "seed": "int. Seeds a mulberry32 PRNG. The PRNG is reseeded fresh from `seed` at the start of every walk(state, pos) call so any-pos restart reproduces. Per-step PRNG draw order (ADR 005 §'PRNG draw order'): (1) stepDirection — 1 draw iff stepDirection=='random'; (2) jitter — 2 draws (substitute? + which) iff jitter>0 AND op!='rest', else 0; (3) probability — 1 draw, always; (4) humanizeVelocity — 1 draw, always; (5) humanizeGate — 1 draw, always; (6) humanizeTiming — 1 draw, always. Probability rolls trigger silent-advance on P/L/R (chord cursor still applies the transform; no audio). Humanize draws are reserved at this version even though Layer 2 surfaces them in a later phase — keeps the cross-target draw sequence stable."
   },
 
   "identify_triad": [
@@ -71,7 +71,7 @@
       "description": "Plain cell cycle with no holds and no jitter. cell index advances on every host tick.",
       "state": {
         "startChord": [60, 64, 67],
-        "cells": ["P", "L", "R", "P"],
+        "cells": [{ "op": "P" }, { "op": "L" }, { "op": "R" }, { "op": "P" }],
         "stepsPerTransform": 1,
         "jitter": 0,
         "seed": 0
@@ -89,10 +89,10 @@
     },
     {
       "name": "hold cells preserve chord",
-      "description": "'hold' cells leave the walker untouched. Verifies the four-element op space.",
+      "description": "'hold' cells leave the walker untouched.",
       "state": {
         "startChord": [60, 64, 67],
-        "cells": ["P", "hold", "L", "hold"],
+        "cells": [{ "op": "P" }, { "op": "hold" }, { "op": "L" }, { "op": "hold" }],
         "stepsPerTransform": 1,
         "jitter": 0,
         "seed": 0
@@ -107,11 +107,30 @@
       ]
     },
     {
+      "name": "rest cells preserve chord cursor",
+      "description": "ADR 005: 'rest' op leaves the chord cursor unchanged (audio is silent — see walk_step_events). Cell pointer still advances.",
+      "state": {
+        "startChord": [60, 64, 67],
+        "cells": [{ "op": "P" }, { "op": "rest" }, { "op": "L" }, { "op": "rest" }],
+        "stepsPerTransform": 1,
+        "jitter": 0,
+        "seed": 0
+      },
+      "samples": [
+        { "pos": 0, "expected_pcs": [0, 4, 7],  "note": "startChord C major" },
+        { "pos": 1, "expected_pcs": [0, 3, 7],  "note": "cell[0]=P: C minor" },
+        { "pos": 2, "expected_pcs": [0, 3, 7],  "note": "cell[1]=rest: cursor unchanged" },
+        { "pos": 3, "expected_pcs": [0, 3, 8],  "note": "cell[2]=L: Ab major" },
+        { "pos": 4, "expected_pcs": [0, 3, 8],  "note": "cell[3]=rest: cursor unchanged" },
+        { "pos": 5, "expected_pcs": [3, 8, 11], "note": "cell[0]=P (cycle): Ab minor" }
+      ]
+    },
+    {
       "name": "stepsPerTransform=2 holds chord between cells",
       "description": "Cells consumed only at boundaries (every spt host ticks). Between boundaries, walker holds.",
       "state": {
         "startChord": [60, 64, 67],
-        "cells": ["P", "L", "R"],
+        "cells": [{ "op": "P" }, { "op": "L" }, { "op": "R" }],
         "stepsPerTransform": 2,
         "jitter": 0,
         "seed": 0
@@ -131,7 +150,7 @@
       "description": "Pathological case: every cell is hold. Walker never moves.",
       "state": {
         "startChord": [60, 64, 67],
-        "cells": ["hold", "hold", "hold", "hold"],
+        "cells": [{ "op": "hold" }, { "op": "hold" }, { "op": "hold" }, { "op": "hold" }],
         "stepsPerTransform": 1,
         "jitter": 0,
         "seed": 0
@@ -143,11 +162,48 @@
       ]
     },
     {
+      "name": "all-rest cells freeze startChord",
+      "description": "All-rest program: chord cursor never moves, regardless of jitter (rest is excluded from the substitution pool).",
+      "state": {
+        "startChord": [60, 64, 67],
+        "cells": [{ "op": "rest" }, { "op": "rest" }, { "op": "rest" }, { "op": "rest" }],
+        "stepsPerTransform": 1,
+        "jitter": 1,
+        "seed": 42
+      },
+      "samples": [
+        { "pos": 0, "expected_pcs": [0, 4, 7], "note": "startChord" },
+        { "pos": 7, "expected_pcs": [0, 4, 7], "note": "rest excluded from jitter pool: cursor never moves" }
+      ]
+    },
+    {
+      "name": "probability=0 still advances chord cursor on P/L/R",
+      "description": "ADR 005: probability fail is silent-advance — chord cursor STILL applies the transform on P/L/R. walk(state, pos) (chord cursor only) is therefore independent of probability for non-rest ops. Verified by setting probability=0 and asserting the same cursor as the deterministic PLR cycle.",
+      "state": {
+        "startChord": [60, 64, 67],
+        "cells": [
+          { "op": "P", "probability": 0 },
+          { "op": "L", "probability": 0 },
+          { "op": "R", "probability": 0 },
+          { "op": "P", "probability": 0 }
+        ],
+        "stepsPerTransform": 1,
+        "jitter": 0,
+        "seed": 0
+      },
+      "samples": [
+        { "pos": 1, "expected_pcs": [0, 3, 7], "note": "P: C minor (cursor advances even though step is silent)" },
+        { "pos": 2, "expected_pcs": [0, 3, 8], "note": "L: Ab major (cursor advances even though step is silent)" },
+        { "pos": 3, "expected_pcs": [0, 5, 8], "note": "R: F minor" },
+        { "pos": 4, "expected_pcs": [0, 5, 9], "note": "P: F major" }
+      ]
+    },
+    {
       "name": "single-cell program loops one op",
       "description": "cells.length=1 case. The same op applies on every transform tick.",
       "state": {
         "startChord": [60, 64, 67],
-        "cells": ["P"],
+        "cells": [{ "op": "P" }],
         "stepsPerTransform": 1,
         "jitter": 0,
         "seed": 0
@@ -160,6 +216,70 @@
       ]
     }
   ],
+
+  "walk_step_events": {
+    "description": "Per-step event semantics (ADR 005). walkStepEvent(state, pos) returns the cell consumed at transform boundary `pos`, with: cellIdx, resolvedOp (post-jitter), chord (cursor after this step), played (false on rest or probability fail). Returns null when pos is not a transform boundary or pos <= 0. Cases assert the structural rules — concrete probability/humanize draw values are seeded but not pinned here.",
+    "cases": [
+      {
+        "name": "rest is always silent regardless of probability",
+        "state": {
+          "startChord": [60, 64, 67],
+          "cells": [{ "op": "rest", "probability": 1.0 }],
+          "stepsPerTransform": 1,
+          "jitter": 0,
+          "seed": 0
+        },
+        "events": [
+          { "pos": 1, "cellIdx": 0, "resolvedOp": "rest", "expected_chord_pcs": [0, 4, 7], "played": false }
+        ]
+      },
+      {
+        "name": "probability=1 always plays for P/L/R/hold",
+        "state": {
+          "startChord": [60, 64, 67],
+          "cells": [
+            { "op": "P", "probability": 1.0 },
+            { "op": "hold", "probability": 1.0 }
+          ],
+          "stepsPerTransform": 1,
+          "jitter": 0,
+          "seed": 7
+        },
+        "events": [
+          { "pos": 1, "cellIdx": 0, "resolvedOp": "P",    "expected_chord_pcs": [0, 3, 7], "played": true },
+          { "pos": 2, "cellIdx": 1, "resolvedOp": "hold", "expected_chord_pcs": [0, 3, 7], "played": true }
+        ]
+      },
+      {
+        "name": "probability=0 never plays but P/L/R cursor still advances",
+        "state": {
+          "startChord": [60, 64, 67],
+          "cells": [
+            { "op": "P", "probability": 0 },
+            { "op": "L", "probability": 0 }
+          ],
+          "stepsPerTransform": 1,
+          "jitter": 0,
+          "seed": 7
+        },
+        "events": [
+          { "pos": 1, "cellIdx": 0, "resolvedOp": "P", "expected_chord_pcs": [0, 3, 7], "played": false },
+          { "pos": 2, "cellIdx": 1, "resolvedOp": "L", "expected_chord_pcs": [0, 3, 8], "played": false }
+        ]
+      },
+      {
+        "name": "non-boundary positions return null",
+        "state": {
+          "startChord": [60, 64, 67],
+          "cells": [{ "op": "P" }, { "op": "L" }],
+          "stepsPerTransform": 2,
+          "jitter": 0,
+          "seed": 0
+        },
+        "null_positions": [0, 1, 3, 5]
+      }
+    ]
+  },
 
   "mulberry32": {
     "description": "PRNG used for jitter. Standard mulberry32 (https://gist.github.com/tommyettinger/46a3c5e1ba2554c7b2f6dab3f54e1eb6). Each implementation MUST produce these exact floats from the given seed for the first N calls. This is the binding contract for cross-target jitter reproducibility.",
@@ -189,17 +309,22 @@
   },
 
   "walk_jitter": {
-    "description": "Jitter behavior. expected_pcs values FILLED_BY_ENGINE_IMPLEMENTATION once the mulberry32 reference outputs are in place. Cases below describe the structural assertions; concrete pcs emerge from running the engine and copying back.",
+    "description": "Structural assertions for jitter & seed (ADR 005 retains these from ADR 003 with the optimisation that jitter draws are SKIPPED when jitter==0 or op=='rest').",
     "cases": [
       {
         "name": "jitter=0 ignores seed",
-        "description": "With jitter=0, the seed has no effect. Walk identical to walk_deterministic 'PLR cycle' above.",
+        "description": "With jitter=0, no jitter draws are taken; output is seed-independent.",
         "structural_assertion": "walk(jitter=0, seed=any) === walk(jitter=0, seed=other)"
       },
       {
-        "name": "jitter=1 ignores cells",
-        "description": "With jitter=1, every cell op is replaced by a random pick. Result depends only on seed and pos, not on cells contents.",
-        "structural_assertion": "walk(jitter=1, cells=['P','L','R','hold']) === walk(jitter=1, cells=['hold','hold','hold','hold'])"
+        "name": "jitter=1 (no rest cells) ignores cell op contents",
+        "description": "With jitter=1 and no rest cells, every authored op is replaced by a random pick from CELL_OPS={P,L,R,hold}. Result depends only on seed and pos, not on cell op identities.",
+        "structural_assertion": "walk(jitter=1, cells of {P,L,R,hold}) === walk(jitter=1, cells of all 'hold')"
+      },
+      {
+        "name": "rest is excluded from jitter substitution",
+        "description": "A cell with op='rest' never substitutes (jitter draws skipped). Walk with all-rest cells matches the no-rest no-op baseline regardless of jitter or seed.",
+        "structural_assertion": "walk(jitter=any, seed=any, cells of all rest) === startChord"
       },
       {
         "name": "fixed seed reproduces",

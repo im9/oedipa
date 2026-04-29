@@ -305,7 +305,7 @@ global `live.*` are addressable for host automation. Continues ADR 003's
 
 Phases follow ADR 003's TDD pattern.
 
-- [ ] **Phase 1 — Engine: cell shape + walk semantics**
+- [x] **Phase 1 — Engine: cell shape + walk semantics**
   - Extend `Cell` to record shape; add `Op` type with `rest`.
   - Op effects table semantics in `nextChord` / walk logic.
   - Probability roll with silent-advance behavior on P/L/R; seeded.

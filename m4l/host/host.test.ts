@@ -1,11 +1,16 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
+import { makeCell, type Op } from '../engine/tonnetz.ts'
 import { Host, type HostParams, type NoteEvent } from './host.ts'
+
+function cells(...ops: Op[]): HostParams['cells'] {
+  return ops.map(op => makeCell(op))
+}
 
 function baseParams(overrides: Partial<HostParams> = {}): HostParams {
   return {
     startChord: [60, 64, 67],
-    cells: ['P', 'L', 'R', 'hold'],
+    cells: cells('P', 'L', 'R', 'hold'),
     stepsPerTransform: 1,
     voicing: 'close',
     seventh: false,
@@ -47,7 +52,7 @@ describe('Host.step', () => {
   })
 
   test('emits noteOffs for the previous chord before noteOns on change', () => {
-    const host = new Host(baseParams({ cells: ['P'] }))
+    const host = new Host(baseParams({ cells: cells('P') }))
     host.step(0)
     const events = host.step(1)
 
@@ -63,13 +68,13 @@ describe('Host.step', () => {
   })
 
   test('re-calling step with the same pos emits nothing', () => {
-    const host = new Host(baseParams({ cells: ['P'] }))
+    const host = new Host(baseParams({ cells: cells('P') }))
     assert.equal(host.step(0).length, 3)
     assert.deepEqual(host.step(0), [])
   })
 
   test('supports scrubbing: step(n) without prior calls emits the chord at n', () => {
-    const host = new Host(baseParams({ cells: ['P'] }))
+    const host = new Host(baseParams({ cells: cells('P') }))
     const events = host.step(5)
 
     assert.equal(pitchesOf(events, 'noteOff').length, 0)
@@ -109,7 +114,7 @@ describe('Host.step', () => {
   })
 
   test('hold cell does not change the chord (no events emitted)', () => {
-    const host = new Host(baseParams({ cells: ['hold'] }))
+    const host = new Host(baseParams({ cells: cells('hold') }))
     host.step(0)
     // All subsequent steps stay on startChord.
     for (const pos of [1, 2, 5, 17]) {
@@ -139,7 +144,7 @@ describe('Host.step', () => {
   })
 
   test('noteOffs at chord change match the previously voiced notes (not the raw triad)', () => {
-    const host = new Host(baseParams({ voicing: 'spread', cells: ['P'] }))
+    const host = new Host(baseParams({ voicing: 'spread', cells: cells('P') }))
     host.step(0)
     const events = host.step(1)
     assert.deepEqual(pitchesOf(events, 'noteOff').sort((a, b) => a - b), [60, 67, 76])
@@ -169,7 +174,7 @@ describe('Host.panic', () => {
 
 describe('Host.setParams', () => {
   test('is silent on its own; the next chord change reflects the new params', () => {
-    const host = new Host(baseParams({ stepsPerTransform: 2, cells: ['P'] }))
+    const host = new Host(baseParams({ stepsPerTransform: 2, cells: cells('P') }))
     host.step(0)
     host.setParams({ voicing: 'spread' })
     assert.deepEqual(host.step(1), [])
@@ -181,7 +186,7 @@ describe('Host.setParams', () => {
 
 describe('Host.setCell', () => {
   test('mutates only the indexed cell', () => {
-    const host = new Host(baseParams({ cells: ['P', 'L', 'R', 'hold'] }))
+    const host = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
     host.setCell(2, 'hold')
     host.step(0)
     // pos 3 was R → F minor, now hold → stays Ab major from pos 2.
@@ -194,7 +199,7 @@ describe('Host.setCell', () => {
   })
 
   test('out-of-range index is a no-op', () => {
-    const host = new Host(baseParams({ cells: ['P', 'L', 'R', 'hold'] }))
+    const host = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
     host.setCell(-1, 'hold')
     host.setCell(99, 'hold')
     host.step(0)
@@ -239,7 +244,7 @@ describe('Host.cellIdx — for active-cell LED', () => {
   })
 
   test('honours stepsPerTransform=1 with 2-cell array', () => {
-    const host = new Host(baseParams({ stepsPerTransform: 1, cells: ['P', 'L'] }))
+    const host = new Host(baseParams({ stepsPerTransform: 1, cells: cells('P', 'L') }))
     assert.equal(host.cellIdx(0), -1) // no transform yet
     assert.equal(host.cellIdx(1), 0)  // cells[0]=P fired
     assert.equal(host.cellIdx(2), 1)  // cells[1]=L fired
@@ -271,7 +276,7 @@ describe('Host.noteIn (ADR 004 — input event model)', () => {
   })
 
   test('next step after input-driven chord change emits the new chord at effective pos 0', () => {
-    const host = new Host(baseParams({ cells: ['P', 'L', 'R'] }))
+    const host = new Host(baseParams({ cells: cells('P', 'L', 'R') }))
     host.step(0); host.step(1); host.step(2) // walker has advanced
     host.noteIn(65, 100, 1); host.noteIn(69, 100, 1); host.noteIn(72, 100, 1) // Fmaj
     // Subsequent step at any pos: walker emits new startChord (Fmaj close) — cells not applied yet.
@@ -281,7 +286,7 @@ describe('Host.noteIn (ADR 004 — input event model)', () => {
   })
 
   test('lastInputVelocity updates on every note-on and is used for walker output', () => {
-    const host = new Host(baseParams({ cells: ['P'] }))
+    const host = new Host(baseParams({ cells: cells('P') }))
     host.step(0) // emit Cmaj at default vel 100
     host.noteIn(60, 80, 1) // single note, no triad — startChord unchanged, lastInputVelocity = 80
     const events = host.step(1) // P → Cmin, emit noteOns at new vel 80
@@ -339,7 +344,7 @@ describe('Host.noteIn (ADR 004 — input event model)', () => {
 
 describe('Host.noteOff (ADR 004 — trigger model)', () => {
   test('hybrid: walker continues running after all notes released', () => {
-    const host = new Host(baseParams({ triggerMode: 0, cells: ['P'] }))
+    const host = new Host(baseParams({ triggerMode: 0, cells: cells('P') }))
     host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
     host.step(0) // walker emits Cmaj
     host.noteOff(60, 1); host.noteOff(64, 1); host.noteOff(67, 1)
@@ -359,7 +364,7 @@ describe('Host.noteOff (ADR 004 — trigger model)', () => {
   })
 
   test('hold-to-play: last note-off triggers panic and pauses the walker', () => {
-    const host = new Host(baseParams({ triggerMode: 1, cells: ['P'] }))
+    const host = new Host(baseParams({ triggerMode: 1, cells: cells('P') }))
     host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
     host.step(0) // emit Cmaj
     host.noteOff(60, 1); host.noteOff(64, 1)
@@ -372,7 +377,7 @@ describe('Host.noteOff (ADR 004 — trigger model)', () => {
   })
 
   test('hold-to-play: note-on after release reactivates the walker and resets cells from cells[0]', () => {
-    const host = new Host(baseParams({ triggerMode: 1, cells: ['P'] }))
+    const host = new Host(baseParams({ triggerMode: 1, cells: cells('P') }))
     host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
     host.step(0); host.step(1) // walker advances to P(Cmaj) = Cmin
     host.noteOff(60, 1); host.noteOff(64, 1); host.noteOff(67, 1)
@@ -385,7 +390,7 @@ describe('Host.noteOff (ADR 004 — trigger model)', () => {
   })
 
   test('hybrid: note-off does not trigger panic even with no notes held', () => {
-    const host = new Host(baseParams({ triggerMode: 0, cells: ['P'] }))
+    const host = new Host(baseParams({ triggerMode: 0, cells: cells('P') }))
     host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
     host.step(0)
     const events = host.noteOff(60, 1) // not the last release; should also not panic
@@ -437,7 +442,7 @@ describe('Host.transportStart (ADR 004 — pre-roll)', () => {
 
 describe('Host pos reset on startChord change (ADR 004 Axis 5)', () => {
   test('lattice setParams startChord at non-zero pos: walker emits new startChord on next step', () => {
-    const host = new Host(baseParams({ cells: ['P'] }))
+    const host = new Host(baseParams({ cells: cells('P') }))
     host.step(0); host.step(1); host.step(2)
     host.setParams({ startChord: [65, 69, 72] }) // Fmaj
     const events = host.step(3) // pendingPosReset → effectivePos = 0 → walker emits startChord
@@ -446,7 +451,7 @@ describe('Host pos reset on startChord change (ADR 004 Axis 5)', () => {
   })
 
   test('input-driven startChord change resets cell program', () => {
-    const host = new Host(baseParams({ cells: ['P', 'L'] }))
+    const host = new Host(baseParams({ cells: cells('P', 'L') }))
     host.step(0); host.step(1); host.step(2)
     host.noteIn(65, 100, 1); host.noteIn(69, 100, 1); host.noteIn(72, 100, 1) // Fmaj
     const events = host.step(3)
@@ -459,7 +464,7 @@ describe('Host pos reset on startChord change (ADR 004 Axis 5)', () => {
   })
 
   test('setParams startChord with the same triad does not reset pos', () => {
-    const host = new Host(baseParams({ cells: ['P'] }))
+    const host = new Host(baseParams({ cells: cells('P') }))
     host.step(0); host.step(1) // walker on Cmin (P applied)
     host.setParams({ startChord: [60, 64, 67] }) // same value re-asserted (e.g. dump cascade)
     const events = host.step(2) // walker should continue: P^2(Cmaj) = Cmaj
@@ -479,7 +484,7 @@ describe('Host pos reset on startChord change (ADR 004 Axis 5)', () => {
       ['step', 4], ['step', 5], ['step', 6],
     ]
     function run(): NoteEvent[] {
-      const h = new Host(baseParams({ cells: ['P', 'L', 'R', 'hold'], jitter: 0.5, seed: 42 }))
+      const h = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold'), jitter: 0.5, seed: 42 }))
       const out: NoteEvent[] = []
       for (const cmd of script) {
         if (cmd[0] === 'step') out.push(...h.step(cmd[1]))
@@ -509,7 +514,7 @@ describe('Host.currentTriad / centerPc — for lattice rendering', () => {
   })
 
   test('currentTriad updates after a transform', () => {
-    const host = new Host(baseParams({ cells: ['P'] }))
+    const host = new Host(baseParams({ cells: cells('P') }))
     host.step(0)
     host.step(1)
     // P(C major) = C minor at the same root midi note (60)
