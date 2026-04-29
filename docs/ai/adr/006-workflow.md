@@ -56,8 +56,9 @@ Compact, single-line, `|key=value` pairs:
 "PLR-|s=42|j=0.3|c=Em"
 ```
 
-- **cells** — positional, first token. Each character is one cell op
-  (encoding per ADR 005).
+- **cells** — positional, first token. Each character is one cell op:
+  `P` = P, `L` = L, `R` = R, `_` = hold (continuation), `-` = rest (silence).
+  ASCII-only so the program string survives copy/paste through any path.
 - **`s=`** — seed (uint).
 - **`j=`** — jitter (0–1 float).
 - **`c=`** — startChord. Root pitch class name (accepting `C`, `C#`, `Db`,
@@ -132,13 +133,20 @@ before pressing random."
 
 ### Phase 1 — Engine/host serialization (pure TS)
 
-- [ ] Define `Slot` type: `{ cells: string, startChord: { root: number, quality: 'maj' | 'min' }, jitter: number, seed: number }`.
-- [ ] `serializeSlot(slot): string` — emits compact `"cells|s=...|j=...|c=..."`.
-- [ ] `parseSlot(s: string): Slot | null` — parses, returns null on malformed.
-- [ ] Chord parsing accepts both sharps and flats (`F#`, `Gb`); serializer emits canonical form.
-- [ ] Tests: round-trip identity for the full grid of valid slots.
-- [ ] Tests: unknown `|x=y` keys are ignored, not rejected.
-- [ ] Tests: malformed input returns null without throwing.
+- [x] Define `Slot` type: `{ cells: string, startChord: { root: number, quality: 'maj' | 'min' }, jitter: number, seed: number }`.
+- [x] `serializeSlot(slot): string` — emits compact `"cells|s=...|j=...|c=..."`.
+- [x] `parseSlot(s: string): Slot | null` — parses, returns null on malformed.
+- [x] Chord parsing accepts both sharps and flats (`F#`, `Gb`); serializer emits canonical form.
+- [x] Tests: round-trip identity for the full grid of valid slots.
+- [x] Tests: unknown `|x=y` keys are ignored, not rejected.
+- [x] Tests: malformed input returns null without throwing.
+
+Implementation: `m4l/host/slot.ts` (pure TS, no Max imports). Tests:
+`m4l/host/slot.test.ts`. Cell encoding chosen ASCII so the program string
+survives clipboard paste; jitter serialized at 3-decimal precision (knob
+granularity below human perceptual threshold for stochastic substitution
+rate). Cb / Fb / E# / B# rejected on input as notation oddities — sharps
+plus the five flats Db/Eb/Gb/Ab/Bb cover every pitch class.
 
 ### Phase 2 — Slot state in host
 

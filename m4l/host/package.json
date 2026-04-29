@@ -6,7 +6,7 @@
   "description": "M4L host layer for Oedipa. Bridges Max transport and the Tonnetz engine: owns WalkState, resolves step->triad, and shapes MIDI note events. Loaded by [node.script] in the .amxd via index.js; unit-tested standalone under node --test.",
   "main": "./dist/host/host.js",
   "scripts": {
-    "test": "node --test host.test.ts bridge.test.ts",
+    "test": "node --test host.test.ts bridge.test.ts slot.test.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   }
