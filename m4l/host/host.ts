@@ -13,7 +13,9 @@
 import {
   addSeventh,
   applyVoicing,
+  buildTriad,
   findTriadInHeldNotes,
+  identifyTriad,
   walk,
   walkStepEvent,
   type Cell,
@@ -24,6 +26,7 @@ import {
   type Voicing,
   type WalkState,
 } from '../engine/tonnetz.ts'
+import { cellsToString, stringToCells, type Slot, type SlotQuality } from './slot.ts'
 
 // delayPos is in pos-units (the same domain as step(pos)). Undefined or 0
 // means "fire at the current pos". The host emits gate-end note-offs and
@@ -74,6 +77,9 @@ export interface HostParams {
   outputLevel: number
 }
 
+// ADR 006 §"Axis 1" — 4 snapshot slots in the device.
+const SLOT_COUNT = 4
+
 export class Host {
   private params: HostParams
   private held: Set<MidiNote> = new Set()      // sustained walker OUTPUT notes
@@ -87,9 +93,18 @@ export class Host {
   // ADR 005 Phase 2 scheduling state
   private handoffPending = false               // next noteOn step must legato-off `held`
   private lastEmittedEffectivePos: number | null = null // same-pos idempotency guard
+  // ADR 006 Phase 2 — slot state. Slots persist programs; switching applies
+  // {cells, jitter, seed} immediately and {startChord} only if no MIDI is
+  // currently held (otherwise stash as pending for the next note-off).
+  private slots: Slot[]
+  private activeSlotIdx = 0
+  private pendingSlotStartChord: { root: number; quality: SlotQuality } | null = null
 
   constructor(params: HostParams) {
     this.params = { ...params }
+    const initial = this.captureSlot()
+    this.slots = []
+    for (let i = 0; i < SLOT_COUNT; i++) this.slots.push(this.cloneSlot(initial))
   }
 
   setParams(patch: Partial<HostParams>): void {
@@ -119,6 +134,46 @@ export class Host {
     const cells = this.params.cells.slice()
     cells[idx] = { ...cells[idx]!, [field]: value }
     this.params = { ...this.params, cells }
+  }
+
+  // ADR 006 Phase 2 — slot accessors and switching.
+  get activeSlot(): number {
+    return this.activeSlotIdx
+  }
+
+  getSlot(idx: number): Slot | null {
+    if (idx < 0 || idx >= this.slots.length) return null
+    return this.cloneSlot(this.slots[idx]!)
+  }
+
+  // Bridge calls this on device load to push hidden-param state back into
+  // the in-memory Slot[]. This is persistence rehydration only — it does
+  // NOT load the slot into params (use switchSlot for that).
+  setSlot(idx: number, slot: Slot): void {
+    if (idx < 0 || idx >= this.slots.length) return
+    this.slots[idx] = this.cloneSlot(slot)
+  }
+
+  // Capture current device state into the active slot.
+  saveCurrent(): void {
+    this.slots[this.activeSlotIdx] = this.captureSlot()
+  }
+
+  // Switch to slot `idx` and apply its contents. cells/jitter/seed apply
+  // unconditionally; startChord respects MIDI-input priority (deferred
+  // when input is held, applied at next note-off).
+  switchSlot(idx: number): void {
+    if (idx < 0 || idx >= this.slots.length) return
+    this.activeSlotIdx = idx
+    const slot = this.slots[idx]!
+    this.applySlotCells(slot.cells)
+    this.params = { ...this.params, jitter: slot.jitter, seed: slot.seed }
+    if (this.inputHeld.size === 0) {
+      this.applySlotStartChord(slot.startChord)
+      this.pendingSlotStartChord = null
+    } else {
+      this.pendingSlotStartChord = { ...slot.startChord }
+    }
   }
 
   get currentTriad(): Triad | null {
@@ -180,8 +235,20 @@ export class Host {
     if (!this.matchesInputChannel(channel)) return []
     this.inputHeld.delete(pitch)
     if (this.params.triggerMode === 1 && this.inputHeld.size === 0) {
+      // Hold-to-play last release: panic + walker off. Pending slot
+      // startChord becomes moot — next note-on will set the chord from
+      // input. Clear so a stale pending can't override later input.
       this.walkerActive = false
+      this.pendingSlotStartChord = null
       return this.panic()
+    }
+    // Hybrid mode: when the player releases the last MIDI note, apply any
+    // pending slot startChord BEFORE recomputeStartChord (which will be a
+    // no-op with empty inputHeld). Walker continues; the new chord becomes
+    // audible at the next step's effective pos 0.
+    if (this.inputHeld.size === 0 && this.pendingSlotStartChord !== null) {
+      this.applySlotStartChord(this.pendingSlotStartChord)
+      this.pendingSlotStartChord = null
     }
     return this.recomputeStartChord()
   }
@@ -342,6 +409,54 @@ export class Host {
     this.pendingPosReset = true
     this.params = { ...this.params, startChord: triad }
     return events
+  }
+
+  // Snapshot current device state into a fresh Slot. Per-cell numeric
+  // expression (velocity / gate / probability / timing) is intentionally
+  // NOT captured — those are device-shared per ADR 006 §"Axis 1".
+  private captureSlot(): Slot {
+    const { rootPc, quality } = identifyTriad(this.params.startChord)
+    return {
+      cells: cellsToString(this.params.cells.map(c => c.op)),
+      startChord: { root: rootPc, quality: quality === 'major' ? 'maj' : 'min' },
+      jitter: this.params.jitter,
+      seed: this.params.seed,
+    }
+  }
+
+  private cloneSlot(slot: Slot): Slot {
+    return {
+      cells: slot.cells,
+      startChord: { ...slot.startChord },
+      jitter: slot.jitter,
+      seed: slot.seed,
+    }
+  }
+
+  // Apply slot.cells (op pattern) onto params.cells, preserving each cell's
+  // numeric expression. Mismatched lengths zip over min — slots saved at one
+  // cell count don't corrupt a device with a different cell count.
+  private applySlotCells(cellsStr: string): void {
+    const ops = stringToCells(cellsStr)
+    if (ops === null) return
+    const next = this.params.cells.slice()
+    const n = Math.min(next.length, ops.length)
+    for (let i = 0; i < n; i++) {
+      next[i] = { ...next[i]!, op: ops[i]! }
+    }
+    this.params = { ...this.params, cells: next }
+  }
+
+  // Apply slot.startChord onto params.startChord, anchored to the current
+  // chord's bass-note octave so the player stays in their register. No-op
+  // when the resulting triad equals current — keeps walker continuity.
+  private applySlotStartChord(sc: { root: number; quality: SlotQuality }): void {
+    const reference = this.params.startChord[0]
+    const triad = buildTriad(sc.root, sc.quality === 'maj' ? 'major' : 'minor', reference)
+    if (triadsEqual(triad, this.params.startChord)) return
+    this.params = { ...this.params, startChord: triad }
+    this.pendingPosReset = true
+    this.lastTriad = null
   }
 }
 

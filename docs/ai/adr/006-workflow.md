@@ -148,23 +148,46 @@ granularity below human perceptual threshold for stochastic substitution
 rate). Cb / Fb / E# / B# rejected on input as notation oddities — sharps
 plus the five flats Db/Eb/Gb/Ab/Bb cover every pitch class.
 
-### Phase 2 — Slot state in host
+### Phase 2 — Slot state machine (pure TS)
 
-- [ ] 4 slots × per-field hidden `live.*` parameters (per memory: pattr
-  unreliable; use hidden `live.numbox` / `live.menu` for persistence).
-- [ ] Active-slot index parameter.
-- [ ] On slot switch: read slot's params → setCells / setJitter / setSeed
-  unconditionally; setStartChord only if no MIDI input held (otherwise
-  store as pending, apply on note-off).
-- [ ] "Save current" gesture: serialize live device state for slot fields
-  into the active slot's params.
-- [ ] Tests for the slot-switch state machine (pure TS, no jsui).
+Host-only, no patcher work — all logic verifiable under `node:test`.
 
-### Phase 3 — Slot UI in patcher
+- [x] `Host` owns 4 slots + `activeSlot` index. Slots initialize from
+  the constructor's `HostParams` so a fresh device is consistent.
+- [x] `switchSlot(idx)`: load slot's `cells` / `jitter` / `seed`
+  unconditionally. Apply slot's `startChord` only if no MIDI input is
+  currently held; otherwise stash it as pending and defer.
+- [x] Pending-startChord application on the last note-off (hybrid mode);
+  cleared without applying in hold-to-play (next note-on supersedes).
+- [x] `saveCurrent()`: capture current cells (op pattern), startChord
+  (root + quality from `identifyTriad`), jitter, seed into the active
+  slot.
+- [x] Accessors for active-slot index and slot contents (`activeSlot`,
+  `getSlot(idx)`, `setSlot(idx, slot)` for rehydration).
+- [x] Tests: state-machine behavior across switch / save / pending
+  apply / pending clear.
 
-- [ ] 4 slot select buttons (`live.tab` or 4 × `live.button`).
-- [ ] Save-current button (writes current state into active slot).
+Implementation: `m4l/host/host.ts` (Slot store + state machine).
+Per-cell numeric expression (velocity / gate / probability / timing) is
+intentionally NOT captured in the slot — those four fields are
+device-shared per ADR 006 §"Axis 1" and survive a slot switch.
+`applySlotStartChord` anchors the loaded chord to the current bass-note
+octave so the player stays in their register, and is a no-op when the
+loaded chord matches current (preserves walker continuity).
+
+### Phase 3 — Patcher integration (one bake)
+
+Hidden persistence + visible UI + bridge wiring in a single patcher
+pass — same `.maxpat` file, one `pnpm bake`.
+
+- [ ] Hidden persistence: 4 slots × per-field hidden `live.*` params
+  (per memory: pattr unreliable; use hidden `live.numbox` / `live.menu`).
+- [ ] Hidden active-slot index param.
+- [ ] Visible UI: 4 slot select controls (`live.tab` or 4 × `live.button`).
+- [ ] Visible save-current button.
 - [ ] Visual indication of active slot.
+- [ ] Bridge wires: patcher → `bridge.switchSlot(idx)` /
+  `bridge.saveCurrent()`; rehydrate hidden params on device load.
 
 ### Phase 4 — Factory presets
 

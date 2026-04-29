@@ -2,6 +2,7 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { makeCell, type Op } from '../engine/tonnetz.ts'
 import { Host, type HostParams, type NoteEvent } from './host.ts'
+import type { Slot } from './slot.ts'
 
 function cells(...ops: Op[]): HostParams['cells'] {
   return ops.map(op => makeCell(op))
@@ -1421,5 +1422,305 @@ describe('Host.step — swing', () => {
     for (const e of ev) {
       assert.equal(e.delayPos, 4.5, 'cell.timing + swing additively compose')
     }
+  })
+})
+
+describe('Host slots — ADR 006 Phase 2', () => {
+  // 4 = ADR 006 §"Axis 1" — "4 slots in the device".
+  const SLOT_COUNT = 4
+
+  function pcSet(triad: [number, number, number]): number[] {
+    return triad.map(p => ((p % 12) + 12) % 12).sort((a, b) => a - b)
+  }
+
+  function makeSlot(overrides: Partial<Slot> = {}): Slot {
+    return {
+      cells: 'PLR_',
+      startChord: { root: 0, quality: 'maj' },
+      jitter: 0,
+      seed: 0,
+      ...overrides,
+    }
+  }
+
+  describe('initial state', () => {
+    test('activeSlot defaults to 0', () => {
+      const host = new Host(baseParams())
+      assert.equal(host.activeSlot, 0)
+    })
+
+    test('all slots initialize from constructor HostParams', () => {
+      // Initial Live-set load presents 4 identical slots matching the
+      // patcher's persisted hidden params; switching to any slot is a
+      // no-op until the user starts editing.
+      const host = new Host(baseParams({
+        cells: cells('P', 'L', 'R', 'hold'),
+        startChord: [60, 64, 67], // C major
+        jitter: 0.25,
+        seed: 7,
+      }))
+      for (let i = 0; i < SLOT_COUNT; i++) {
+        assert.deepEqual(host.getSlot(i), {
+          cells: 'PLR_',
+          startChord: { root: 0, quality: 'maj' },
+          jitter: 0.25,
+          seed: 7,
+        })
+      }
+    })
+
+    test('getSlot returns null for out-of-range index', () => {
+      const host = new Host(baseParams())
+      assert.equal(host.getSlot(-1), null)
+      assert.equal(host.getSlot(SLOT_COUNT), null)
+    })
+
+    test('getSlot returns a defensive copy', () => {
+      const host = new Host(baseParams())
+      const s = host.getSlot(0)!
+      s.jitter = 0.99
+      s.startChord.root = 11
+      assert.notEqual(host.getSlot(0)!.jitter, 0.99)
+      assert.notEqual(host.getSlot(0)!.startChord.root, 11)
+    })
+  })
+
+  describe('setSlot — rehydration from patcher', () => {
+    test('overwrites stored slot but does not load it into params', () => {
+      // Bridge calls setSlot on device load to re-populate the in-memory
+      // Slot[] from hidden live.* params. This is persistence rehydration,
+      // NOT a load — params stay untouched until switchSlot is called.
+      const host = new Host(baseParams({ jitter: 0 }))
+      const slot: Slot = makeSlot({ jitter: 0.7, seed: 99 })
+      host.setSlot(1, slot)
+      assert.deepEqual(host.getSlot(1), slot)
+      // Active slot is still 0 with original jitter.
+      const evs = host.step(0)
+      assert.ok(evs.length > 0)
+    })
+
+    test('setSlot to invalid index is a no-op', () => {
+      const host = new Host(baseParams())
+      host.setSlot(-1, makeSlot({ jitter: 0.5 }))
+      host.setSlot(SLOT_COUNT, makeSlot({ jitter: 0.5 }))
+      // No throw; slots unchanged at default.
+      for (let i = 0; i < SLOT_COUNT; i++) {
+        assert.equal(host.getSlot(i)!.jitter, 0)
+      }
+    })
+  })
+
+  describe('switchSlot — load behavior', () => {
+    test('updates activeSlot index', () => {
+      const host = new Host(baseParams())
+      host.switchSlot(2)
+      assert.equal(host.activeSlot, 2)
+    })
+
+    test('out-of-range index is a no-op', () => {
+      const host = new Host(baseParams())
+      host.switchSlot(-1)
+      assert.equal(host.activeSlot, 0)
+      host.switchSlot(SLOT_COUNT)
+      assert.equal(host.activeSlot, 0)
+    })
+
+    test('cells / jitter / seed apply unconditionally (no MIDI held)', () => {
+      const host = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
+      host.setSlot(1, makeSlot({
+        cells: '----', // 4 rests
+        jitter: 0.5,
+        seed: 42,
+      }))
+      host.switchSlot(1)
+      // Verify cells loaded by stepping: all rests → no audio after pos 0.
+      host.step(0)
+      const events = host.step(1)
+      assert.deepEqual(
+        events.filter(e => e.type === 'noteOn'),
+        [],
+        'rest cells produce no noteOns',
+      )
+    })
+
+    test('cells / jitter / seed apply unconditionally (MIDI held)', () => {
+      // Same as above but with a chord held — the held chord must NOT
+      // suppress the cells/jitter/seed update.
+      const host = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
+      host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
+      host.setSlot(1, makeSlot({ cells: '----', jitter: 0, seed: 0 }))
+      host.switchSlot(1)
+      host.step(0)
+      const events = host.step(1)
+      assert.deepEqual(
+        events.filter(e => e.type === 'noteOn'),
+        [],
+        'cells loaded even while MIDI held',
+      )
+    })
+
+    test('switchSlot preserves per-cell numeric expression (velocity etc.)', () => {
+      // Per-slot scope is op-only (ADR 006 Phase 1 Slot type). The 4
+      // numeric fields (vel, gate, prob, timing) are device-shared and
+      // must survive a slot switch.
+      const customCells: HostParams['cells'] = [
+        makeCell('P', { velocity: 0.5, gate: 0.3, probability: 0.8, timing: 0.1 }),
+        makeCell('L', { velocity: 0.5, gate: 0.3, probability: 0.8, timing: 0.1 }),
+        makeCell('R', { velocity: 0.5, gate: 0.3, probability: 0.8, timing: 0.1 }),
+        makeCell('hold', { velocity: 0.5, gate: 0.3, probability: 0.8, timing: 0.1 }),
+      ]
+      const host = new Host(baseParams({ cells: customCells }))
+      host.setSlot(1, makeSlot({ cells: 'RRRR' }))
+      host.switchSlot(1)
+      // After switch, cells[0..3].velocity etc. unchanged (only op flipped).
+      host.step(0)
+      const ev = host.step(1).filter(e => e.type === 'noteOn')
+      assert.ok(ev.length > 0)
+      // velocity 100 (input default) * 0.5 (cell.velocity) = 50.
+      // 50 = 100 * 0.5 (lastInputVelocity * cellVel * outputLevel default 1.0).
+      for (const e of ev) {
+        if (e.type === 'noteOn') assert.equal(e.velocity, 50)
+      }
+    })
+
+    test('startChord applies immediately when no MIDI held', () => {
+      const host = new Host(baseParams({ startChord: [60, 64, 67] })) // C major
+      host.setSlot(1, makeSlot({ startChord: { root: 5, quality: 'min' } })) // F minor
+      host.switchSlot(1)
+      // F minor: F=5, Ab=8, C=0
+      assert.deepEqual(pcSet(host.startChord), [0, 5, 8])
+    })
+
+    test('startChord defers when MIDI is held; pending stored', () => {
+      const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+      // Hold E minor (E=64, G=67, B=71)
+      host.noteIn(64, 100, 1); host.noteIn(67, 100, 1); host.noteIn(71, 100, 1)
+      assert.deepEqual(pcSet(host.startChord), [4, 7, 11], 'E minor took over')
+
+      host.setSlot(1, makeSlot({ startChord: { root: 5, quality: 'maj' } })) // F major
+      host.switchSlot(1)
+      // Held E minor still wins; F major suppressed.
+      assert.deepEqual(pcSet(host.startChord), [4, 7, 11])
+    })
+
+    test('pending startChord applies on last note-off (hybrid mode)', () => {
+      const host = new Host(baseParams({ startChord: [60, 64, 67], triggerMode: 0 }))
+      host.noteIn(64, 100, 1); host.noteIn(67, 100, 1); host.noteIn(71, 100, 1) // E minor
+      host.setSlot(1, makeSlot({ startChord: { root: 5, quality: 'maj' } })) // F major
+      host.switchSlot(1)
+      // Release one note — still held → pending stays.
+      host.noteOff(64, 1)
+      assert.deepEqual(pcSet(host.startChord), [4, 7, 11], 'still E minor')
+      host.noteOff(67, 1)
+      host.noteOff(71, 1)
+      // Now empty → pending F major applies.
+      assert.deepEqual(pcSet(host.startChord), [0, 5, 9], 'F major took over')
+    })
+
+    test('pending clears without applying in hold-to-play mode', () => {
+      // Hold-to-play: last note-off panics + walker off; next note-on
+      // recomputes startChord from the new MIDI input. Pending becomes
+      // moot — clear it so a stale pending can't override later input.
+      const host = new Host(baseParams({ startChord: [60, 64, 67], triggerMode: 1 }))
+      host.noteIn(64, 100, 1); host.noteIn(67, 100, 1); host.noteIn(71, 100, 1)
+      host.setSlot(1, makeSlot({ startChord: { root: 5, quality: 'maj' } }))
+      host.switchSlot(1)
+      host.noteOff(64, 1); host.noteOff(67, 1); host.noteOff(71, 1)
+      assert.equal(host.isWalkerActive, false, 'walker stopped on last release')
+      // Re-trigger with a totally different chord — D major (D=62, F#=66, A=69).
+      host.noteIn(62, 100, 1); host.noteIn(66, 100, 1); host.noteIn(69, 100, 1)
+      assert.deepEqual(pcSet(host.startChord), [2, 6, 9], 'D major from new input, not pending F major')
+    })
+
+    test('switchSlot when slot startChord matches current keeps walker continuity', () => {
+      // No pendingPosReset / no audible glitch when the loaded chord is
+      // identical to params.startChord — only the cell pattern changes.
+      const host = new Host(baseParams({
+        startChord: [60, 64, 67],
+        cells: cells('P', 'L', 'R', 'hold'),
+      }))
+      host.step(0); host.step(1); host.step(2)
+      host.setSlot(1, makeSlot({ cells: 'PPPP', startChord: { root: 0, quality: 'maj' } }))
+      host.switchSlot(1)
+      // Walker continues; next step advances normally without resetting to startChord.
+      const ev = host.step(3)
+      // pos was 3 with cells advancing; cells reset to 'PPPP' and chord unchanged
+      // means at pos 3 we're at cellIdx for transform 3 modulo 4 = 3, op P → flips quality.
+      // The exact chord is implementation-derivable; the assertion is "walker is alive".
+      assert.ok(ev.length > 0, 'walker still emits after slot switch')
+    })
+
+    test('switchSlot triggers chord change at next step when startChord differs', () => {
+      const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+      host.step(0) // C major emitted
+      host.setSlot(1, makeSlot({ startChord: { root: 5, quality: 'min' } })) // F minor
+      host.switchSlot(1)
+      // Next step (any pos) should emit the new startChord at effective pos 0.
+      const ev = host.step(5)
+      const onPcs = ev.filter(e => e.type === 'noteOn')
+        .map(e => (e as { pitch: number }).pitch % 12)
+        .sort((a, b) => a - b)
+      assert.deepEqual(onPcs, [0, 5, 8], 'F minor noteOns at new effective pos 0')
+    })
+  })
+
+  describe('saveCurrent — capture state into active slot', () => {
+    test('captures cells, startChord (root+quality), jitter, seed', () => {
+      const host = new Host(baseParams({
+        startChord: [65, 68, 72], // F minor
+        cells: cells('P', 'hold', 'rest', 'L'),
+        jitter: 0.4,
+        seed: 12345,
+      }))
+      host.switchSlot(2)
+      host.saveCurrent()
+      assert.deepEqual(host.getSlot(2), {
+        cells: 'P_-L',
+        startChord: { root: 5, quality: 'min' },
+        jitter: 0.4,
+        seed: 12345,
+      })
+    })
+
+    test('writes only to the active slot', () => {
+      const host = new Host(baseParams({ jitter: 0 }))
+      // Workflow: select slot 3, edit jitter, save. Editing must happen
+      // AFTER switchSlot — switchSlot itself loads the slot's stored
+      // values into params and would clobber pre-switch edits.
+      host.switchSlot(3)
+      host.setParams({ jitter: 0.9 })
+      host.saveCurrent()
+      assert.equal(host.getSlot(3)!.jitter, 0.9)
+      // Other slots still at their initial value (0).
+      for (const i of [0, 1, 2]) {
+        assert.equal(host.getSlot(i)!.jitter, 0)
+      }
+    })
+
+    test('saveCurrent then switchSlot away and back roundtrips', () => {
+      const host = new Host(baseParams({
+        startChord: [60, 64, 67],
+        cells: cells('P', 'L', 'R', 'hold'),
+        jitter: 0,
+        seed: 0,
+      }))
+      // Configure something distinct on slot 1 via setParams + saveCurrent.
+      host.switchSlot(1)
+      host.setParams({ jitter: 0.6, seed: 777 })
+      host.setCell(0, 'rest')
+      host.setCell(1, 'rest')
+      host.setCell(2, 'rest')
+      host.setCell(3, 'rest')
+      host.saveCurrent()
+      // Switch to slot 0 and back.
+      host.switchSlot(0)
+      host.switchSlot(1)
+      assert.deepEqual(host.getSlot(1), {
+        cells: '----',
+        startChord: { root: 0, quality: 'maj' },
+        jitter: 0.6,
+        seed: 777,
+      })
+    })
   })
 })
