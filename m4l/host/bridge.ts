@@ -46,6 +46,18 @@ const DEFAULT_PARAMS: HostParams = {
   channel: 1,
   triggerMode: 0,
   inputChannel: 0,
+  // ADR 005 Phase 3 defaults: forward direction, "1 pos = 1 step" placeholder
+  // (the patcher's setParams cascade overrides ticksPerStep with the
+  // subdivision-derived multiplier — see ADR 005 §Subdivision table — before
+  // any transport-driven step() arrives), straight feel (no swing), no
+  // humanize. The placeholder also keeps "raw" Bridge tests on the Phase 2
+  // pos contract.
+  stepDirection: 'forward',
+  ticksPerStep: 1,
+  swing: 0.5,
+  humanizeVelocity: 0,
+  humanizeGate: 0,
+  humanizeTiming: 0,
 }
 
 export class Bridge {

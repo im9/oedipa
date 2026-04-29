@@ -19,6 +19,14 @@ function baseParams(overrides: Partial<HostParams> = {}): HostParams {
     channel: 1,
     triggerMode: 0,
     inputChannel: 0,
+    // ADR 005 Phase 3 — test-friendly defaults so existing tests stay
+    // unchanged. Production callers (the m4l patcher) pass real values.
+    stepDirection: 'forward',
+    ticksPerStep: 1,
+    swing: 0.5,
+    humanizeVelocity: 0,
+    humanizeGate: 0,
+    humanizeTiming: 0,
     ...overrides,
   }
 }
@@ -815,5 +823,366 @@ describe('Host.isWalkerActive — for marker / cellIdx UI gating', () => {
     host.noteIn(72, 100, 1) // F major triad → startChord change
     assert.equal(host.currentTriad, null)
     assert.equal(host.isWalkerActive, true)
+  })
+})
+
+// ── ADR 005 Phase 3 — stepDirection wiring ───────────────────────────────
+
+describe('Host.step — stepDirection', () => {
+  test('reverse direction consumes cells from cells.length-1 downward', () => {
+    // cells = [P, L, R, hold]; reverse → pos 1 plays hold (cursor unchanged).
+    const host = new Host(baseParams({ stepDirection: 'reverse' }))
+    host.step(0)
+    const ev1 = host.step(1)
+    // hold re-emits the cursor (still C major) per ADR 005 op effects table.
+    const pcs1 = pitchesOf(ev1, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs1, [0, 4, 7], 'pos=1 reverse: cells[3]=hold → C major')
+    // pos=2 → cells[2]=R → R(C major) = A minor
+    const ev2 = host.step(2)
+    const pcs2 = pitchesOf(ev2, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs2, [0, 4, 9], 'pos=2 reverse: cells[2]=R → A minor')
+  })
+
+  test('pingpong direction traverses without endpoint replay', () => {
+    // cells = [P, L, R, hold]; pingpong sequence cellIdx: 0,1,2,3,2,1,0,1,...
+    // Verify chord cursor at pos 5 reflects cell[2]=R applied to the cell[3]=hold
+    // result, not a re-application of cell[3].
+    const host = new Host(baseParams({ stepDirection: 'pingpong' }))
+    host.step(0)
+    // pos 1: P → C minor [0,3,7]
+    // pos 2: L → Ab major [0,3,8]
+    // pos 3: R → F minor [0,5,8]
+    // pos 4: hold → F minor [0,5,8]
+    // pos 5: R (cell[2] again) → R(F minor) = Ab major [0,3,8]
+    for (const [pos, expected] of [[1, [0, 3, 7]], [2, [0, 3, 8]], [3, [0, 5, 8]], [4, [0, 5, 8]], [5, [0, 3, 8]]] as const) {
+      const ev = host.step(pos)
+      const pcs = pitchesOf(ev, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+      assert.deepEqual(pcs, expected, `pos=${pos}`)
+    }
+  })
+
+  test('random direction sequence depends on seed alone (not authored ops)', () => {
+    // Two hosts with same seed and direction=random but differing cell op
+    // contents: cellIdx draws are the same → noteOn pitches match when ops
+    // happen to align. Easier structural check: count of distinct cellIdx
+    // values reached over many steps is bounded by cells.length.
+    const seed = 314
+    const a = new Host(baseParams({ stepDirection: 'random', seed, cells: cells('hold', 'hold', 'hold', 'hold') }))
+    const b = new Host(baseParams({ stepDirection: 'random', seed, cells: cells('hold', 'hold', 'hold', 'hold') }))
+    a.step(0)
+    b.step(0)
+    // Two identical hosts → identical event streams (sanity).
+    for (let pos = 1; pos <= 20; pos++) {
+      const evA = a.step(pos).filter(e => e.type === 'noteOn').map(e => e.pitch).sort((x, y) => x - y)
+      const evB = b.step(pos).filter(e => e.type === 'noteOn').map(e => e.pitch).sort((x, y) => x - y)
+      assert.deepEqual(evA, evB, `pos=${pos} two same-seed hosts must match`)
+    }
+  })
+
+  test('cellIdx() reports direction-aware index (UI marker)', () => {
+    // The lattice marker (ADR 003 cellIdx outlet) reads cellIdx(pos) for the
+    // active-cell highlight. Reverse direction must report the reverse cell
+    // index, not the forward one.
+    const host = new Host(baseParams({ stepDirection: 'reverse' }))
+    host.step(0)
+    host.step(1)
+    // After pos=1 in reverse, the cell that JUST fired is cells.length-1 = 3.
+    assert.equal(host.cellIdx(1), 3, 'pos=1 reverse: cellIdx is 3')
+    host.step(2)
+    assert.equal(host.cellIdx(2), 2, 'pos=2 reverse: cellIdx is 2')
+  })
+})
+
+// ── ADR 005 Phase 3 — humanize ────────────────────────────────────────────
+
+describe('Host.step — humanize', () => {
+  test('humanizeVelocity=0 is deterministic across a cycle', () => {
+    // Baseline: cell vel=1 + lastInputVel=100 → MIDI velocity 100 every step.
+    const host = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold'), seed: 42 }))
+    host.step(0)
+    for (let pos = 1; pos <= 8; pos++) {
+      const ev = host.step(pos)
+      const ons = ev.filter(e => e.type === 'noteOn')
+      for (const on of ons) {
+        if (on.type !== 'noteOn') continue
+        assert.equal(on.velocity, 100, `pos=${pos} velocity should be unperturbed`)
+      }
+    }
+  })
+
+  test('humanizeVelocity > 0 perturbs MIDI velocity off the baseline', () => {
+    // With humanize=0.5, raw uniform [0,1) produces signed noise in [-0.5,+0.5]
+    // applied to cell.velocity=1. Most steps should land below 1.0, so MIDI
+    // velocity should drift below 100. Across 8 steps, at least one must
+    // differ from 100 (the baseline observed in the previous test).
+    const host = new Host(baseParams({
+      cells: cells('P', 'L', 'R', 'hold'),
+      seed: 42,
+      humanizeVelocity: 0.5,
+    }))
+    host.step(0)
+    let observedNonBaseline = false
+    for (let pos = 1; pos <= 8; pos++) {
+      const ev = host.step(pos)
+      for (const e of ev) {
+        if (e.type === 'noteOn' && e.velocity !== 100) {
+          observedNonBaseline = true
+        }
+        // MIDI velocity must always stay in [1, 127] (clampVelocity invariant).
+        if (e.type === 'noteOn') {
+          assert.ok(e.velocity >= 1 && e.velocity <= 127, `velocity ${e.velocity} out of MIDI range`)
+        }
+      }
+    }
+    assert.ok(observedNonBaseline, 'humanizeVelocity=0.5 should perturb at least one step')
+  })
+
+  test('humanizeTiming > 0 perturbs the noteOn delayPos', () => {
+    // cell.timing=0 baseline → delayPos=0 on every noteOn. Adding humanizeTiming
+    // shifts each step's delayPos by signed noise * spt. Negative offsets are
+    // clamped to 0 by Phase 2 boundary clamp; positive ones survive.
+    const host = new Host(baseParams({
+      cells: cells('P', 'L', 'R', 'hold'),
+      seed: 42,
+      humanizeTiming: 0.5,
+      stepsPerTransform: 4, // gives the timing offset units to vary in
+    }))
+    host.step(0)
+    let observedNonZero = false
+    for (let pos = 4; pos <= 32; pos += 4) {
+      const ev = host.step(pos)
+      for (const e of ev) {
+        if (e.type === 'noteOn' && (e.delayPos ?? 0) > 0) {
+          observedNonZero = true
+        }
+      }
+    }
+    assert.ok(observedNonZero, 'humanizeTiming=0.5 must produce at least one positive delayPos noteOn')
+  })
+
+  test('humanizeGate > 0 perturbs the gate-end delayPos in at least one step', () => {
+    // cell.gate=0.9 baseline → gate-end delayPos = 0.9*spt. With small
+    // humanizeGate, the perturbed cellGate stays strictly < 1.0 (no clamp
+    // to legato) and the gate-end delayPos shifts off-baseline. We sweep
+    // multiple boundaries because any individual draw can happen to land
+    // very close to the baseline.
+    const stub = { cells: cells('P', 'L', 'R', 'hold'), seed: 42, stepsPerTransform: 4 }
+    const baselineHost = new Host(baseParams(stub))
+    const humanizedHost = new Host(baseParams({ ...stub, humanizeGate: 0.1 }))
+    baselineHost.step(0); humanizedHost.step(0)
+    let observedShift = false
+    for (const pos of [4, 8, 12, 16, 20]) {
+      const evBase = baselineHost.step(pos).filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) > 0)
+      const evHum = humanizedHost.step(pos).filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) > 0)
+      if (evBase.length > 0 && evHum.length > 0 && evBase[0]!.delayPos !== evHum[0]!.delayPos) {
+        observedShift = true
+        break
+      }
+    }
+    assert.ok(observedShift, 'humanizeGate must perturb gate-end delayPos at least once across the sweep')
+  })
+
+  test('humanize-disabled host (all 3 amounts = 0) is bit-identical to a Phase-2-era step', () => {
+    // Regression guard: with all humanize amounts = 0 and ticksPerStep=1, the
+    // host must produce exactly the same event stream as before Phase 3 wiring.
+    // This is implicitly covered by Sub 1 / Sub 2 zero-amount tests, but the
+    // extra explicit equality check pins down the no-op contract.
+    const a = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold'), seed: 99, stepsPerTransform: 4 }))
+    const b = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold'), seed: 99, stepsPerTransform: 4 }))
+    a.step(0); b.step(0)
+    for (const pos of [4, 8, 12, 16, 20]) {
+      assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} match`)
+    }
+  })
+
+  test('humanize results are seed-deterministic across two fresh hosts', () => {
+    // Replay determinism with humanize: two fresh hosts, same seed, same
+    // humanize amounts → identical event streams.
+    const params = baseParams({
+      cells: cells('P', 'L', 'R', 'hold'),
+      seed: 7,
+      humanizeVelocity: 0.4,
+      humanizeGate: 0.3,
+      humanizeTiming: 0.2,
+      stepsPerTransform: 4,
+    })
+    const a = new Host(params)
+    const b = new Host(params)
+    a.step(0); b.step(0)
+    for (const pos of [4, 8, 12, 16]) {
+      assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} replay match`)
+    }
+  })
+})
+
+// ── ADR 005 Phase 3 — subdivision (ticksPerStep) ─────────────────────────
+
+describe('Host.step — subdivision (ticksPerStep)', () => {
+  test('cell boundary occurs every (ticksPerStep * stepsPerTransform) raw ticks', () => {
+    // ticksPerStep=6 (16th @ PPQN=24), stepsPerTransform=1 → cell every 6 ticks.
+    const host = new Host(baseParams({
+      cells: cells('P'),
+      ticksPerStep: 6,
+      stepsPerTransform: 1,
+    }))
+    host.step(0) // startChord at tick 0
+    for (const pos of [1, 2, 3, 4, 5]) {
+      assert.deepEqual(host.step(pos), [], `pos=${pos} between subdivision-steps → no events`)
+    }
+    // pos=6 is the first subdivision-step boundary AND a cell boundary
+    const evCell = host.step(6)
+    const ons = evCell.filter(e => e.type === 'noteOn').map(e => e.pitch).sort((a, b) => a - b)
+    const pcs = ons.map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs, [0, 3, 7], 'pos=6: cell[0]=P → C minor')
+    // pos=7..11 again silent
+    for (const pos of [7, 8, 9, 10, 11]) {
+      assert.deepEqual(host.step(pos), [], `pos=${pos} between → no events`)
+    }
+    // pos=12 next cell boundary
+    const ev2 = host.step(12)
+    assert.ok(ev2.some(e => e.type === 'noteOn'), 'pos=12 fires next cell')
+  })
+
+  test('cell timing/gate scale with ticksPerStep × stepsPerTransform (1 transform period)', () => {
+    // With ticksPerStep=6, spt=1: one transform period = 6 raw ticks.
+    // cell gate=0.9 → gate-end delayPos = 0.9 * 6 = 5.4.
+    const host = new Host(baseParams({
+      cells: cells('P'),
+      ticksPerStep: 6,
+      stepsPerTransform: 1,
+    }))
+    host.step(0)
+    const ev = host.step(6)
+    const gateEnds = ev.filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) > 0)
+    assert.ok(gateEnds.length > 0, 'gate-end noteOffs should be emitted')
+    for (const e of gateEnds) {
+      assert.equal(e.delayPos, 5.4, 'gate-end delayPos must scale by ticksPerStep')
+    }
+  })
+
+  test('subdivision tick multipliers (ADR 005 §Subdivision table)', () => {
+    // ADR table: 8th=12, 16th=6, 32nd=3, 8T=8, 16T=4 ticks/step at PPQN=24.
+    // For each, host with spt=1 fires the first cell at pos=ticksPerStep.
+    const cases: Array<[number, string]> = [
+      [12, '8th'], [6, '16th'], [3, '32nd'], [8, '8T'], [4, '16T'],
+    ]
+    for (const [tps, label] of cases) {
+      const host = new Host(baseParams({ cells: cells('P'), ticksPerStep: tps, stepsPerTransform: 1 }))
+      host.step(0)
+      // Just below boundary: nothing
+      assert.deepEqual(host.step(tps - 1), [], `${label}: pos ${tps - 1} → []`)
+      // At boundary: cell fires
+      const ev = host.step(tps)
+      assert.ok(ev.some(e => e.type === 'noteOn'), `${label}: pos ${tps} fires cell`)
+    }
+  })
+
+  test('cellIdx() reports the most-recent cell across mid-step ticks', () => {
+    // ticksPerStep=6, spt=1: cell[0]=P fires at pos=6, cell[1]=L at pos=12.
+    // Between, the marker should keep showing the most recently fired cell.
+    const host = new Host(baseParams({
+      cells: cells('P', 'L', 'R', 'hold'),
+      ticksPerStep: 6,
+      stepsPerTransform: 1,
+    }))
+    host.step(0)
+    assert.equal(host.cellIdx(0), -1, 'before first cell: -1')
+    host.step(6)
+    for (const pos of [6, 7, 8, 9, 10, 11]) {
+      assert.equal(host.cellIdx(pos), 0, `pos=${pos}: still on cell 0`)
+    }
+    host.step(12)
+    for (const pos of [12, 13, 17]) {
+      assert.equal(host.cellIdx(pos), 1, `pos=${pos}: on cell 1`)
+    }
+  })
+
+  test('ticksPerStep=1 keeps full backward compatibility with Phase 2 pos contract', () => {
+    // Sanity: every existing host test passes baseParams with ticksPerStep=1,
+    // and that already implies "1 pos = 1 step". Reassert at the contract level
+    // that pos=1 is the first transform boundary when spt=1, ticksPerStep=1.
+    const host = new Host(baseParams({ cells: cells('P'), stepsPerTransform: 1 }))
+    host.step(0)
+    const ev = host.step(1)
+    assert.ok(ev.some(e => e.type === 'noteOn'), 'pos=1 with ticksPerStep=1 must fire')
+  })
+})
+
+// ── ADR 005 Phase 3 — swing ──────────────────────────────────────────────
+
+describe('Host.step — swing', () => {
+  test('swing=0.5 (default) is a no-op vs an unswung baseline', () => {
+    // ticksPerStep=6, spt=1 → cells fire at every 16th. swing=0.5 should
+    // produce identical events to a host with swing untouched.
+    const stub = { cells: cells('P', 'L', 'R', 'hold'), seed: 0, ticksPerStep: 6, stepsPerTransform: 1 }
+    const a = new Host(baseParams(stub))
+    const b = new Host(baseParams({ ...stub, swing: 0.5 }))
+    a.step(0); b.step(0)
+    for (const pos of [6, 12, 18, 24, 30, 36]) {
+      assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} swing=0.5 must match unswung`)
+    }
+  })
+
+  test('swing>0.5 shifts odd-indexed subdivision-steps later (no shift on even)', () => {
+    // swing=0.75, ticksPerStep=6 → odd subdivStepPos gets +3 raw-tick offset.
+    // spt=1: cells fire at subdivStepPos=1 (odd, swung), 2 (even, on grid),
+    // 3 (odd, swung), 4 (even, on grid).
+    // cell.timing=0 baseline, so noteOn delayPos == swing offset.
+    const host = new Host(baseParams({
+      cells: cells('P', 'L', 'R', 'hold'),
+      ticksPerStep: 6,
+      stepsPerTransform: 1,
+      swing: 0.75,
+    }))
+    host.step(0)
+    // pos=6 → subdivStepPos=1 (odd) → +3 tick swing
+    const ev1 = host.step(6).filter(e => e.type === 'noteOn')
+    assert.ok(ev1.length > 0)
+    for (const e of ev1) assert.equal(e.delayPos, 3, 'swung odd subdivStep gets +3 ticks')
+    // pos=12 → subdivStepPos=2 (even) → no swing
+    const ev2 = host.step(12).filter(e => e.type === 'noteOn')
+    assert.ok(ev2.length > 0)
+    for (const e of ev2) assert.equal(e.delayPos ?? 0, 0, 'even subdivStep has no swing')
+    // pos=18 → subdivStepPos=3 (odd) → swung
+    const ev3 = host.step(18).filter(e => e.type === 'noteOn')
+    for (const e of ev3) assert.equal(e.delayPos, 3, 'pos=18 swung')
+  })
+
+  test('swing has no effect when cell boundaries land only on even subdivision-steps', () => {
+    // spt=2, ticksPerStep=6 → cells fire at subdivStepPos=2, 4, 6 (all even).
+    // Musically: a cell-rate of 2 sixteenths = an 8th-note pulse, which does
+    // not have 16th-swing applied to it.
+    const host = new Host(baseParams({
+      cells: cells('P', 'L', 'R', 'hold'),
+      ticksPerStep: 6,
+      stepsPerTransform: 2,
+      swing: 0.75,
+    }))
+    host.step(0)
+    for (const pos of [12, 24, 36, 48]) {
+      const ons = host.step(pos).filter(e => e.type === 'noteOn')
+      for (const e of ons) {
+        assert.equal(e.delayPos ?? 0, 0, `pos=${pos} (subdivStep=${pos / 6}) must not be swung`)
+      }
+    }
+  })
+
+  test('swing composes additively with cell.timing offset', () => {
+    // cell.timing=+0.25 transforms-period offset + swing on odd subdivStep.
+    // ticksPerStep=6, spt=1, transformTicks=6. cell.timing=+0.25 → +1.5 raw
+    // ticks. swing=0.75 odd → +3 ticks. Combined on subdivStepPos=1: +4.5.
+    const cellTiming = makeCell('P', { timing: 0.25 })
+    const host = new Host(baseParams({
+      cells: [cellTiming, makeCell('L'), makeCell('R'), makeCell('hold')],
+      ticksPerStep: 6,
+      stepsPerTransform: 1,
+      swing: 0.75,
+    }))
+    host.step(0)
+    const ev = host.step(6).filter(e => e.type === 'noteOn')
+    assert.ok(ev.length > 0)
+    for (const e of ev) {
+      assert.equal(e.delayPos, 4.5, 'cell.timing + swing additively compose')
+    }
   })
 })

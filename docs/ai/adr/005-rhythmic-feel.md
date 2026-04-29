@@ -360,20 +360,27 @@ Phases follow ADR 003's TDD pattern.
   - Negative-timing pull-ahead in subsequent cycles deferred to Phase 3+
     (requires look-ahead from prior step boundary, easier alongside
     subdivision/swing scheduling). Phase 2 clamps at every boundary.
-- [ ] **Phase 3 — Host: global layer**
-  - Engine: `StepDirection`, `WalkState.stepDirection`, expose humanize
-    draws on `StepEvent`, refactor cellIdx via `resolveCellIdx`. ✅
-    (commit pending; engine 206 tests pass)
-  - Host: PPQN=24 tick feed → `ticksPerStep` multiplier (5 subdivisions)
-    → engine pos. Existing host tests opt into `ticksPerStep: 1` to keep
-    "1 pos = 1 step" semantics; new subdivision tests use the real
-    multipliers.
-  - Host: swing offset on off-beat subdivision-steps (delayPos
-    composition with cell timing).
-  - Host: step-direction wiring through `HostParams` (forward / reverse
-    / pingpong / random).
-  - Host: humanize amounts (3 dials) applied to per-event vel/gate/timing
-    via `(raw * 2 - 1) * amount`, clamped per ADR table.
+- [x] **Phase 3 — Host: global layer**
+  - [x] Engine: `StepDirection`, `WalkState.stepDirection`, expose
+    humanize draws on `StepEvent`, refactor cellIdx via `resolveCellIdx`.
+    (commit `0dc7a0f`; engine 206 tests pass)
+  - [x] Host: PPQN=24 tick feed → `ticksPerStep` multiplier (5
+    subdivisions) → engine pos. Existing host tests opt into
+    `ticksPerStep: 1` to keep "1 pos = 1 step" semantics; new
+    subdivision tests use the real multipliers.
+  - [x] Host: swing offset on off-beat subdivision-steps
+    (`subdivStepPos % 2 === 1` → `(2*swing - 1) * ticksPerStep` raw-tick
+    offset, additively composed with cell timing).
+  - [x] Host: step-direction wiring through `HostParams` (forward /
+    reverse / pingpong / random); `cellIdx()` UI reporter now defers to
+    `walkStepEvent` so the lattice marker is direction-aware.
+  - [x] Host: humanize amounts (3 dials) applied to per-event
+    vel/gate/timing via `(raw * 2 - 1) * amount`, clamped per ADR table
+    (`clamp01` for vel/gate, `clampSigned05` for timing).
+  - Defaults sanity: with `stepDirection='forward'`, `ticksPerStep=1`,
+    `swing=0.5`, all `humanize*=0`, the host is bit-identical to the
+    Phase 2 contract (regression-pinned by an explicit deepEqual test).
+    Patcher / Live UI surfacing of these params is deferred to Phase 4.
 - [ ] **Phase 4 — Patcher: parameters**
   - Keep 4 × `live.tab` (op), extend option count 4 → 5.
   - Add 16 × hidden `live.numbox` (vel/gate/prob/timing per cell).

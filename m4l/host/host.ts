@@ -19,6 +19,7 @@ import {
   type Cell,
   type MidiNote,
   type Op,
+  type StepDirection,
   type Triad,
   type Voicing,
   type WalkState,
@@ -50,6 +51,17 @@ export interface HostParams {
   // ADR 004 — MIDI input semantics
   triggerMode: TriggerMode
   inputChannel: number // 0 = omni, 1..16 = single-channel filter
+  // ADR 005 Phase 3 — global rhythmic layer
+  stepDirection: StepDirection
+  // PPQN tick → subdivision-step multiplier. Patcher streams ticks at PPQN=24
+  // (ADR 005 §Subdivision); the host divides by this to derive engine pos.
+  // Default in production = 6 (16th @ PPQN=24); tests pass 1 to keep
+  // "1 tick = 1 step" semantics.
+  ticksPerStep: number
+  swing: number              // 0.5 (none) .. 0.75 (heavy); off-beat tick offset
+  humanizeVelocity: number   // 0..1 amount
+  humanizeGate: number       // 0..1 amount
+  humanizeTiming: number     // 0..1 amount
 }
 
 export class Host {
@@ -101,10 +113,22 @@ export class Host {
 
   cellIdx(pos: number): number {
     if (!this.walkerActive) return -1
-    const { stepsPerTransform: spt, cells } = this.params
-    const numTransforms = Math.floor((pos - this.startPos) / spt)
-    if (numTransforms <= 0 || cells.length === 0) return -1
-    return (numTransforms - 1) % cells.length
+    const { stepsPerTransform: spt, cells, startChord, jitter, seed, stepDirection, ticksPerStep } = this.params
+    if (cells.length === 0) return -1
+    const effectivePos = pos - this.startPos
+    if (effectivePos <= 0) return -1
+    // Most recent transform boundary in raw-tick coords, then convert to the
+    // engine's subdivision-step coords for walkStepEvent (source of truth for
+    // direction-aware cellIdx, including random).
+    const transformTicks = spt * ticksPerStep
+    const lastBoundaryTicks = Math.floor(effectivePos / transformTicks) * transformTicks
+    if (lastBoundaryTicks <= 0) return -1
+    const lastBoundarySubdivPos = lastBoundaryTicks / ticksPerStep
+    const ev = walkStepEvent(
+      { startChord, cells, stepsPerTransform: spt, jitter, seed, stepDirection },
+      lastBoundarySubdivPos,
+    )
+    return ev?.cellIdx ?? -1
   }
 
   get centerPc(): number {
@@ -166,7 +190,13 @@ export class Host {
       return []
     }
 
-    const { startChord, cells, stepsPerTransform: spt, jitter, seed, voicing, seventh, channel } = this.params
+    const { startChord, cells, stepsPerTransform: spt, jitter, seed, voicing, seventh, channel, stepDirection, ticksPerStep, swing } = this.params
+    // ADR 005 §Subdivision: patcher streams ticks at PPQN=24; ticksPerStep
+    // collapses raw ticks into subdivision-steps before stepsPerTransform.
+    // One transform period (cell consumption interval) = spt * ticksPerStep
+    // raw ticks. timing/gate scale with this transform-period length so
+    // gate=1.0 still means "until the next note-on".
+    const transformTicks = spt * ticksPerStep
 
     // pos=0 (or first call after reset): emit startChord once. No cell has
     // fired yet, so vel/gate/timing don't apply.
@@ -188,13 +218,14 @@ export class Host {
       return events
     }
 
-    if (effectivePos % spt !== 0) return []
+    if (effectivePos % transformTicks !== 0) return []
 
-    const walkState: WalkState = { startChord, cells, stepsPerTransform: spt, jitter, seed }
-    const stepEvent = walkStepEvent(walkState, effectivePos)
+    const subdivStepPos = effectivePos / ticksPerStep
+    const walkState: WalkState = { startChord, cells, stepsPerTransform: spt, jitter, seed, stepDirection }
+    const stepEvent = walkStepEvent(walkState, subdivStepPos)
     if (stepEvent === null) {
       // Empty cells[]; fall back to walk() so the cursor is still defined.
-      this.lastTriad = walk(walkState, effectivePos)
+      this.lastTriad = walk(walkState, subdivStepPos)
       return []
     }
 
@@ -206,15 +237,30 @@ export class Host {
     }
 
     const cell = cells[stepEvent.cellIdx]!
+    // ADR 005 §"Humanize": apply signed uniform noise to cell vel/gate/timing
+    // with the cell-amount knobs. Engine produces raw [0, 1) draws; map to
+    // [-1, +1] via (raw*2-1) and scale by amount. Clamp per ADR table.
+    const { humanizeVelocity, humanizeGate, humanizeTiming } = this.params
+    const cellVel = clamp01(cell.velocity + (stepEvent.humanizeVel * 2 - 1) * humanizeVelocity)
+    const cellGate = clamp01(cell.gate + (stepEvent.humanizeGate * 2 - 1) * humanizeGate)
+    const cellTiming = clampSigned05(cell.timing + (stepEvent.humanizeTiming * 2 - 1) * humanizeTiming)
+
+    // ADR 005 §Swing: swing offsets odd-indexed subdivision-steps later by
+    // (2*swing - 1) * ticksPerStep raw ticks. swing=0.5 → no offset. The
+    // offset composes additively with cell.timing.
+    const swingOffsetTicks = subdivStepPos % 2 === 1
+      ? (2 * swing - 1) * ticksPerStep
+      : 0
+
     // ADR 005 specifies "subsequent cycles use the unclamped offset" for
     // negative timing, but firing at delayPos<0 needs look-ahead scheduling
     // from the prior step boundary. Phase 2 clamps at every boundary; the
-    // look-ahead path is Phase 3+ alongside subdivision/swing.
-    const timingOffset = Math.max(0, cell.timing * spt)
+    // look-ahead path is deferred.
+    const timingOffset = Math.max(0, swingOffsetTicks + cellTiming * transformTicks)
 
     let voiced = applyVoicing(stepEvent.chord, voicing)
     if (seventh) voiced = addSeventh(voiced, stepEvent.chord)
-    const velocity = clampVelocity(this.lastInputVelocity * cell.velocity)
+    const velocity = clampVelocity(this.lastInputVelocity * cellVel)
 
     const events: NoteEvent[] = []
     if (this.handoffPending) {
@@ -229,8 +275,8 @@ export class Host {
       this.held.add(pitch)
     }
 
-    if (cell.gate < 1.0) {
-      const gateOffset = timingOffset + cell.gate * spt
+    if (cellGate < 1.0) {
+      const gateOffset = timingOffset + cellGate * transformTicks
       for (const pitch of voiced) {
         events.push(maybeDelay({ type: 'noteOff', pitch, channel }, gateOffset))
       }
@@ -288,6 +334,18 @@ function clampVelocity(v: number): number {
   if (rounded < 1) return 1
   if (rounded > 127) return 127
   return rounded
+}
+
+function clamp01(v: number): number {
+  if (v < 0) return 0
+  if (v > 1) return 1
+  return v
+}
+
+function clampSigned05(v: number): number {
+  if (v < -0.5) return -0.5
+  if (v > 0.5) return 0.5
+  return v
 }
 
 // Attach delayPos only when non-zero so default-cell event shapes (and
