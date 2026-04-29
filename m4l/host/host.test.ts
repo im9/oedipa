@@ -52,17 +52,22 @@ describe('Host.step', () => {
   })
 
   test('emits noteOffs for the previous chord before noteOns on change', () => {
+    // ADR 005: each step now also schedules a gate-end noteOff at delayPos =
+    // gate*spt for the new chord. The legato note-off discipline (prior off
+    // before new on) is checked within the delayPos=0 slot only — gate-end
+    // offs at delayPos > 0 are unrelated.
     const host = new Host(baseParams({ cells: cells('P') }))
     host.step(0)
     const events = host.step(1)
-
-    const lastOffIdx = events.map(e => e.type).lastIndexOf('noteOff')
-    const firstOnIdx = events.map(e => e.type).indexOf('noteOn')
+    const slot0 = events.filter(e => (e.delayPos ?? 0) === 0)
+    const lastOffIdx = slot0.map(e => e.type).lastIndexOf('noteOff')
+    const firstOnIdx = slot0.map(e => e.type).indexOf('noteOn')
     assert.ok(
       lastOffIdx < firstOnIdx,
-      `all noteOffs must precede any noteOn (offs end at ${lastOffIdx}, ons start at ${firstOnIdx})`,
+      `all noteOffs must precede any noteOn within delayPos=0 (offs end at ${lastOffIdx}, ons start at ${firstOnIdx})`,
     )
-    assert.deepEqual(pitchesOf(events, 'noteOff').sort((a, b) => a - b), [60, 64, 67])
+    const handoffOffs = slot0.filter(e => e.type === 'noteOff').map(e => e.pitch).sort((a, b) => a - b)
+    assert.deepEqual(handoffOffs, [60, 64, 67])
     const newPcs = pitchesOf(events, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
     assert.deepEqual(newPcs, [0, 3, 7])
   })
@@ -74,10 +79,13 @@ describe('Host.step', () => {
   })
 
   test('supports scrubbing: step(n) without prior calls emits the chord at n', () => {
+    // ADR 005: scrubbing now also schedules a gate-end noteOff at delayPos > 0.
+    // No legato handoff (held set empty on first call), so delayPos=0 offs = 0.
     const host = new Host(baseParams({ cells: cells('P') }))
     const events = host.step(5)
 
-    assert.equal(pitchesOf(events, 'noteOff').length, 0)
+    const handoffOffs = events.filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) === 0)
+    assert.equal(handoffOffs.length, 0, 'no legato handoff on a fresh scrub')
     // cells=['P'] applied 5 times: P is involution → after odd applications we land on minor.
     const pcs = pitchesOf(events, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
     assert.deepEqual(pcs, [0, 3, 7])
@@ -113,12 +121,15 @@ describe('Host.step', () => {
     }
   })
 
-  test('hold cell does not change the chord (no events emitted)', () => {
+  test('hold cell re-emits the current chord (ADR 005 op effects table)', () => {
+    // ADR 005 §"Op effects table": hold = cursor unchanged, audio = re-emit.
+    // ADR 003-era "no events on hold" is superseded.
     const host = new Host(baseParams({ cells: cells('hold') }))
     host.step(0)
-    // All subsequent steps stay on startChord.
     for (const pos of [1, 2, 5, 17]) {
-      assert.deepEqual(host.step(pos), [], `pos=${pos} must emit nothing`)
+      const events = host.step(pos)
+      const ons = events.filter(e => e.type === 'noteOn').map(e => e.pitch).sort((a, b) => a - b)
+      assert.deepEqual(ons, [60, 64, 67], `pos=${pos} re-emits startChord`)
     }
   })
 
@@ -144,10 +155,223 @@ describe('Host.step', () => {
   })
 
   test('noteOffs at chord change match the previously voiced notes (not the raw triad)', () => {
+    // ADR 005: legato handoff offs (delayPos=0) target the previously voiced
+    // notes; gate-end offs (delayPos > 0) target the new voicing — filter to
+    // the handoff slot only for this assertion.
     const host = new Host(baseParams({ voicing: 'spread', cells: cells('P') }))
     host.step(0)
     const events = host.step(1)
-    assert.deepEqual(pitchesOf(events, 'noteOff').sort((a, b) => a - b), [60, 67, 76])
+    const handoffOffs = events
+      .filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) === 0)
+      .map(e => e.pitch)
+      .sort((a, b) => a - b)
+    assert.deepEqual(handoffOffs, [60, 67, 76])
+  })
+})
+
+describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
+  // ADR 005 §"Layer 1 — Per-cell expression": every emitted note carries
+  // velocity scaling, gate-end note-off scheduling, and a timing offset.
+  // delayPos is in pos-units (the same domain as step(pos)); step length =
+  // stepsPerTransform pos-units.
+  describe('NoteEvent.delayPos — gate scheduling', () => {
+    test('default cell schedules gate-end noteOff at delayPos = gate * spt', () => {
+      // Default cell: gate=0.9, spt=1 → scheduled noteOff at delayPos = 0.9.
+      // Slot 0 carries the legato handoff for the prior chord and the new
+      // chord's noteOn; the gate slot carries the new chord's note-off.
+      const host = new Host(baseParams({ cells: cells('P') }))
+      host.step(0)
+      const events = host.step(1)
+      const offsAtZero = events.filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) === 0)
+      const onsAtZero = events.filter(e => e.type === 'noteOn' && (e.delayPos ?? 0) === 0)
+      const offsAtGate = events.filter(e => e.type === 'noteOff' && e.delayPos === 0.9)
+      assert.equal(offsAtZero.length, 3, 'legato handoff for prior chord')
+      assert.equal(onsAtZero.length, 3, 'new chord noteOn at boundary')
+      assert.equal(offsAtGate.length, 3, 'gate-end noteOff at delayPos=0.9')
+    })
+
+    test('gate offset scales with stepsPerTransform', () => {
+      // gate=0.5, spt=4 → scheduled noteOff at delayPos = 0 + 0.5*4 = 2.
+      const c = makeCell('P', { gate: 0.5 })
+      const host = new Host(baseParams({ cells: [c], stepsPerTransform: 4 }))
+      host.step(0)
+      const events = host.step(4)
+      const offsAtTwo = events.filter(e => e.type === 'noteOff' && e.delayPos === 2)
+      assert.equal(offsAtTwo.length, 3, 'noteOff scheduled at gate*spt')
+    })
+
+    test('gate=1.0 leaves chord for legato handoff (no scheduled noteOff this step)', () => {
+      // gate=1.0 = "note-off coincident with next note-on" — no early off
+      // scheduled; the next noteOn step carries the legato handoff.
+      const c = makeCell('P', { gate: 1.0 })
+      const host = new Host(baseParams({ cells: [c, c] }))
+      host.step(0)
+      const events1 = host.step(1)
+      // Slot 0: 3 handoff offs (prior startChord) + 3 new noteOns. No gate-end offs.
+      const offs = events1.filter(e => e.type === 'noteOff')
+      const ons = events1.filter(e => e.type === 'noteOn')
+      assert.equal(offs.length, 3, 'only legato handoff offs, no gate-end off')
+      assert.equal(ons.length, 3)
+      // Next step should emit handoff for the previously held (gate=1.0) chord.
+      const events2 = host.step(2)
+      const handoff2 = events2.filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) === 0)
+      assert.equal(handoff2.length, 3, 'next step emits legato handoff for gate=1.0 prior')
+    })
+  })
+
+  describe('per-cell velocity', () => {
+    test('cell.velocity multiplies source velocity (0.5 × 100 = 50)', () => {
+      // 100 = default lastInputVelocity (no input wired); 0.5 = half scaling.
+      const c = makeCell('P', { velocity: 0.5 })
+      const host = new Host(baseParams({ cells: [c] }))
+      host.step(0)
+      const events = host.step(1)
+      const vels = events.filter(e => e.type === 'noteOn').map(e => e.velocity)
+      assert.equal(vels.length, 3)
+      for (const v of vels) assert.equal(v, 50)
+    })
+
+    test('cell.velocity=1.0 default preserves source velocity (no scaling)', () => {
+      const host = new Host(baseParams({ cells: cells('P') }))
+      host.step(0)
+      const events = host.step(1)
+      const vels = events.filter(e => e.type === 'noteOn').map(e => e.velocity)
+      for (const v of vels) assert.equal(v, 100)
+    })
+
+    test('cell.velocity=0 clamps to MIDI minimum 1 (avoid noteOff masquerade)', () => {
+      // MIDI velocity 0 in a noteOn message is conventionally interpreted as
+      // a noteOff. Clamp the output to >=1 so a fully-attenuated cell still
+      // produces audible (if quiet) noteOns.
+      const c = makeCell('P', { velocity: 0 })
+      const host = new Host(baseParams({ cells: [c] }))
+      host.step(0)
+      const events = host.step(1)
+      const vels = events.filter(e => e.type === 'noteOn').map(e => e.velocity)
+      for (const v of vels) assert.equal(v, 1)
+    })
+
+    test('source velocity = lastInputVelocity, multiplied by cell.velocity', () => {
+      // lastInputVelocity tracks the most recent noteIn (ADR 004).
+      // 80 × 0.5 = 40.
+      const c = makeCell('P', { velocity: 0.5 })
+      const host = new Host(baseParams({ cells: [c] }))
+      host.step(0)
+      host.noteIn(60, 80, 1)
+      const events = host.step(1)
+      const vels = events.filter(e => e.type === 'noteOn').map(e => e.velocity)
+      for (const v of vels) assert.equal(v, 40)
+    })
+  })
+
+  describe('per-cell timing', () => {
+    test('timing > 0 delays noteOn by timing * spt', () => {
+      // timing=+0.25, spt=4 → delayPos = 1.0. Push (late) feel.
+      const c = makeCell('P', { timing: 0.25 })
+      const host = new Host(baseParams({ cells: [c], stepsPerTransform: 4 }))
+      host.step(0)
+      const events = host.step(4)
+      const ons = events.filter(e => e.type === 'noteOn')
+      assert.equal(ons.length, 3)
+      for (const e of ons) assert.equal(e.delayPos, 1.0)
+    })
+
+    test('timing > 0 also delays the legato handoff so it lands just before the noteOn', () => {
+      // ADR 003 note-off discipline: prior chord released before new noteOn.
+      // With timing=0.25, both the handoff and the noteOn move to delayPos=1.0.
+      const c = makeCell('P', { timing: 0.25 })
+      const host = new Host(baseParams({ cells: [c], stepsPerTransform: 4 }))
+      host.step(0)
+      const events = host.step(4)
+      const handoffOffs = events.filter(e => e.type === 'noteOff' && e.delayPos === 1.0)
+      assert.equal(handoffOffs.length, 3, 'handoff offs co-located with noteOn at delayPos=1.0')
+    })
+
+    test('playback-start clamp: first scheduled cell with timing<0 → delayPos=0', () => {
+      // ADR 005 §"Playback start clamp": at transport start, a negative
+      // timing offset on the first scheduled cell cannot fire before t=0.
+      const c = makeCell('P', { timing: -0.5 })
+      const host = new Host(baseParams({ cells: [c, c] }))
+      host.step(0)
+      const events = host.step(1)
+      const ons = events.filter(e => e.type === 'noteOn')
+      for (const e of ons) assert.equal(e.delayPos ?? 0, 0)
+    })
+
+  })
+
+  describe('probability', () => {
+    test('probability=0 emits no events but still advances the chord cursor', () => {
+      // ADR 005: P/L/R with prob fail = silent advance (cursor moves, no audio).
+      const c = makeCell('P', { probability: 0 })
+      const host = new Host(baseParams({ cells: [c] }))
+      host.step(0)
+      const events = host.step(1)
+      assert.deepEqual(events, [])
+      // Cursor advanced: P(Cmaj) = Cmin → pcs {0,3,7}.
+      const pcs = host.currentTriad!.map(p => ((p % 12) + 12) % 12).sort((a, b) => a - b)
+      assert.deepEqual(pcs, [0, 3, 7])
+    })
+
+    test('probability=0 with hold op = silent step, cursor unchanged', () => {
+      // hold cursor untouched + prob fail = silent → entire step is a no-op
+      // visible to the host.
+      const c = makeCell('hold', { probability: 0 })
+      const host = new Host(baseParams({ cells: [c] }))
+      host.step(0)
+      const events = host.step(1)
+      assert.deepEqual(events, [])
+      assert.deepEqual(host.currentTriad, [60, 64, 67])
+    })
+
+    test('determinism preserved across probability draws', () => {
+      // Two hosts with identical seed must produce identical event streams.
+      const c = makeCell('P', { probability: 0.5 })
+      const a = new Host(baseParams({ cells: [c], seed: 7 }))
+      const b = new Host(baseParams({ cells: [c], seed: 7 }))
+      for (const pos of [0, 1, 2, 3, 4, 5, 10, 25]) {
+        assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos}`)
+      }
+    })
+  })
+
+  describe('rest op', () => {
+    test('rest emits no events and leaves cursor unchanged', () => {
+      // ADR 005: rest = silent hold; cursor unchanged.
+      const c = makeCell('rest')
+      const host = new Host(baseParams({ cells: [c] }))
+      host.step(0)
+      const events = host.step(1)
+      assert.deepEqual(events, [])
+      assert.deepEqual(host.currentTriad, [60, 64, 67])
+    })
+
+    test('rest does not fire a note-off — prior gate handles it', () => {
+      // ADR 005: "Previous step's note dies according to its own gate
+      // length — no special note-off at the rest boundary." Verify no events
+      // on the rest step itself.
+      const cP = makeCell('P', { gate: 0.5 })
+      const cRest = makeCell('rest')
+      const host = new Host(baseParams({ cells: [cP, cRest] }))
+      host.step(0) // startChord
+      host.step(1) // P fires; gate 0.5 schedules off at delayPos=0.5
+      const events = host.step(2) // rest
+      assert.deepEqual(events, [], 'rest step is silent; prior gate already scheduled')
+    })
+  })
+
+  describe('hold op (re-emit)', () => {
+    test('hold re-emits the current chord at every step (ADR 005)', () => {
+      // Same as the test above in Host.step, but verifies the gate-end off
+      // is also scheduled per re-trigger.
+      const host = new Host(baseParams({ cells: cells('hold') }))
+      host.step(0)
+      const events = host.step(1)
+      const ons = events.filter(e => e.type === 'noteOn')
+      const offsAtGate = events.filter(e => e.type === 'noteOff' && e.delayPos === 0.9)
+      assert.equal(ons.length, 3, 'hold re-emits noteOns')
+      assert.equal(offsAtGate.length, 3, 'hold schedules gate-end off like any played step')
+    })
   })
 })
 
@@ -174,13 +398,16 @@ describe('Host.panic', () => {
 
 describe('Host.setParams', () => {
   test('is silent on its own; the next chord change reflects the new params', () => {
+    // ADR 005: count handoff offs (delayPos=0) only — gate-end offs are
+    // scheduled per emission and unrelated to the prior-chord cleanup.
     const host = new Host(baseParams({ stepsPerTransform: 2, cells: cells('P') }))
     host.step(0)
     host.setParams({ voicing: 'spread' })
     assert.deepEqual(host.step(1), [])
     const events = host.step(2)
     assert.equal(pitchesOf(events, 'noteOn').length, 3)
-    assert.equal(pitchesOf(events, 'noteOff').length, 3)
+    const handoffOffs = events.filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) === 0)
+    assert.equal(handoffOffs.length, 3, 'spread voicing reflected in handoff for prior close startChord')
   })
 })
 

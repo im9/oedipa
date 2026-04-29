@@ -15,6 +15,7 @@ import {
   applyVoicing,
   findTriadInHeldNotes,
   walk,
+  walkStepEvent,
   type Cell,
   type MidiNote,
   type Op,
@@ -23,9 +24,17 @@ import {
   type WalkState,
 } from '../engine/tonnetz.ts'
 
+// delayPos is in pos-units (the same domain as step(pos)). Undefined or 0
+// means "fire at the current pos". The host emits gate-end note-offs and
+// pushed/late note-ons via delayPos; the M4L bridge ([pipe] or equivalent)
+// is responsible for absolute scheduling.
+//
+// Negative-timing pull-ahead in subsequent cycles would require look-ahead
+// scheduling (emit at the prior step boundary) and is deferred past Phase 2;
+// for now negative cell timing is clamped at every boundary.
 export type NoteEvent =
-  | { type: 'noteOn'; pitch: MidiNote; velocity: number; channel: number }
-  | { type: 'noteOff'; pitch: MidiNote; channel: number }
+  | { type: 'noteOn'; pitch: MidiNote; velocity: number; channel: number; delayPos?: number }
+  | { type: 'noteOff'; pitch: MidiNote; channel: number; delayPos?: number }
 
 export type TriggerMode = 0 | 1 // 0 = hybrid (default), 1 = hold-to-play
 
@@ -53,6 +62,9 @@ export class Host {
   private walkerActive = true                  // gates step() output (hold-to-play)
   private startPos = 0                         // pos baseline for effective walk position
   private pendingPosReset = false              // queue a pos reset for the next step()
+  // ADR 005 Phase 2 scheduling state
+  private handoffPending = false               // next noteOn step must legato-off `held`
+  private lastEmittedEffectivePos: number | null = null // same-pos idempotency guard
 
   constructor(params: HostParams) {
     this.params = { ...params }
@@ -144,29 +156,92 @@ export class Host {
     if (this.pendingPosReset) {
       this.startPos = pos
       this.pendingPosReset = false
+      this.lastEmittedEffectivePos = null
     }
     const effectivePos = pos - this.startPos
-    const { startChord, cells, stepsPerTransform, jitter, seed, voicing, seventh, channel } = this.params
-    const walkState: WalkState = { startChord, cells, stepsPerTransform, jitter, seed }
-    const triad = walk(walkState, effectivePos)
 
-    if (this.lastTriad !== null && triadsEqual(triad, this.lastTriad)) {
+    // Same-pos idempotency: re-calling step(pos) for an already-emitted pos
+    // is a no-op. Keeps scrub / pos-cascade callers safe.
+    if (this.lastEmittedEffectivePos !== null && effectivePos === this.lastEmittedEffectivePos) {
       return []
     }
 
+    const { startChord, cells, stepsPerTransform: spt, jitter, seed, voicing, seventh, channel } = this.params
+
+    // pos=0 (or first call after reset): emit startChord once. No cell has
+    // fired yet, so vel/gate/timing don't apply.
+    if (effectivePos === 0) {
+      const events: NoteEvent[] = []
+      for (const pitch of this.held) events.push({ type: 'noteOff', pitch, channel })
+      this.held.clear()
+      let voiced = applyVoicing(startChord, voicing)
+      if (seventh) voiced = addSeventh(voiced, startChord)
+      for (const pitch of voiced) {
+        events.push({ type: 'noteOn', pitch, velocity: this.lastInputVelocity, channel })
+        this.held.add(pitch)
+      }
+      this.lastTriad = startChord
+      // startChord has no cell-authored gate; sustain until next noteOn step
+      // releases it via the legato handoff.
+      this.handoffPending = true
+      this.lastEmittedEffectivePos = 0
+      return events
+    }
+
+    if (effectivePos % spt !== 0) return []
+
+    const walkState: WalkState = { startChord, cells, stepsPerTransform: spt, jitter, seed }
+    const stepEvent = walkStepEvent(walkState, effectivePos)
+    if (stepEvent === null) {
+      // Empty cells[]; fall back to walk() so the cursor is still defined.
+      this.lastTriad = walk(walkState, effectivePos)
+      return []
+    }
+
+    if (!stepEvent.played) {
+      // rest or probability fail: silent advance. Cursor still moves; no audio.
+      this.lastTriad = stepEvent.chord
+      this.lastEmittedEffectivePos = effectivePos
+      return []
+    }
+
+    const cell = cells[stepEvent.cellIdx]!
+    // ADR 005 specifies "subsequent cycles use the unclamped offset" for
+    // negative timing, but firing at delayPos<0 needs look-ahead scheduling
+    // from the prior step boundary. Phase 2 clamps at every boundary; the
+    // look-ahead path is Phase 3+ alongside subdivision/swing.
+    const timingOffset = Math.max(0, cell.timing * spt)
+
+    let voiced = applyVoicing(stepEvent.chord, voicing)
+    if (seventh) voiced = addSeventh(voiced, stepEvent.chord)
+    const velocity = clampVelocity(this.lastInputVelocity * cell.velocity)
+
     const events: NoteEvent[] = []
-    for (const pitch of this.held) {
-      events.push({ type: 'noteOff', pitch, channel })
+    if (this.handoffPending) {
+      for (const pitch of this.held) {
+        events.push(maybeDelay({ type: 'noteOff', pitch, channel }, timingOffset))
+      }
     }
     this.held.clear()
 
-    let voiced = applyVoicing(triad, voicing)
-    if (seventh) voiced = addSeventh(voiced, triad)
     for (const pitch of voiced) {
-      events.push({ type: 'noteOn', pitch, velocity: this.lastInputVelocity, channel })
+      events.push(maybeDelay({ type: 'noteOn', pitch, velocity, channel }, timingOffset))
       this.held.add(pitch)
     }
-    this.lastTriad = triad
+
+    if (cell.gate < 1.0) {
+      const gateOffset = timingOffset + cell.gate * spt
+      for (const pitch of voiced) {
+        events.push(maybeDelay({ type: 'noteOff', pitch, channel }, gateOffset))
+      }
+      this.handoffPending = false
+    } else {
+      // gate >= 1.0: leave for next step's legato handoff.
+      this.handoffPending = true
+    }
+
+    this.lastTriad = stepEvent.chord
+    this.lastEmittedEffectivePos = effectivePos
     return events
   }
 
@@ -177,6 +252,8 @@ export class Host {
     }
     this.held.clear()
     this.lastTriad = null
+    this.handoffPending = false
+    this.lastEmittedEffectivePos = null
     return events
   }
 
@@ -202,4 +279,20 @@ export class Host {
 
 function triadsEqual(a: Triad, b: Triad): boolean {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2]
+}
+
+// Clamp scaled velocity to MIDI 1..127. Velocity 0 is conventionally a
+// noteOff, so a fully-attenuated cell still produces a quiet but audible note.
+function clampVelocity(v: number): number {
+  const rounded = Math.round(v)
+  if (rounded < 1) return 1
+  if (rounded > 127) return 127
+  return rounded
+}
+
+// Attach delayPos only when non-zero so default-cell event shapes (and
+// existing unit tests that don't set delayPos) stay clean.
+function maybeDelay(event: NoteEvent, delayPos: number): NoteEvent {
+  if (delayPos === 0) return event
+  return { ...event, delayPos }
 }

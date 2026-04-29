@@ -315,13 +315,16 @@ Phases follow ADR 003's TDD pattern.
   - Update shared test vectors
     ([docs/ai/tonnetz-test-vectors.json](../tonnetz-test-vectors.json))
     for new cell shape, ops, and probability semantics.
-- [ ] **Phase 2 — Host: per-cell scheduling**
+- [x] **Phase 2 — Host: per-cell scheduling**
   - Per-cell velocity / gate / timing offset applied per output event.
   - Source velocity = most-recent note-on within held set (ADR 004
     integration).
   - Skipped-step (probability) and rest paths share note-off via
     prior-step gate (legato note-off per ADR 003).
   - Playback-start clamp: first scheduled cell's negative timing → 0.
+  - Negative-timing pull-ahead in subsequent cycles deferred to Phase 3+
+    (requires look-ahead from prior step boundary, easier alongside
+    subdivision/swing scheduling). Phase 2 clamps at every boundary.
 - [ ] **Phase 3 — Host: global layer**
   - Subdivision tick multiplier (5 options); swing offset on off-beat
     ticks; step-direction state machine (forward / reverse / pingpong

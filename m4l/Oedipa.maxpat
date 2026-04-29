@@ -80,6 +80,7 @@
             {"box": {"id": "obj-lbl-stepsper", "maxclass": "comment", "text": "Steps", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 90.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [486.0, 8.0, 50.0, 14.0]}},
 
             {"box": {"id": "obj-seventh", "maxclass": "live.toggle", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"], "parameter_enable": 1, "patching_rect": [970.0, 130.0, 24.0, 24.0], "presentation": 1, "presentation_rect": [486.0, 64.0, 18.0, 18.0], "saved_attribute_attributes": {"valueof": {"parameter_initial": [0], "parameter_initial_enable": 1, "parameter_longname": "OedipaSeventh", "parameter_mmax": 1.0, "parameter_mmin": 0.0, "parameter_shortname": "7th", "parameter_type": 1, "parameter_unitstyle": 0}}}},
+            {"box": {"id": "obj-msg-getvalueof-seventh", "maxclass": "message", "text": "getvalueof", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [870.0, 130.0, 80.0, 22.0]}},
             {"box": {"id": "obj-prep-seventh", "maxclass": "newobj", "text": "prepend setParams seventh", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [1100.0, 130.0, 170.0, 22.0]}},
             {"box": {"id": "obj-lbl-seventh", "maxclass": "comment", "text": "7th", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 130.0, 40.0, 16.0], "presentation": 1, "presentation_rect": [486.0, 48.0, 30.0, 14.0]}},
 
@@ -88,6 +89,7 @@
             {"box": {"id": "obj-lbl-channel", "maxclass": "comment", "text": "Out Ch", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 230.0, 50.0, 16.0], "presentation": 1, "presentation_rect": [486.0, 88.0, 50.0, 14.0]}},
 
             {"box": {"id": "obj-triggermode", "maxclass": "live.toggle", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"], "parameter_enable": 1, "patching_rect": [970.0, 810.0, 24.0, 24.0], "presentation": 1, "presentation_rect": [540.0, 24.0, 18.0, 18.0], "saved_attribute_attributes": {"valueof": {"parameter_initial": [0], "parameter_initial_enable": 1, "parameter_longname": "OedipaTriggerMode", "parameter_mmax": 1.0, "parameter_mmin": 0.0, "parameter_shortname": "Trig", "parameter_type": 1, "parameter_unitstyle": 0}}}},
+            {"box": {"id": "obj-msg-getvalueof-trig", "maxclass": "message", "text": "getvalueof", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [870.0, 810.0, 80.0, 22.0]}},
             {"box": {"id": "obj-prep-triggermode", "maxclass": "newobj", "text": "prepend setParams triggerMode", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [1100.0, 810.0, 220.0, 22.0]}},
             {"box": {"id": "obj-lbl-triggermode", "maxclass": "comment", "text": "Trig", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1340.0, 810.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [540.0, 8.0, 50.0, 14.0]}},
 
@@ -208,7 +210,9 @@
             {"patchline": {"source": ["obj-midiformat", 0], "destination": ["obj-midiout", 0]}},
 
             {"patchline": {"source": ["obj-trig-hostready", 0], "destination": ["obj-stepsper", 0]}},
-            {"patchline": {"source": ["obj-trig-hostready", 0], "destination": ["obj-seventh", 0]}},
+            {"patchline": {"source": ["obj-trig-hostready", 0], "destination": ["obj-msg-getvalueof-seventh", 0]}},
+            {"patchline": {"source": ["obj-msg-getvalueof-seventh", 0], "destination": ["obj-seventh", 0]}},
+            {"patchline": {"source": ["obj-seventh", 1], "destination": ["obj-prep-seventh", 0]}},
             {"patchline": {"source": ["obj-trig-hostready", 0], "destination": ["obj-channel", 0]}},
             {"patchline": {"source": ["obj-trig-hostready", 0], "destination": ["obj-voicing", 0]}},
 
@@ -329,7 +333,9 @@
             {"patchline": {"source": ["obj-sel-stop", 1], "destination": ["obj-msg-transportstart", 0]}},
             {"patchline": {"source": ["obj-msg-transportstart", 0], "destination": ["obj-nodescript", 0]}},
 
-            {"patchline": {"source": ["obj-trig-hostready", 0], "destination": ["obj-triggermode", 0]}},
+            {"patchline": {"source": ["obj-trig-hostready", 0], "destination": ["obj-msg-getvalueof-trig", 0]}},
+            {"patchline": {"source": ["obj-msg-getvalueof-trig", 0], "destination": ["obj-triggermode", 0]}},
+            {"patchline": {"source": ["obj-triggermode", 1], "destination": ["obj-prep-triggermode", 0]}},
             {"patchline": {"source": ["obj-triggermode", 0], "destination": ["obj-prep-triggermode", 0]}},
             {"patchline": {"source": ["obj-prep-triggermode", 0], "destination": ["obj-nodescript", 0]}},
 
