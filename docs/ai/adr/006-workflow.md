@@ -191,11 +191,16 @@ pass — same `.maxpat` file, one `pnpm bake`.
 
 ### Phase 4 — Factory presets
 
-- [ ] Curate 6–10 programs covering the design range (P/L/R-heavy,
-  sparse, dense, jitter-led, near-static).
-- [ ] Inline as const array `FACTORY_PRESETS: { name, program }[]` in host.
-- [ ] `live.menu` populated from the array.
-- [ ] Selection → parse program → load into active slot.
+- [x] Curate 6–10 programs covering the design range (P/L/R-heavy,
+  sparse, dense, jitter-led, near-static). 6 shipped: Steady, Drift,
+  Cycle, Mixed, Pulse, Jitter Web.
+- [x] Inline as const array `FACTORY_PRESETS: { name, program }[]` in
+  `m4l/host/presets.ts`.
+- [ ] `live.menu` populated from the array. **Deferred to Phase 3
+  (patcher pass).**
+- [x] Selection → parse program → load into active slot.
+  `Host.loadFactoryPreset(idx)` composes parseSlot + setSlot +
+  switchSlot.
 
 ### Phase 5 — Random generate
 

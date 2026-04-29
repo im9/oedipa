@@ -2,7 +2,8 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { makeCell, type Op } from '../engine/tonnetz.ts'
 import { Host, type HostParams, type NoteEvent } from './host.ts'
-import type { Slot } from './slot.ts'
+import { parseSlot, type Slot } from './slot.ts'
+import { FACTORY_PRESETS } from './presets.ts'
 
 function cells(...ops: Op[]): HostParams['cells'] {
   return ops.map(op => makeCell(op))
@@ -1721,6 +1722,64 @@ describe('Host slots — ADR 006 Phase 2', () => {
         jitter: 0.6,
         seed: 777,
       })
+    })
+  })
+
+  describe('loadFactoryPreset — ADR 006 Phase 4', () => {
+    test('FACTORY_PRESETS has at least 6 entries', () => {
+      // ADR 006 §"Axis 3" — target range is 6–10 curated programs.
+      assert.ok(FACTORY_PRESETS.length >= 6,
+        `expected ≥6 presets, got ${FACTORY_PRESETS.length}`)
+    })
+
+    test('every preset parses successfully', () => {
+      // Catch broken program strings at build time rather than runtime.
+      for (const preset of FACTORY_PRESETS) {
+        const slot = parseSlot(preset.program)
+        assert.notEqual(slot, null,
+          `preset "${preset.name}" failed to parse: ${preset.program}`)
+      }
+    })
+
+    test('every preset has a non-empty name', () => {
+      for (const preset of FACTORY_PRESETS) {
+        assert.ok(preset.name.length > 0)
+      }
+    })
+
+    test('loads preset into the active slot', () => {
+      const host = new Host(baseParams())
+      host.switchSlot(2)
+      const ok = host.loadFactoryPreset(0) // "Steady" — PPPP|s=0|j=0|c=C
+      assert.equal(ok, true)
+      assert.deepEqual(host.getSlot(2), parseSlot(FACTORY_PRESETS[0]!.program))
+      // Other slots untouched (still default).
+      for (const i of [0, 1, 3]) {
+        assert.notDeepEqual(host.getSlot(i), parseSlot(FACTORY_PRESETS[0]!.program))
+      }
+    })
+
+    test('applies preset to running params (cells / jitter / seed)', () => {
+      // Loading a preset must affect what the next step() emits, not just
+      // the stored Slot. Verifies the setSlot + switchSlot composition.
+      const host = new Host(baseParams({ jitter: 0, seed: 0 }))
+      // Pick "Jitter Web" — all-hold cells + j=0.6 + c=C. Seed = 42.
+      const idx = FACTORY_PRESETS.findIndex(p => p.name === 'Jitter Web')
+      assert.ok(idx >= 0, 'Jitter Web preset present')
+      host.loadFactoryPreset(idx)
+      // The cells should be all hold, jitter 0.6, seed 42 reflected in the
+      // active slot AND in params (via switchSlot path).
+      assert.deepEqual(host.getSlot(host.activeSlot)!.cells, '____')
+      assert.equal(host.getSlot(host.activeSlot)!.jitter, 0.6)
+      assert.equal(host.getSlot(host.activeSlot)!.seed, 42)
+    })
+
+    test('out-of-range index returns false and does not mutate state', () => {
+      const host = new Host(baseParams())
+      const before = host.getSlot(0)
+      assert.equal(host.loadFactoryPreset(-1), false)
+      assert.equal(host.loadFactoryPreset(FACTORY_PRESETS.length), false)
+      assert.deepEqual(host.getSlot(0), before)
     })
   })
 })

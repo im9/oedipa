@@ -26,7 +26,8 @@ import {
   type Voicing,
   type WalkState,
 } from '../engine/tonnetz.ts'
-import { cellsToString, stringToCells, type Slot, type SlotQuality } from './slot.ts'
+import { cellsToString, parseSlot, stringToCells, type Slot, type SlotQuality } from './slot.ts'
+import { FACTORY_PRESETS } from './presets.ts'
 
 // delayPos is in pos-units (the same domain as step(pos)). Undefined or 0
 // means "fire at the current pos". The host emits gate-end note-offs and
@@ -157,6 +158,19 @@ export class Host {
   // Capture current device state into the active slot.
   saveCurrent(): void {
     this.slots[this.activeSlotIdx] = this.captureSlot()
+  }
+
+  // ADR 006 Phase 4 — load a curated factory preset into the active slot.
+  // Composes parseSlot + setSlot + switchSlot so the result is both
+  // persisted (via Slot[]) and audibly applied. Returns false if the
+  // index is out of range or the preset's program string is malformed.
+  loadFactoryPreset(idx: number): boolean {
+    if (idx < 0 || idx >= FACTORY_PRESETS.length) return false
+    const slot = parseSlot(FACTORY_PRESETS[idx]!.program)
+    if (slot === null) return false
+    this.setSlot(this.activeSlotIdx, slot)
+    this.switchSlot(this.activeSlotIdx)
+    return true
   }
 
   // Switch to slot `idx` and apply its contents. cells/jitter/seed apply
