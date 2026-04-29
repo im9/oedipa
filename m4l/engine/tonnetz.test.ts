@@ -15,6 +15,7 @@ import {
   type Transform,
   type Op,
   type Cell,
+  type StepDirection,
   type Voicing,
   type WalkState,
 } from './tonnetz.ts'
@@ -75,6 +76,7 @@ interface VectorWalkState {
   stepsPerTransform: number
   jitter: number
   seed: number
+  stepDirection?: StepDirection
 }
 
 interface WalkCase {
@@ -129,6 +131,7 @@ function vectorState(s: VectorWalkState): WalkState {
     stepsPerTransform: s.stepsPerTransform,
     jitter: s.jitter,
     seed: s.seed,
+    ...(s.stepDirection !== undefined ? { stepDirection: s.stepDirection } : {}),
   }
 }
 
@@ -402,4 +405,146 @@ test('makeCell: overrides win', () => {
   // unchanged defaults
   assert.equal(c.gate, 0.9)
   assert.equal(c.probability, 1.0)
+})
+
+// ── stepDirection structural assertions (ADR 005 Phase 3) ────────────────
+
+test('walkStepEvent: stepDirection defaults to forward when omitted', () => {
+  // ADR 005 §"Step direction": default 'forward'. Omitting the field must
+  // produce the same cellIdx sequence as explicit 'forward'.
+  const cells = [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')]
+  const omitted: WalkState = { ...baseState, cells }
+  const explicit: WalkState = { ...baseState, cells, stepDirection: 'forward' }
+  for (const pos of [1, 2, 3, 4, 5, 7, 11]) {
+    const a = walkStepEvent(omitted, pos)
+    const b = walkStepEvent(explicit, pos)
+    assert.equal(a!.cellIdx, b!.cellIdx, `pos=${pos} cellIdx`)
+    assert.equal(a!.resolvedOp, b!.resolvedOp, `pos=${pos} resolvedOp`)
+    assert.deepEqual(a!.chord, b!.chord, `pos=${pos} chord`)
+  }
+})
+
+test('walkStepEvent: stepDirection=random — cellIdx sequence depends on seed, not authored cell ops', () => {
+  // With direction=random and jitter=0, cellIdx is determined by the PRNG draw
+  // alone. Varying authored cell ops (but holding cells.length and seed) must
+  // produce identical cellIdx sequences. This proves the random-direction draw
+  // is at the documented top of the order and is independent of cell content.
+  const seed = 314
+  const stateA: WalkState = {
+    ...baseState,
+    cells: [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')],
+    seed,
+    stepDirection: 'random',
+  }
+  const stateB: WalkState = {
+    ...baseState,
+    cells: [makeCell('hold'), makeCell('hold'), makeCell('hold'), makeCell('hold')],
+    seed,
+    stepDirection: 'random',
+  }
+  const seqA = [1, 2, 3, 4, 5, 6, 7, 8].map(p => walkStepEvent(stateA, p)!.cellIdx)
+  const seqB = [1, 2, 3, 4, 5, 6, 7, 8].map(p => walkStepEvent(stateB, p)!.cellIdx)
+  assert.deepEqual(seqA, seqB, 'random cellIdx draws must depend only on seed/cells.length')
+  for (const idx of seqA) {
+    assert.ok(idx >= 0 && idx < 4, `cellIdx ${idx} must be in [0, cells.length)`)
+  }
+})
+
+test('walkStepEvent: stepDirection=random with cells.length=1 always returns cellIdx=0', () => {
+  const state: WalkState = {
+    ...baseState,
+    cells: [makeCell('P')],
+    seed: 42,
+    stepDirection: 'random',
+  }
+  for (const pos of [1, 2, 3, 5, 11, 25]) {
+    assert.equal(walkStepEvent(state, pos)!.cellIdx, 0, `pos=${pos}`)
+  }
+})
+
+test('walkStepEvent: PRNG draw order — random direction consumes 1 draw before jitter', () => {
+  // direction=random + jitter=1 vs. direction=forward + jitter=1, same seed.
+  // The random-direction draw shifts the PRNG state seen by the jitter draws,
+  // so resolvedOp sequences must differ. This is structural — the assertion
+  // catches accidental reorder of PRNG draws.
+  const cells = [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')]
+  const fwd: WalkState = { ...baseState, cells, jitter: 1, seed: 42, stepDirection: 'forward' }
+  const rnd: WalkState = { ...baseState, cells, jitter: 1, seed: 42, stepDirection: 'random' }
+  const seqFwd = [1, 2, 3, 4, 5, 6, 7, 8].map(p => walkStepEvent(fwd, p)!.resolvedOp)
+  const seqRnd = [1, 2, 3, 4, 5, 6, 7, 8].map(p => walkStepEvent(rnd, p)!.resolvedOp)
+  assert.notDeepEqual(seqFwd, seqRnd, 'random must shift the jitter PRNG offset')
+})
+
+test('walk: stepDirection=reverse drives cursor through cells in reverse order', () => {
+  // Single transform: walk(state, 1) should resolve cell at index cells.length-1.
+  const state: WalkState = {
+    startChord: [60, 64, 67],
+    cells: [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')],
+    stepsPerTransform: 1,
+    jitter: 0,
+    seed: 0,
+    stepDirection: 'reverse',
+  }
+  // pos=1 consumes cell[3]=hold → C major unchanged
+  assert.deepEqual(pcSet(walk(state, 1)), [0, 4, 7], 'pos=1 hold')
+  // pos=2 consumes cell[2]=R → R(Cmaj) = A minor
+  assert.deepEqual(pcSet(walk(state, 2)), [0, 4, 9], 'pos=2 R')
+})
+
+// ── humanize draw assertions (ADR 005 Phase 3) ───────────────────────────
+
+test('walkStepEvent: humanize draws are uniform [0, 1) and seed-deterministic', () => {
+  const state: WalkState = {
+    ...baseState,
+    cells: [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')],
+    seed: 42,
+  }
+  for (const pos of [1, 2, 3, 4, 5, 7, 13, 17]) {
+    const a = walkStepEvent(state, pos)
+    const b = walkStepEvent(state, pos)
+    assert.equal(a!.humanizeVel, b!.humanizeVel, `pos=${pos} vel determinism`)
+    assert.equal(a!.humanizeGate, b!.humanizeGate, `pos=${pos} gate determinism`)
+    assert.equal(a!.humanizeTiming, b!.humanizeTiming, `pos=${pos} timing determinism`)
+    for (const [name, v] of [['vel', a!.humanizeVel], ['gate', a!.humanizeGate], ['timing', a!.humanizeTiming]] as const) {
+      assert.ok(v >= 0 && v < 1, `pos=${pos} humanize ${name}=${v} must be in [0, 1)`)
+    }
+  }
+})
+
+test('walkStepEvent: humanize draws populated even on rest and probability-fail steps', () => {
+  // Engine always consumes humanize draws so the cross-target stream stays
+  // stable regardless of op or prob outcome (ADR 005 §"PRNG draw order").
+  const restState: WalkState = { ...baseState, cells: [makeCell('rest')], seed: 5 }
+  const evRest = walkStepEvent(restState, 1)!
+  assert.ok(evRest.humanizeVel >= 0 && evRest.humanizeVel < 1)
+  assert.ok(evRest.humanizeGate >= 0 && evRest.humanizeGate < 1)
+  assert.ok(evRest.humanizeTiming >= 0 && evRest.humanizeTiming < 1)
+
+  const probFailState: WalkState = {
+    ...baseState,
+    cells: [makeCell('P', { probability: 0 })],
+    seed: 5,
+  }
+  const evProb = walkStepEvent(probFailState, 1)!
+  assert.equal(evProb.played, false)
+  assert.ok(evProb.humanizeVel >= 0 && evProb.humanizeVel < 1)
+  assert.ok(evProb.humanizeGate >= 0 && evProb.humanizeGate < 1)
+  assert.ok(evProb.humanizeTiming >= 0 && evProb.humanizeTiming < 1)
+})
+
+test('walkStepEvent: humanize draws unaffected by probability values (downstream of probability)', () => {
+  // ADR 005 §"PRNG draw order": probability is drawn BEFORE humanize. So two
+  // states differing only in probability produce identical humanize draws (the
+  // one prob draw still happens in both — only its outcome differs).
+  const cellsHi = [makeCell('P', { probability: 1 }), makeCell('L', { probability: 1 }), makeCell('R', { probability: 1 }), makeCell('hold', { probability: 1 })]
+  const cellsLo = [makeCell('P', { probability: 0 }), makeCell('L', { probability: 0 }), makeCell('R', { probability: 0 }), makeCell('hold', { probability: 0 })]
+  const stateA: WalkState = { ...baseState, cells: cellsHi, jitter: 0.5, seed: 99 }
+  const stateB: WalkState = { ...baseState, cells: cellsLo, jitter: 0.5, seed: 99 }
+  for (const pos of [1, 2, 3, 4, 5, 7, 11]) {
+    const a = walkStepEvent(stateA, pos)!
+    const b = walkStepEvent(stateB, pos)!
+    assert.equal(a.humanizeVel, b.humanizeVel, `pos=${pos} humanize vel must match`)
+    assert.equal(a.humanizeGate, b.humanizeGate, `pos=${pos} humanize gate must match`)
+    assert.equal(a.humanizeTiming, b.humanizeTiming, `pos=${pos} humanize timing must match`)
+  }
 })

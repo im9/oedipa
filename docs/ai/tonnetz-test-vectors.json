@@ -8,7 +8,8 @@
     "voicings": "close | spread | drop2",
     "cells": "Each cell is a record { op, velocity, gate, probability, timing }. Loader fills defaults for missing fields: velocity=1.0, gate=0.9, probability=1.0, timing=0.0 (ADR 005 §'Default cell values'). 'op' ∈ {P, L, R, hold, rest}. 'hold' leaves the chord cursor untouched but re-emits audio; 'rest' leaves the cursor untouched and is silent. Sequencer iterates cells cyclically; one cell consumed per stepsPerTransform host ticks.",
     "jitter": "float 0..1. Per-step probability that the cell's op is replaced by a uniform-random pick from CELL_OPS = {P, L, R, hold} (rest is excluded so jitter never injects unintended silence — ADR 005). Jitter draws are SKIPPED when jitter == 0 or when the cell's authored op is 'rest'.",
-    "seed": "int. Seeds a mulberry32 PRNG. The PRNG is reseeded fresh from `seed` at the start of every walk(state, pos) call so any-pos restart reproduces. Per-step PRNG draw order (ADR 005 §'PRNG draw order'): (1) stepDirection — 1 draw iff stepDirection=='random'; (2) jitter — 2 draws (substitute? + which) iff jitter>0 AND op!='rest', else 0; (3) probability — 1 draw, always; (4) humanizeVelocity — 1 draw, always; (5) humanizeGate — 1 draw, always; (6) humanizeTiming — 1 draw, always. Probability rolls trigger silent-advance on P/L/R (chord cursor still applies the transform; no audio). Humanize draws are reserved at this version even though Layer 2 surfaces them in a later phase — keeps the cross-target draw sequence stable."
+    "stepDirection": "'forward' | 'reverse' | 'pingpong' | 'random'. Default 'forward' when the field is omitted. Determines the cellIdx sequence consumed at successive transform boundaries. Forward: 0,1,…,N-1,0,…. Reverse: N-1,N-2,…,0,N-1,…. Pingpong: traverse without replaying endpoints — for N=4, sequence is 0,1,2,3,2,1,0,1,… (period 2*(N-1)). Random: each transform boundary picks cellIdx from a uniform [0, N) PRNG draw — independent per step, consecutive same-cell selections allowed. Random consumes 1 PRNG draw at the START of each step's draw sequence (ahead of jitter).",
+    "seed": "int. Seeds a mulberry32 PRNG. The PRNG is reseeded fresh from `seed` at the start of every walk(state, pos) call so any-pos restart reproduces. Per-step PRNG draw order (ADR 005 §'PRNG draw order'): (1) stepDirection — 1 draw iff stepDirection=='random'; (2) jitter — 2 draws (substitute? + which) iff jitter>0 AND op!='rest', else 0; (3) probability — 1 draw, always; (4) humanizeVelocity — 1 draw, always; (5) humanizeGate — 1 draw, always; (6) humanizeTiming — 1 draw, always. Probability rolls trigger silent-advance on P/L/R (chord cursor still applies the transform; no audio). Humanize draws are exposed via StepEvent.humanizeVel/Gate/Timing as raw uniform [0, 1) draws — host applies the cell humanize-amount and signed-noise math; engine always consumes the draws so the cross-target stream stays stable."
   },
 
   "identify_triad": [
@@ -277,6 +278,64 @@
           "seed": 0
         },
         "null_positions": [0, 1, 3, 5]
+      },
+      {
+        "name": "stepDirection=reverse counts down (cells[P,L,R,hold] → cellIdx 3,2,1,0,3,2,1,0)",
+        "state": {
+          "startChord": [60, 64, 67],
+          "cells": [{ "op": "P" }, { "op": "L" }, { "op": "R" }, { "op": "hold" }],
+          "stepsPerTransform": 1,
+          "jitter": 0,
+          "seed": 0,
+          "stepDirection": "reverse"
+        },
+        "events": [
+          { "pos": 1, "cellIdx": 3, "resolvedOp": "hold", "expected_chord_pcs": [0, 4, 7], "played": true },
+          { "pos": 2, "cellIdx": 2, "resolvedOp": "R",    "expected_chord_pcs": [0, 4, 9], "played": true },
+          { "pos": 3, "cellIdx": 1, "resolvedOp": "L",    "expected_chord_pcs": [0, 5, 9], "played": true },
+          { "pos": 4, "cellIdx": 0, "resolvedOp": "P",    "expected_chord_pcs": [0, 5, 8], "played": true },
+          { "pos": 5, "cellIdx": 3, "resolvedOp": "hold", "expected_chord_pcs": [0, 5, 8], "played": true },
+          { "pos": 6, "cellIdx": 2, "resolvedOp": "R",    "expected_chord_pcs": [0, 3, 8], "played": true },
+          { "pos": 7, "cellIdx": 1, "resolvedOp": "L",    "expected_chord_pcs": [0, 3, 7], "played": true },
+          { "pos": 8, "cellIdx": 0, "resolvedOp": "P",    "expected_chord_pcs": [0, 4, 7], "played": true }
+        ]
+      },
+      {
+        "name": "stepDirection=pingpong skips endpoint replay (cells[P,L,R,hold] → 0,1,2,3,2,1,0,1)",
+        "state": {
+          "startChord": [60, 64, 67],
+          "cells": [{ "op": "P" }, { "op": "L" }, { "op": "R" }, { "op": "hold" }],
+          "stepsPerTransform": 1,
+          "jitter": 0,
+          "seed": 0,
+          "stepDirection": "pingpong"
+        },
+        "events": [
+          { "pos": 1, "cellIdx": 0, "resolvedOp": "P",    "expected_chord_pcs": [0, 3, 7], "played": true },
+          { "pos": 2, "cellIdx": 1, "resolvedOp": "L",    "expected_chord_pcs": [0, 3, 8], "played": true },
+          { "pos": 3, "cellIdx": 2, "resolvedOp": "R",    "expected_chord_pcs": [0, 5, 8], "played": true },
+          { "pos": 4, "cellIdx": 3, "resolvedOp": "hold", "expected_chord_pcs": [0, 5, 8], "played": true },
+          { "pos": 5, "cellIdx": 2, "resolvedOp": "R",    "expected_chord_pcs": [0, 3, 8], "played": true },
+          { "pos": 6, "cellIdx": 1, "resolvedOp": "L",    "expected_chord_pcs": [0, 3, 7], "played": true },
+          { "pos": 7, "cellIdx": 0, "resolvedOp": "P",    "expected_chord_pcs": [0, 4, 7], "played": true },
+          { "pos": 8, "cellIdx": 1, "resolvedOp": "L",    "expected_chord_pcs": [4, 7, 11], "played": true }
+        ]
+      },
+      {
+        "name": "stepDirection=pingpong with cells.length=1 is trivial (always cellIdx=0)",
+        "state": {
+          "startChord": [60, 64, 67],
+          "cells": [{ "op": "P" }],
+          "stepsPerTransform": 1,
+          "jitter": 0,
+          "seed": 0,
+          "stepDirection": "pingpong"
+        },
+        "events": [
+          { "pos": 1, "cellIdx": 0, "resolvedOp": "P", "expected_chord_pcs": [0, 3, 7], "played": true },
+          { "pos": 2, "cellIdx": 0, "resolvedOp": "P", "expected_chord_pcs": [0, 4, 7], "played": true },
+          { "pos": 3, "cellIdx": 0, "resolvedOp": "P", "expected_chord_pcs": [0, 3, 7], "played": true }
+        ]
       }
     ]
   },

@@ -10,6 +10,10 @@ top. Cell schema portion of ADR 003 is superseded here.
 **Revised**: 2026-04-29 — semantics tightened across walk-state,
 probability, PRNG order, humanize math, scheduling edges, migration
 strategy, and subdivision options per second design-review pass.
+**Revised**: 2026-04-29 — Phase 3 design pass: subdivision tick contract
+pinned (PPQN=24 patcher → host `ticksPerStep` multiplier → engine pos =
+subdivision-step). See §Subdivision for rationale and the future-feature
+implications (ratchet, polyrhythm, groove pool).
 
 ## Context
 
@@ -164,6 +168,37 @@ grid. 50% = even subdivision, 75% = heavy swing.
 (eighth- and sixteenth-note triplets). Default 16th. Stored as a
 tick-multiplier the host applies before consulting `stepsPerTransform`
 (ADR 003 group A).
+
+**Tick contract (Phase 3 decision).** The patcher streams transport
+ticks at a fixed **PPQN = 24** (LCM of {8, 16, 32, 12, 24} per quarter
+note — covers all five subdivisions with integer multipliers). The host
+maintains a `ticksPerStep` multiplier (a function of `subdivision`):
+
+| subdivision | ticks per subdivision-step (PPQN=24) |
+|-------------|---------------------------------------|
+| 8th         | 12                                    |
+| 16th        | 6 (default)                           |
+| 32nd        | 3                                     |
+| 8T          | 8                                     |
+| 16T         | 4                                     |
+
+The host accumulates raw PPQN ticks, divides by `ticksPerStep` to derive
+the engine's `pos`, and feeds that to `walk(state, pos)`. The engine's
+pos contract (`1 pos = 1 subdivision-step`) is therefore unchanged from
+ADR 003 — only the host's tick→pos mapping gains the subdivision lever.
+
+This high-PPQN feed is what unlocks the "Out of scope" musical extensions
+later: ratchet (sub-step retriggers — host already has tick granularity
+within a step), polyrhythm/polymeter (multiple cell programs sharing the
+same PPQN stream at different multipliers), and Live groove-pool
+integration (groove templates apply per-tick micro-shifts). Choosing the
+narrower contract (patcher emits step-rate ticks directly) would have
+collapsed all three extensions into per-feature transport reworks.
+
+For cross-target consistency: the VST/AU port maps the host's PPQN feed
+from JUCE's `AudioPlayHead::CurrentPositionInfo::ppqPosition` (which is
+already PPQN-based — JUCE just hands the engine its native unit). The
+iOS AUv3 port follows the same shape.
 
 #### Step direction
 
@@ -326,10 +361,19 @@ Phases follow ADR 003's TDD pattern.
     (requires look-ahead from prior step boundary, easier alongside
     subdivision/swing scheduling). Phase 2 clamps at every boundary.
 - [ ] **Phase 3 — Host: global layer**
-  - Subdivision tick multiplier (5 options); swing offset on off-beat
-    ticks; step-direction state machine (forward / reverse / pingpong
-    no-endpoint-replay / random per-step pick).
-  - Humanize draws sharing the seeded PRNG with the documented order.
+  - Engine: `StepDirection`, `WalkState.stepDirection`, expose humanize
+    draws on `StepEvent`, refactor cellIdx via `resolveCellIdx`. ✅
+    (commit pending; engine 206 tests pass)
+  - Host: PPQN=24 tick feed → `ticksPerStep` multiplier (5 subdivisions)
+    → engine pos. Existing host tests opt into `ticksPerStep: 1` to keep
+    "1 pos = 1 step" semantics; new subdivision tests use the real
+    multipliers.
+  - Host: swing offset on off-beat subdivision-steps (delayPos
+    composition with cell timing).
+  - Host: step-direction wiring through `HostParams` (forward / reverse
+    / pingpong / random).
+  - Host: humanize amounts (3 dials) applied to per-event vel/gate/timing
+    via `(raw * 2 - 1) * amount`, clamped per ADR table.
 - [ ] **Phase 4 — Patcher: parameters**
   - Keep 4 × `live.tab` (op), extend option count 4 → 5.
   - Add 16 × hidden `live.numbox` (vel/gate/prob/timing per cell).

@@ -15,6 +15,7 @@ export type Triad = [MidiNote, MidiNote, MidiNote]
 export type Transform = 'P' | 'L' | 'R'
 export type Op = 'P' | 'L' | 'R' | 'hold' | 'rest'
 export type Voicing = 'close' | 'spread' | 'drop2'
+export type StepDirection = 'forward' | 'reverse' | 'pingpong' | 'random'
 
 export interface Cell {
   op: Op
@@ -51,13 +52,21 @@ export interface WalkState {
   stepsPerTransform: number
   jitter: number
   seed: number
+  // ADR 005 Phase 3 — defaults to 'forward' when omitted.
+  stepDirection?: StepDirection
 }
 
 export interface StepEvent {
-  cellIdx: number     // index into cells[] of the consumed cell
-  resolvedOp: Op      // op after jitter substitution
-  chord: Triad        // chord cursor AFTER this step's transform
-  played: boolean     // false on rest or failed probability roll
+  cellIdx: number        // index into cells[] of the consumed cell
+  resolvedOp: Op         // op after jitter substitution
+  chord: Triad           // chord cursor AFTER this step's transform
+  played: boolean        // false on rest or failed probability roll
+  // Raw uniform [0, 1) PRNG draws. Always populated regardless of op or
+  // probability outcome — host applies cell humanize-amount and signed-noise
+  // math (vel + (h*2-1)*amount, etc.) to keep the cross-target stream stable.
+  humanizeVel: number
+  humanizeGate: number
+  humanizeTiming: number
 }
 
 function mod12(n: number): PitchClass {
@@ -173,23 +182,56 @@ export function mulberry32(seed: number): () => number {
   }
 }
 
+// Resolves which cell is consumed at a transform boundary, given the running
+// transform index and the configured direction. For 'random', consumes 1 draw
+// from `rng` — caller MUST invoke this BEFORE jitter draws to match the
+// documented PRNG draw order (ADR 005 §"PRNG draw order").
+function resolveCellIdx(
+  transformIdx: number,
+  cellsLength: number,
+  direction: StepDirection,
+  rng: () => number,
+): number {
+  if (direction === 'random') {
+    return Math.floor(rng() * cellsLength)
+  }
+  if (direction === 'forward') {
+    return transformIdx % cellsLength
+  }
+  if (direction === 'reverse') {
+    return (((cellsLength - 1 - transformIdx) % cellsLength) + cellsLength) % cellsLength
+  }
+  // pingpong — period 2*(N-1), endpoints are NOT replayed.
+  if (cellsLength <= 1) return 0
+  const period = 2 * (cellsLength - 1)
+  const idx = ((transformIdx % period) + period) % period
+  return idx < cellsLength ? idx : period - idx
+}
+
 // Per-step boundary simulation. Advances `cursor.chord` for P/L/R, leaves
 // it untouched for hold/rest, consumes PRNG draws in the documented order,
-// and returns the resolved op + played flag.
+// and returns the resolved op, played flag, and humanize raw draws.
 //
 // PRNG draw order (ADR 005 §"PRNG draw order"):
-// 1. stepDirection — 1 draw iff stepDirection=='random' (Phase 3; not here)
+// 1. stepDirection — 1 draw iff stepDirection=='random' (consumed by
+//    resolveCellIdx in the caller, BEFORE this function runs)
 // 2. jitter — 2 draws iff jitter > 0 AND cell.op !== 'rest', else 0
 // 3. probability — 1 draw, always
-// 4. humanizeVelocity — 1 draw, always (reserved; surfaced in Phase 3)
-// 5. humanizeGate — 1 draw, always (reserved)
-// 6. humanizeTiming — 1 draw, always (reserved)
+// 4. humanizeVelocity — 1 draw, always
+// 5. humanizeGate — 1 draw, always
+// 6. humanizeTiming — 1 draw, always
 function stepBoundary(
   cursor: { chord: Triad },
   cell: Cell,
   jitter: number,
   rng: () => number,
-): { resolvedOp: Op; played: boolean } {
+): {
+  resolvedOp: Op
+  played: boolean
+  humanizeVel: number
+  humanizeGate: number
+  humanizeTiming: number
+} {
   let op: Op = cell.op
 
   if (jitter > 0 && op !== 'rest') {
@@ -201,9 +243,9 @@ function stepBoundary(
   }
 
   const rProb = rng()
-  rng() // humanizeVelocity (reserved)
-  rng() // humanizeGate (reserved)
-  rng() // humanizeTiming (reserved)
+  const humanizeVel = rng()
+  const humanizeGate = rng()
+  const humanizeTiming = rng()
 
   if (op === 'P' || op === 'L' || op === 'R') {
     cursor.chord = applyTransform(cursor.chord, op)
@@ -212,7 +254,7 @@ function stepBoundary(
 
   // rest is silent by definition; otherwise probability fail = silent-advance.
   const played = op !== 'rest' && rProb < cell.probability
-  return { resolvedOp: op, played }
+  return { resolvedOp: op, played, humanizeVel, humanizeGate, humanizeTiming }
 }
 
 // Cell sequencer walk. Returns the chord cursor at `pos`.
@@ -225,6 +267,7 @@ function stepBoundary(
 // the same triad — this is the "transport restart" contract.
 export function walk(state: WalkState, pos: number): Triad {
   const { startChord, cells, stepsPerTransform: spt, jitter, seed } = state
+  const direction: StepDirection = state.stepDirection ?? 'forward'
   const cursor: { chord: Triad } = { chord: [startChord[0], startChord[1], startChord[2]] }
   if (pos <= 0 || cells.length === 0) return cursor.chord
 
@@ -232,7 +275,8 @@ export function walk(state: WalkState, pos: number): Triad {
   let transformIdx = 0
   for (let step = 1; step <= pos; step++) {
     if (step % spt !== 0) continue
-    const cell = cells[transformIdx % cells.length]!
+    const cellIdx = resolveCellIdx(transformIdx, cells.length, direction, rng)
+    const cell = cells[cellIdx]!
     stepBoundary(cursor, cell, jitter, rng)
     transformIdx += 1
   }
@@ -245,11 +289,12 @@ export function walk(state: WalkState, pos: number): Triad {
 //
 // Re-simulates from pos=0 with a fresh PRNG, matching walk()'s reseeding
 // contract. The host can call this at boundary ticks to learn cellIdx,
-// resolvedOp (post-jitter), the post-step chord cursor, and whether the
-// step plays audio.
+// resolvedOp (post-jitter), the post-step chord cursor, played, and the
+// raw humanize draws.
 export function walkStepEvent(state: WalkState, pos: number): StepEvent | null {
   if (pos <= 0) return null
   const { startChord, cells, stepsPerTransform: spt, jitter, seed } = state
+  const direction: StepDirection = state.stepDirection ?? 'forward'
   if (cells.length === 0 || pos % spt !== 0) return null
 
   const cursor: { chord: Triad } = { chord: [startChord[0], startChord[1], startChord[2]] }
@@ -258,15 +303,19 @@ export function walkStepEvent(state: WalkState, pos: number): StepEvent | null {
   let result: StepEvent | null = null
   for (let step = 1; step <= pos; step++) {
     if (step % spt !== 0) continue
-    const cellIdx = transformIdx % cells.length
+    const cellIdx = resolveCellIdx(transformIdx, cells.length, direction, rng)
     const cell = cells[cellIdx]!
-    const { resolvedOp, played } = stepBoundary(cursor, cell, jitter, rng)
+    const { resolvedOp, played, humanizeVel, humanizeGate, humanizeTiming } =
+      stepBoundary(cursor, cell, jitter, rng)
     if (step === pos) {
       result = {
         cellIdx,
         resolvedOp,
         chord: [cursor.chord[0], cursor.chord[1], cursor.chord[2]],
         played,
+        humanizeVel,
+        humanizeGate,
+        humanizeTiming,
       }
     }
     transformIdx += 1
