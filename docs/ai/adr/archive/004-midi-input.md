@@ -1,9 +1,10 @@
 # ADR 004: MIDI Input & Note Discipline
 
-## Status: Proposed
+## Status: Implemented
 
 **Created**: 2026-04-29
 **Revised**: 2026-04-29 (5 design axes settled in a single review pass; ready for implementation)
+**Implemented**: 2026-04-29 (Phases 1–4 complete; Live manual smoke verified)
 
 ## Context
 
@@ -323,28 +324,28 @@ belongs in the engine, not the host.
 
 ### Phase 4 — Manual verification in Live
 
-- [ ] Load device, no input wired: lattice-click workflow still works,
+- [x] Load device, no input wired: lattice-click workflow still works,
   walker velocity = 100, no behavior regression vs. ADR 003.
-- [ ] Connect MIDI keyboard, hybrid mode: play Cmaj → walker switches to C;
+- [x] Connect MIDI keyboard, hybrid mode: play Cmaj → walker switches to C;
   release notes → walker continues on C; play Fmaj → walker switches to F.
-- [ ] Switch to hold-to-play (`triggerMode = 1`): play Cmaj → walker emits
+- [x] Switch to hold-to-play (`triggerMode = 1`): play Cmaj → walker emits
   while held; release all → walker stops mid-cell, no stuck notes; play
   again → walker restarts at the new chord.
-- [ ] Record a chord progression clip (Cmaj → Fmaj → Gmaj × 4 bars) on the
+- [x] Record a chord progression clip (Cmaj → Fmaj → Gmaj × 4 bars) on the
   same track, replay: capture Oedipa's MIDI output to a second track on
   two consecutive playbacks; the captured MIDI streams must be
   bit-identical.
-- [ ] Pre-roll: hold a chord on the keyboard, press Play with notes still
+- [x] Pre-roll: hold a chord on the keyboard, press Play with notes still
   held — walker starts on the held chord, not on the lattice's persisted
   chord.
-- [ ] `inputChannel` filter: route input on channel 2, set
+- [x] `inputChannel` filter: route input on channel 2, set
   `inputChannel = 1` → no chord updates. Set `inputChannel = 2` → chord
   updates resume.
-- [ ] Velocity passthrough: play soft (vel ~30), then hard (vel ~100); each
+- [x] Velocity passthrough: play soft (vel ~30), then hard (vel ~100); each
   walker output thereafter carries the most-recent velocity.
-- [ ] Save / close / reopen the set: `triggerMode` and `inputChannel`
+- [x] Save / close / reopen the set: `triggerMode` and `inputChannel`
   restored; behavior matches pre-save.
-- [ ] Vocabulary check: hold Cmaj7, walker tracks Cmaj. Hold Csus2 → no
+- [x] Vocabulary check: hold Cmaj7, walker tracks Cmaj. Hold Csus2 → no
   change (still on previous chord). Hold first-inversion Cmaj/E → walker
   tracks Cmaj rooted near the held E.
 

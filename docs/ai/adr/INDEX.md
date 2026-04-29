@@ -34,7 +34,7 @@ only when relevant to the current task.
 |-----|-------|--------|-------|
 | 002 | [M4L Device Architecture](archive/002-m4l-device-architecture.md) | Implemented | Patch / host.js / lattice.js / engine layering; engine loading; MIDI I/O; state ownership |
 | 003 | [M4L Sequencer — Lattice UI & Cell Sequencer](archive/003-m4l-parameters-state.md) | Implemented | Short cell sequencer (4× P/L/R/hold) + jitter + seed; lattice click sets startChord; live.* for transport/voice/cells/jitter/seed |
-| 004 | [MIDI Input & Note Discipline](004-midi-input.md) | Proposed | Held-chord 3-subset search → startChord; triggerMode (hybrid/hold-to-play); velocity passthrough; inputChannel (omni default); clean note-off transitions; pos reset on every startChord change. Decisions settled 2026-04-29; implementation pending. |
+| 004 | [MIDI Input & Note Discipline](archive/004-midi-input.md) | Implemented | Held-chord 3-subset search → startChord; triggerMode (hybrid/hold-to-play); velocity passthrough; inputChannel (omni default); clean note-off transitions; pos reset on every startChord change. |
 | 005 | [Rhythmic Feel](005-rhythmic-feel.md) | Proposed | Gate length; swing; subdivision; step direction; rest op. 5 design axes open. |
 | 006 | [Workflow — Slots, Strings, Presets](006-workflow.md) | Proposed | 4 snapshot slots; compact program-string copy/paste; factory presets; random generate. 4 design axes open. |
 
