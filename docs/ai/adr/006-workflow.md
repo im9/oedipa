@@ -364,7 +364,8 @@ active cells dynamically. Click a pill to cycle op
 strip is high-frequency and feedback is immediate). `+` / `−` buttons
 append / pop the last cell (Min 1, Max 8). LED row underneath extends to
 N indicators. Pure-TS logic layer in `m4l/host` (hit testing, op cycling,
-state); jsui wrapper draws. Hidden persistence: all 8 cells × 4 expression
+state); jsui wrapper draws. Hidden persistence: all
+ 8 cells × 4 expression
 fields (vel / gate / prob / timing) = 32 hidden `live.numbox` pre-allocated;
 indices `≥ length` are ignored at engine time. The slot-store program
 format already serializes cells as a string (Phase 1), so variable length
@@ -393,23 +394,83 @@ by this revocation.
 **device-shared**; slot store keeps `cells` / `jitter` / `seed` /
 `startChord` per Axis 1.
 
-**Implementation order.**
+**Implementation checklist.** Ordered by the 5-step plan; voicing warm-up
+ships first as a zero-risk patcher edit before engine work.
 
-1. Engine: `RhythmPreset` and `ArpMode` types; gating evaluation in
-   `stepBoundary` keyed off the preset's gating column; ARP state machine
-   inside the cell loop with cell-boundary reset; internal mapper
-   `rhythmPreset → { gating, swing, humanize }`. New cases in
-   `tonnetz-test-vectors.json` per ADR 001.
-2. Host: `setParams` accepts `rhythm`, `arp`, `length`; slot-store routing
-   extended to 8 cells per slot (was 4).
-3. jsui cell strip — highest UI risk, do once the engine + host accept
-   variable length.
-4. Patcher: VOICE / RHYTHM / ARP / StepDir as `live.menu`; remove
-   subdivision / swing / humanize widgets and wiring; bake.
-5. Manual smoke in Live.
+**Step 0 — Voicing dropdown warm-up (patcher only)**
 
-The voicing-dropdown step alone (just the patcher edit) can ship as a
-zero-risk warm-up commit before the engine + jsui work begins.
+- [x] `obj-voicing` `live.tab` → `live.menu`. Wiring, dimensions, enum
+  unchanged.
+
+**Step 1 — Engine: RhythmPreset, ArpMode, mapper**
+
+- [x] `RhythmPreset` type + 6-preset palette: `legato`, `chord`,
+  `straight`, `offbeat`, `shuffle`, `loose`. `RHYTHM_PRESETS` const is
+  the canonical UI order.
+- [x] `ArpMode` type: `off`, `up`, `down`, `updown`, `random`.
+  `ARP_MODES` const is the canonical UI order.
+- [x] Internal mapper `mapRhythmPreset(preset) → RhythmFeel { gating,
+  swing, humanizeVelocity, humanizeGate, humanizeTiming }`. Drives
+  existing ADR 005 swing/humanize engine code; no swing/humanize surface
+  params. `swing` uses host convention (0.5 = none, 0.75 = max).
+- [x] `gatingFires(mode, subStepIdx)` pure helper — head-only /
+  every-tick / onbeat (idx % 4 === 0) / offbeat (idx % 4 === 2) on a
+  16th-note sub-step grid. Host tick-loop integration tracked in Step 2.
+- [x] `arpIndex(mode, chordSize, fireIdx, rng)` pure helper —
+  off/up/down/updown/random with caller-managed `fireIdx` and shared
+  `rng` for `random`. Cell-boundary reset of `fireIdx` is the host's
+  responsibility; integration tracked in Step 2.
+- [ ] New cases in `tonnetz-test-vectors.json` for RHYTHM gating × ARP
+  mode combinations (per ADR 001) — added after host wiring so vectors
+  describe end-to-end behavior, not pure-helper inputs.
+
+**Step 2 — Host wiring**
+
+- [ ] Tick loop integrates `gatingFires` + `arpIndex`; per-cell
+  `fireIdx` counter advances on each ARP-active fire, resets to 0 at
+  every cell boundary.
+- [ ] `setParams` accepts `rhythm`, `arp`, `length` (1–8).
+- [ ] Slot-store routing extended to 8 cells per slot (was 4); indices
+  `≥ length` ignored at engine time.
+- [ ] `rhythm` / `arp` / `voicing` device-shared (not slot-stored).
+  Defaults: `voicing='spread'`, `rhythm='legato'`, `arp='off'`,
+  `length=4`.
+- [ ] `ticksPerStep` hardcoded to 6 in host (= 16th @ PPQN24);
+  `subdivision` / `swing` / `humanizeVelocity` / `humanizeGate` /
+  `humanizeTiming` / `humanizeDrift` removed from `setParams` surface.
+  Engine swing/humanize values now come from `mapRhythmPreset`.
+- [ ] Old 4-cell programs load unchanged; `length` defaults to 4 on
+  load.
+
+**Step 3 — jsui cell strip (highest UI risk)**
+
+- [ ] Pure-TS logic layer in `m4l/host`: hit testing, op cycle
+  `P → L → R → — → · → P`, length state, `+` / `−` append/pop (1–8).
+- [ ] jsui wrapper draws cells dynamically; LED row extends to N
+  indicators.
+- [ ] Replaces `obj-cell0..3` in patcher; 32 hidden `live.numbox`
+  pre-allocated for per-cell expression (vel / gate / prob / timing).
+
+**Step 4 — Patcher pass**
+
+- [ ] RHYTHM as `live.menu` (palette above).
+- [ ] ARP as `live.menu`.
+- [ ] `obj-stepdir` `live.tab` → `live.menu`.
+- [ ] Remove `obj-subdivision`, `obj-swing`, `obj-humvel`, `obj-humgate`,
+  `obj-humtime`, `obj-humdrift` widgets and wiring.
+- [ ] VOICE / RHYTHM / ARP / StepDir menu widths unified.
+- [ ] Bake.
+
+**Step 5 — Manual smoke (Live)**
+
+- [ ] Each RHYTHM preset audible & musically correct vs. its row
+  description.
+- [ ] ARP modes sound correct; reset at cell boundary.
+- [ ] Variable cell length: 1, 4, 8 all play the right number of cells
+  per loop.
+- [ ] Pre-Phase-7 Live set loads with `rhythm='legato'` (no
+  swing/humanize bleed-through from hidden values).
+- [ ] Old 4-cell program string loads & plays unchanged.
 
 **Migration.** Live sets saved before Phase 7 retain hidden subdivision /
 swing / humanize values via Live's own param-restore mechanism; engine

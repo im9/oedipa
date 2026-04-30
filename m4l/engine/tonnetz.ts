@@ -17,6 +17,107 @@ export type Op = 'P' | 'L' | 'R' | 'hold' | 'rest'
 export type Voicing = 'close' | 'spread' | 'drop2'
 export type StepDirection = 'forward' | 'reverse' | 'pingpong' | 'random'
 
+// ADR 006 §Phase 7 — RHYTHM as feel preset. Each preset bundles a gating
+// pattern with implicit swing + humanize side effects; the existing ADR 005
+// swing/humanize engine code is driven internally by mapRhythmPreset, and
+// no swing/humanize surface params are exposed.
+export type GatingMode = 'head-only' | 'every-tick' | 'onbeat' | 'offbeat'
+export type RhythmPreset = 'legato' | 'chord' | 'straight' | 'offbeat' | 'shuffle' | 'loose'
+export type ArpMode = 'off' | 'up' | 'down' | 'updown' | 'random'
+
+export interface RhythmFeel {
+  gating: GatingMode
+  // Engine convention (matches host.ts): 0.5 = no swing, 0.75 = max
+  // (off-beat tick offset = (2*swing - 1) * ticksPerStep).
+  swing: number
+  // 0..1 amounts per ADR 005 §humanize: applied as cell + (h*2-1)*amount.
+  humanizeVelocity: number
+  humanizeGate: number
+  humanizeTiming: number
+}
+
+// Iteration order for UI dropdowns. Treat as the spec.
+export const RHYTHM_PRESETS: readonly RhythmPreset[] = [
+  'legato', 'chord', 'straight', 'offbeat', 'shuffle', 'loose',
+] as const
+
+export const ARP_MODES: readonly ArpMode[] = [
+  'off', 'up', 'down', 'updown', 'random',
+] as const
+
+// "Mid" humanize for the loose preset — uniform across vel/gate/timing.
+// 0.4 picked as audibly human without dissolving the grid: at 120 BPM a
+// 16th-note step is ~125 ms, so ±0.4 timing humanize lands around ±50 ms
+// of wiggle, sitting in the "feel" zone before the metric cue gets lost.
+// Tunable during smoke testing — adjust here, not at the call site.
+const LOOSE_HUMANIZE_AMOUNT = 0.4
+
+// Engine-internal swing for the shuffle preset. ADR 006 table calls it
+// "0.6" (descriptive); engine convention is 0.5 = none, 0.75 = max, so
+// 0.6 lands at moderate-heavy shuffled 8ths — clearly audible without
+// reaching the pure-triplet 0.667 cap.
+const SHUFFLE_SWING = 0.6
+
+// Within-cell tick gating. subStepIdx is a 16th-note step index within
+// the current cell (head = 0). Phase 7 hardcodes the 16th-note grid (4
+// sub-steps per quarter), so 'onbeat' and 'offbeat' are defined relative
+// to the quarter-note pulse: onbeat = idx % 4 === 0, offbeat = idx % 4
+// === 2 — disjoint, partitioning the quarter into on/off pairs. Pure
+// function; no PRNG or state. Host evaluates this on every transport
+// sub-step tick.
+export function gatingFires(mode: GatingMode, subStepIdx: number): boolean {
+  switch (mode) {
+    case 'head-only':  return subStepIdx === 0
+    case 'every-tick': return true
+    case 'onbeat':     return subStepIdx % 4 === 0
+    case 'offbeat':    return subStepIdx % 4 === 2
+  }
+}
+
+// ARP note picker. Returns the index into the voiced chord array to play
+// at this fire, or null for 'off' / empty chord. fireIdx is the count of
+// ARP-active fires since the cell head (caller resets to 0 at every cell
+// boundary). PRNG draws: 0 for non-random modes; 1 for random when
+// chordSize > 1; 0 for random when chordSize <= 1 (early-exit). Caller
+// supplies the same RNG used elsewhere in the cell loop so the ARP draw
+// participates in the deterministic stream.
+export function arpIndex(
+  mode: ArpMode,
+  chordSize: number,
+  fireIdx: number,
+  rng: () => number,
+): number | null {
+  if (mode === 'off') return null
+  if (chordSize <= 0) return null
+  if (chordSize === 1) return 0
+  switch (mode) {
+    case 'up':     return fireIdx % chordSize
+    case 'down':   return chordSize - 1 - (fireIdx % chordSize)
+    case 'updown': {
+      const period = 2 * (chordSize - 1)
+      const i = fireIdx % period
+      return i < chordSize ? i : period - i
+    }
+    case 'random': return Math.floor(rng() * chordSize)
+  }
+}
+
+export function mapRhythmPreset(preset: RhythmPreset): RhythmFeel {
+  const dry = { swing: 0.5, humanizeVelocity: 0, humanizeGate: 0, humanizeTiming: 0 }
+  switch (preset) {
+    case 'legato':   return { gating: 'head-only',  ...dry }
+    case 'chord':    return { gating: 'every-tick', ...dry }
+    case 'straight': return { gating: 'onbeat',     ...dry }
+    case 'offbeat':  return { gating: 'offbeat',    ...dry }
+    case 'shuffle':  return { gating: 'offbeat', swing: SHUFFLE_SWING,
+                              humanizeVelocity: 0, humanizeGate: 0, humanizeTiming: 0 }
+    case 'loose':    return { gating: 'every-tick', swing: 0.5,
+                              humanizeVelocity: LOOSE_HUMANIZE_AMOUNT,
+                              humanizeGate:     LOOSE_HUMANIZE_AMOUNT,
+                              humanizeTiming:   LOOSE_HUMANIZE_AMOUNT }
+  }
+}
+
 export interface Cell {
   op: Op
   velocity: number     // 0..1, multiplier on source velocity
