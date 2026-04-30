@@ -116,32 +116,43 @@ describe('Host.step', () => {
   })
 
   test('cell sequencer cycles through cells in order', () => {
-    // cells = [P, L, R, hold] — verify the cycle on a fresh host at each pos.
-    const expected: number[][] = [
-      [0, 4, 7],   // pos 0: startChord C major
-      [0, 3, 7],   // pos 1: cell[0]=P → C minor
-      [0, 3, 8],   // pos 2: cell[1]=L → Ab major
-      [0, 5, 8],   // pos 3: cell[2]=R → F minor
-      [0, 5, 8],   // pos 4: cell[3]=hold → F minor (unchanged)
-      [0, 5, 9],   // pos 5: cell[0]=P (cycle) → F major
+    // cells = [P, L, R, hold]. P/L/R fire noteOns at chord changes; hold is
+    // silent-advance (sustain prev chord, no new attack) per the post-2026-04
+    // hold-as-sustain semantic.
+    type Expected = { ons: number[][] | null }
+    const cases: Expected[] = [
+      { ons: [[0, 4, 7]] },             // pos 0: startChord C major
+      { ons: [[0, 3, 7]] },             // pos 1: cell[0]=P → C minor
+      { ons: [[0, 3, 8]] },             // pos 2: cell[1]=L → Ab major
+      { ons: [[0, 5, 8]] },             // pos 3: cell[2]=R → F minor
+      { ons: null },                    // pos 4: cell[3]=hold → silent (Fm sustains)
+      { ons: [[0, 5, 9]] },             // pos 5: cell[0]=P (cycle) → F major
     ]
-    for (let pos = 0; pos < expected.length; pos++) {
+    for (let pos = 0; pos < cases.length; pos++) {
       const host = new Host(baseParams())
       const events = host.step(pos)
-      const pcs = pitchesOf(events, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
-      assert.deepEqual(pcs, expected[pos], `pos=${pos}`)
+      const ons = pitchesOf(events, 'noteOn')
+      if (cases[pos]!.ons === null) {
+        assert.equal(ons.length, 0, `pos=${pos} hold must not emit noteOns`)
+      } else {
+        const pcs = ons.map(p => p % 12).sort((a, b) => a - b)
+        assert.deepEqual(pcs, cases[pos]!.ons![0], `pos=${pos}`)
+      }
     }
   })
 
-  test('hold cell re-emits the current chord (ADR 005 op effects table)', () => {
-    // ADR 005 §"Op effects table": hold = cursor unchanged, audio = re-emit.
-    // ADR 003-era "no events on hold" is superseded.
+  test('hold cell is silent-advance (sustain prev chord, no re-attack)', () => {
+    // Post-2026-04 hold semantic: hold = silent-advance, equivalent to rest
+    // for audio output, but the chord cursor stays put (rest also leaves the
+    // cursor untouched, but the conceptual difference is "stay on this chord
+    // intentionally" vs "skip a beat"). With a hold-only program there is no
+    // chord-changing event after pos=0, so steps 1..N emit nothing.
     const host = new Host(baseParams({ cells: cells('hold') }))
     host.step(0)
     for (const pos of [1, 2, 5, 17]) {
       const events = host.step(pos)
-      const ons = events.filter(e => e.type === 'noteOn').map(e => e.pitch).sort((a, b) => a - b)
-      assert.deepEqual(ons, [60, 64, 67], `pos=${pos} re-emits startChord`)
+      const ons = events.filter(e => e.type === 'noteOn')
+      assert.equal(ons.length, 0, `pos=${pos} hold must not emit noteOns`)
     }
   })
 
@@ -187,11 +198,13 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
   // delayPos is in pos-units (the same domain as step(pos)); step length =
   // stepsPerTransform pos-units.
   describe('NoteEvent.delayPos — gate scheduling', () => {
-    test('default cell schedules gate-end noteOff at delayPos = gate * spt', () => {
-      // Default cell: gate=0.9, spt=1 → scheduled noteOff at delayPos = 0.9.
-      // Slot 0 carries the legato handoff for the prior chord and the new
-      // chord's noteOn; the gate slot carries the new chord's note-off.
-      const host = new Host(baseParams({ cells: cells('P') }))
+    test('cell with gate < 1.0 schedules gate-end noteOff at delayPos = gate * spt', () => {
+      // gate=0.9, spt=1 → scheduled noteOff at delayPos = 0.9. Slot 0 carries
+      // the legato handoff for the prior chord and the new chord's noteOn;
+      // the gate slot carries the new chord's note-off. The post-2026-04
+      // default is gate=1.0 (legato handoff, no scheduled gate-end), so this
+      // test pins the gate < 1.0 path with an explicit per-cell override.
+      const host = new Host(baseParams({ cells: [makeCell('P', { gate: 0.9 })] }))
       host.step(0)
       const events = host.step(1)
       const offsAtZero = events.filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) === 0)
@@ -372,17 +385,19 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
     })
   })
 
-  describe('hold op (re-emit)', () => {
-    test('hold re-emits the current chord at every step (ADR 005)', () => {
-      // Same as the test above in Host.step, but verifies the gate-end off
-      // is also scheduled per re-trigger.
+  describe('hold op (silent-advance)', () => {
+    test('hold cell emits no noteOns and no scheduled gate-end offs (post-2026-04 sustain semantic)', () => {
+      // Hold is silent-advance: the chord cursor stays, but no new attack and
+      // no new gate-end is scheduled. The previous chord's sustain (or its
+      // already-scheduled gate-end) governs whether the listener still hears
+      // the chord during the hold cell.
       const host = new Host(baseParams({ cells: cells('hold') }))
       host.step(0)
       const events = host.step(1)
       const ons = events.filter(e => e.type === 'noteOn')
-      const offsAtGate = events.filter(e => e.type === 'noteOff' && e.delayPos === 0.9)
-      assert.equal(ons.length, 3, 'hold re-emits noteOns')
-      assert.equal(offsAtGate.length, 3, 'hold schedules gate-end off like any played step')
+      const offs = events.filter(e => e.type === 'noteOff')
+      assert.equal(ons.length, 0, 'hold must not re-attack')
+      assert.equal(offs.length, 0, 'hold must not schedule new gate-end offs')
     })
   })
 })
@@ -926,13 +941,13 @@ describe('Host.isWalkerActive — for marker / cellIdx UI gating', () => {
 
 describe('Host.step — stepDirection', () => {
   test('reverse direction consumes cells from cells.length-1 downward', () => {
-    // cells = [P, L, R, hold]; reverse → pos 1 plays hold (cursor unchanged).
+    // cells = [P, L, R, hold]; reverse → pos 1 hits cells[3]=hold (silent-
+    // advance, no noteOn). pos 2 plays cells[2]=R applied to current cursor.
     const host = new Host(baseParams({ stepDirection: 'reverse' }))
     host.step(0)
     const ev1 = host.step(1)
-    // hold re-emits the cursor (still C major) per ADR 005 op effects table.
-    const pcs1 = pitchesOf(ev1, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
-    assert.deepEqual(pcs1, [0, 4, 7], 'pos=1 reverse: cells[3]=hold → C major')
+    const ons1 = pitchesOf(ev1, 'noteOn')
+    assert.equal(ons1.length, 0, 'pos=1 reverse: cells[3]=hold → no noteOn (sustain)')
     // pos=2 → cells[2]=R → R(C major) = A minor
     const ev2 = host.step(2)
     const pcs2 = pitchesOf(ev2, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
@@ -942,18 +957,32 @@ describe('Host.step — stepDirection', () => {
   test('pingpong direction traverses without endpoint replay', () => {
     // cells = [P, L, R, hold]; pingpong sequence cellIdx: 0,1,2,3,2,1,0,1,...
     // Verify chord cursor at pos 5 reflects cell[2]=R applied to the cell[3]=hold
-    // result, not a re-application of cell[3].
+    // result, not a re-application of cell[3]. Hold cell at pos=4 is silent-
+    // advance (cursor unchanged, no noteOn).
     const host = new Host(baseParams({ stepDirection: 'pingpong' }))
     host.step(0)
     // pos 1: P → C minor [0,3,7]
     // pos 2: L → Ab major [0,3,8]
     // pos 3: R → F minor [0,5,8]
-    // pos 4: hold → F minor [0,5,8]
+    // pos 4: hold → silent (Fm sustains, no noteOn)
     // pos 5: R (cell[2] again) → R(F minor) = Ab major [0,3,8]
-    for (const [pos, expected] of [[1, [0, 3, 7]], [2, [0, 3, 8]], [3, [0, 5, 8]], [4, [0, 5, 8]], [5, [0, 3, 8]]] as const) {
+    type Case = readonly [number, readonly number[] | null]
+    const cases: readonly Case[] = [
+      [1, [0, 3, 7]],
+      [2, [0, 3, 8]],
+      [3, [0, 5, 8]],
+      [4, null],
+      [5, [0, 3, 8]],
+    ]
+    for (const [pos, expected] of cases) {
       const ev = host.step(pos)
-      const pcs = pitchesOf(ev, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
-      assert.deepEqual(pcs, expected, `pos=${pos}`)
+      const ons = pitchesOf(ev, 'noteOn')
+      if (expected === null) {
+        assert.equal(ons.length, 0, `pos=${pos} hold → no noteOn`)
+      } else {
+        const pcs = ons.map(p => p % 12).sort((a, b) => a - b)
+        assert.deepEqual(pcs, [...expected], `pos=${pos}`)
+      }
     }
   })
 
@@ -1061,8 +1090,10 @@ describe('Host.step — humanize', () => {
     // humanizeGate, the perturbed cellGate stays strictly < 1.0 (no clamp
     // to legato) and the gate-end delayPos shifts off-baseline. We sweep
     // multiple boundaries because any individual draw can happen to land
-    // very close to the baseline.
-    const stub = { cells: cells('P', 'L', 'R', 'hold'), seed: 42, stepsPerTransform: 4 }
+    // very close to the baseline. Explicit gate=0.9 override because the
+    // post-2026-04 default is 1.0 (legato, no gate-end emission).
+    const cellsWithGate = (...ops: Op[]) => ops.map(op => makeCell(op, { gate: 0.9 }))
+    const stub = { cells: cellsWithGate('P', 'L', 'R', 'hold'), seed: 42, stepsPerTransform: 4 }
     const baselineHost = new Host(baseParams(stub))
     const humanizedHost = new Host(baseParams({ ...stub, humanizeGate: 0.1 }))
     baselineHost.step(0); humanizedHost.step(0)
@@ -1284,9 +1315,10 @@ describe('Host.step — subdivision (ticksPerStep)', () => {
 
   test('cell timing/gate scale with ticksPerStep × stepsPerTransform (1 transform period)', () => {
     // With ticksPerStep=6, spt=1: one transform period = 6 raw ticks.
-    // cell gate=0.9 → gate-end delayPos = 0.9 * 6 = 5.4.
+    // cell gate=0.9 → gate-end delayPos = 0.9 * 6 = 5.4. Explicit gate=0.9
+    // override because the post-2026-04 default is 1.0 (legato, no gate-end).
     const host = new Host(baseParams({
-      cells: cells('P'),
+      cells: [makeCell('P', { gate: 0.9 })],
       ticksPerStep: 6,
       stepsPerTransform: 1,
     }))

@@ -235,7 +235,7 @@
         ]
       },
       {
-        "name": "probability=1 always plays for P/L/R/hold",
+        "name": "probability=1 plays for P/L/R; hold is silent-advance (sustain prev chord)",
         "state": {
           "startChord": [60, 64, 67],
           "cells": [
@@ -248,7 +248,7 @@
         },
         "events": [
           { "pos": 1, "cellIdx": 0, "resolvedOp": "P",    "expected_chord_pcs": [0, 3, 7], "played": true },
-          { "pos": 2, "cellIdx": 1, "resolvedOp": "hold", "expected_chord_pcs": [0, 3, 7], "played": true }
+          { "pos": 2, "cellIdx": 1, "resolvedOp": "hold", "expected_chord_pcs": [0, 3, 7], "played": false }
         ]
       },
       {
@@ -290,11 +290,11 @@
           "stepDirection": "reverse"
         },
         "events": [
-          { "pos": 1, "cellIdx": 3, "resolvedOp": "hold", "expected_chord_pcs": [0, 4, 7], "played": true },
+          { "pos": 1, "cellIdx": 3, "resolvedOp": "hold", "expected_chord_pcs": [0, 4, 7], "played": false },
           { "pos": 2, "cellIdx": 2, "resolvedOp": "R",    "expected_chord_pcs": [0, 4, 9], "played": true },
           { "pos": 3, "cellIdx": 1, "resolvedOp": "L",    "expected_chord_pcs": [0, 5, 9], "played": true },
           { "pos": 4, "cellIdx": 0, "resolvedOp": "P",    "expected_chord_pcs": [0, 5, 8], "played": true },
-          { "pos": 5, "cellIdx": 3, "resolvedOp": "hold", "expected_chord_pcs": [0, 5, 8], "played": true },
+          { "pos": 5, "cellIdx": 3, "resolvedOp": "hold", "expected_chord_pcs": [0, 5, 8], "played": false },
           { "pos": 6, "cellIdx": 2, "resolvedOp": "R",    "expected_chord_pcs": [0, 3, 8], "played": true },
           { "pos": 7, "cellIdx": 1, "resolvedOp": "L",    "expected_chord_pcs": [0, 3, 7], "played": true },
           { "pos": 8, "cellIdx": 0, "resolvedOp": "P",    "expected_chord_pcs": [0, 4, 7], "played": true }
@@ -314,7 +314,7 @@
           { "pos": 1, "cellIdx": 0, "resolvedOp": "P",    "expected_chord_pcs": [0, 3, 7], "played": true },
           { "pos": 2, "cellIdx": 1, "resolvedOp": "L",    "expected_chord_pcs": [0, 3, 8], "played": true },
           { "pos": 3, "cellIdx": 2, "resolvedOp": "R",    "expected_chord_pcs": [0, 5, 8], "played": true },
-          { "pos": 4, "cellIdx": 3, "resolvedOp": "hold", "expected_chord_pcs": [0, 5, 8], "played": true },
+          { "pos": 4, "cellIdx": 3, "resolvedOp": "hold", "expected_chord_pcs": [0, 5, 8], "played": false },
           { "pos": 5, "cellIdx": 2, "resolvedOp": "R",    "expected_chord_pcs": [0, 3, 8], "played": true },
           { "pos": 6, "cellIdx": 1, "resolvedOp": "L",    "expected_chord_pcs": [0, 3, 7], "played": true },
           { "pos": 7, "cellIdx": 0, "resolvedOp": "P",    "expected_chord_pcs": [0, 4, 7], "played": true },

@@ -69,6 +69,126 @@ class Harness {
   }
 }
 
+// Tests below the cellLength block predate the Phase A musical-defaults
+// change (gate 0.9 → 1.0, cells P-L-R-hold → R-L-L-R, voicing close →
+// spread, stepsPerTransform default decoupled into cellLength). They were
+// written against concrete numerical expectations under the old baseline
+// (gate=0.9 → audible gate-end offs at delayPos = 0.9 * spt; spt=4 → cells
+// fire at pos=4; voicing=close → tight pitch sets). To keep those tests
+// grounded in the timing math they were written for — without overwriting
+// production defaults — pass this baseline via `initialParams`.
+const LEGACY_TEST_BASELINE = {
+  stepsPerTransform: 4,
+  voicing: 'close' as const,
+  cells: [
+    { op: 'P' as const, velocity: 1.0, gate: 0.9, probability: 1.0, timing: 0 },
+    { op: 'L' as const, velocity: 1.0, gate: 0.9, probability: 1.0, timing: 0 },
+    { op: 'R' as const, velocity: 1.0, gate: 0.9, probability: 1.0, timing: 0 },
+    { op: 'hold' as const, velocity: 1.0, gate: 0.9, probability: 1.0, timing: 0 },
+  ],
+}
+
+describe('Bridge — cellLength (cell duration in bars)', () => {
+  // Rationale: prior model coupled cell rate to subdivision × stepsPerTransform.
+  // That made cell rate change whenever the user shifted subdivision (a feel
+  // axis), and forced the user to mentally compute "subdiv * Steps = duration"
+  // to predict cycle length. The new contract: cellLength is the single
+  // user-facing rate parameter, expressed in BARS (PPQN=24 → 96 ticks/bar at
+  // 4/4). Bridge translates to the engine's stepsPerTransform via:
+  //   stepsPerTransform = cellLength_bars * 96 / ticksPerStep
+  // and recomputes whenever either input changes.
+  //
+  // Helper to peek at the host's params for assertions.
+  function hostParams(b: Bridge): { stepsPerTransform: number; ticksPerStep: number } {
+    return (b as unknown as { host: { params: { stepsPerTransform: number; ticksPerStep: number } } })
+      .host.params
+  }
+
+  test('setParams cellLength=1 with ticksPerStep=6 (16th) → stepsPerTransform=16', () => {
+    // 1 bar = 96 raw ticks at PPQN=24. With 16th subdivision (6 ticks/step),
+    // 96/6 = 16 subdivision-steps per cell. The engine still consumes one
+    // cell per spt subdivisions; only the source of truth shifts.
+    const h = new Harness()
+    const b = new Bridge(h.deps)
+    b.setParams('ticksPerStep', 6)
+    b.setParams('cellLength', 1)
+    assert.equal(hostParams(b).stepsPerTransform, 16,
+      '1 bar / 16th subdivision = 16 spt')
+    assert.equal(hostParams(b).ticksPerStep, 6)
+  })
+
+  test('setParams cellLength=2 with ticksPerStep=6 → stepsPerTransform=32', () => {
+    const h = new Harness()
+    const b = new Bridge(h.deps)
+    b.setParams('ticksPerStep', 6)
+    b.setParams('cellLength', 2)
+    assert.equal(hostParams(b).stepsPerTransform, 32, '2 bars / 16th = 32 spt')
+  })
+
+  test('changing ticksPerStep recomputes stepsPerTransform from current cellLength', () => {
+    // User holds cellLength=1 and changes subdivision. Cell duration in
+    // ticks must remain 96 (1 bar) — only the subdivision-step count changes.
+    const h = new Harness()
+    const b = new Bridge(h.deps)
+    b.setParams('cellLength', 1)
+    b.setParams('ticksPerStep', 6)  // 16th
+    assert.equal(hostParams(b).stepsPerTransform, 16)
+    b.setParams('ticksPerStep', 12) // 8th
+    assert.equal(hostParams(b).stepsPerTransform, 8, '1 bar / 8th = 8 spt')
+    b.setParams('ticksPerStep', 3)  // 32nd
+    assert.equal(hostParams(b).stepsPerTransform, 32, '1 bar / 32nd = 32 spt')
+    b.setParams('ticksPerStep', 4)  // 16T
+    assert.equal(hostParams(b).stepsPerTransform, 24, '1 bar / 16T = 24 spt')
+  })
+
+  test('all (cellLength, ticksPerStep) combinations yield integer stepsPerTransform', () => {
+    // Sanity: with the live.tab option sets we expose (cellLength ∈
+    // {1,2,4,8} bars, ticksPerStep ∈ {12,6,3,8,4} per ADR 005 §Subdivision),
+    // every cell duration is an integer number of subdivision-steps. Failing
+    // this would mean the engine's cell-boundary modular arithmetic could
+    // never line up.
+    for (const bars of [1, 2, 4, 8]) {
+      for (const tps of [12, 6, 3, 8, 4]) {
+        const h = new Harness()
+        const b = new Bridge(h.deps)
+        b.setParams('ticksPerStep', tps)
+        b.setParams('cellLength', bars)
+        const spt = hostParams(b).stepsPerTransform
+        assert.ok(Number.isInteger(spt) && spt >= 1,
+          `cellLength=${bars}, tps=${tps}: spt=${spt} must be positive integer`)
+        assert.equal(spt * tps, bars * 96,
+          `cellLength=${bars}, tps=${tps}: cell duration must equal ${bars} bars in ticks`)
+      }
+    }
+  })
+
+  test('invalid cellLength (0, negative, NaN) is a no-op', () => {
+    const h = new Harness()
+    const b = new Bridge(h.deps)
+    b.setParams('ticksPerStep', 6)
+    b.setParams('cellLength', 1) // baseline
+    const baseline = hostParams(b).stepsPerTransform
+    b.setParams('cellLength', 0)
+    assert.equal(hostParams(b).stepsPerTransform, baseline, '0 ignored')
+    b.setParams('cellLength', -1)
+    assert.equal(hostParams(b).stepsPerTransform, baseline, 'negative ignored')
+    b.setParams('cellLength', NaN)
+    assert.equal(hostParams(b).stepsPerTransform, baseline, 'NaN ignored')
+  })
+
+  test('cellLength is not auto-saved as a slot field (device-shared)', () => {
+    // Until / unless the spec promotes cellLength to a slot field, changing
+    // it must not write the slot-store outlet (the Drift/Cycle/etc. presets
+    // currently share one global cell duration).
+    const h = new Harness()
+    const b = new Bridge(h.deps)
+    h.outlets.length = 0
+    b.setParams('cellLength', 2)
+    const slotStore = h.outlets.filter(o => o.channel === 'slot-store')
+    assert.equal(slotStore.length, 0, 'cellLength change must not emit slot-store')
+  })
+})
+
 describe('Bridge — step timing estimator', () => {
   test('msPerPos starts at 0 and stays 0 until two steps observed', () => {
     const h = new Harness()
@@ -142,7 +262,7 @@ describe('Bridge — dispatch (delayPos handling)', () => {
     // After two steps msPerPos=125. Step(4) emits cell-driven events; gate=0.9
     // and spt=4 → scheduled noteOff at delayPos = 0.9*4 = 3.6 → ms=450.
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
     h.clock = 0; b.step(0)
     h.clock = 125; b.step(1)
     h.clock = 250; b.step(2)
@@ -158,7 +278,7 @@ describe('Bridge — dispatch (delayPos handling)', () => {
   test('scheduled noteOff fires at the right wall-clock time', () => {
     // gate=0.9, spt=4, msPerPos≈125 → noteOff fires at step time + 450ms.
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
     h.clock = 0; b.step(0)
     h.clock = 125; b.step(1)
     h.clock = 250; b.step(2)
@@ -179,7 +299,7 @@ describe('Bridge — dispatch (delayPos handling)', () => {
     // step fires (e.g., scrub at pos=spt before any other steps), scheduled
     // noteOffs degrade to immediate emit instead of nonsense ms.
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
     // Jump directly to pos=4 — no prior steps, msPerPos=0.
     h.clock = 0
     b.step(4)
@@ -197,7 +317,7 @@ describe('Bridge — full transport cycle (regression for "first note only" bug)
   // they would arrive at the synth.
   test('Cmaj startChord (step 0) and Cmin (step 4) both produce audible noteOn windows', () => {
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
     // 16th @ 120bpm = 125ms/pos. spt=4 → cell fires every 500ms.
     for (let pos = 0; pos < 4; pos++) {
       h.advanceTo(pos * 125)
@@ -226,7 +346,7 @@ describe('Bridge — full transport cycle (regression for "first note only" bug)
 
   test('audible window for Cmin spans from step(4) to step(4)+gate*spt*ms', () => {
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
     for (let pos = 0; pos < 4; pos++) {
       h.advanceTo(pos * 125)
       b.step(pos)
@@ -249,7 +369,7 @@ describe('Bridge — full transport cycle (regression for "first note only" bug)
     // prior chord's gate-end noteOff handles it via setTimeout, not the
     // host's handoff path).
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
     for (let pos = 0; pos < 9; pos++) {
       h.advanceTo(pos * 125)
       // Fire any due scheduled callbacks before the next step records
@@ -329,9 +449,11 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
     test('slot-cell-op carries (index, opCode) pairs as ints', () => {
       // Op codes 0=P 1=L 2=R 3=hold 4=rest match host.ts RANDOM_OPS so the
       // patcher can route via [route 0 1 2 3] + [prepend set] directly.
+      // The default DEFAULT_PARAMS cells changed in Phase A (2026-04-30) to
+      // R-L-L-R; this test stays grounded in the original P-L-R-hold encoding
+      // by passing initialParams.cells explicitly.
       const h = new Harness()
-      const b = new Bridge(h.deps)
-      // Default slot 0 cells = "PLR_" (from DEFAULT_PARAMS in bridge.ts).
+      const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
       h.outlets.length = 0
       b.switchSlot(1) // slot 1 default also "PLR_"
       const cellOps = byChannel(slotOutlets(h), 'slot-cell-op')
@@ -477,8 +599,11 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
     test('setCell emits slot-store with active idx and 8 fields', () => {
       // Auto-save: the first user-driven setCell on a fresh bridge emits
       // slot-store carrying the (now-mutated) active slot's full state.
+      // Uses LEGACY_TEST_BASELINE cells "PLR_" so the assertion remains
+      // pinned to the original op-code permutation; verifying the encoding
+      // protocol, not the production default cells.
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
       h.outlets.length = 0
       b.setCell(0, 'rest')
       const stores = storeFor(h)
@@ -611,7 +736,9 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('out-of-range slot index is a silent no-op', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      // LEGACY baseline so the assertion can pin "default slot 0 cells = PLR_"
+      // without depending on the production default cells (now R-L-L-R).
+      const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
       h.outlets.length = 0
       b.setSlotFields(-1, 0, 0, 0, 0, 0, 0, 0, 0)
       b.setSlotFields(4, 0, 0, 0, 0, 0, 0, 0, 0)

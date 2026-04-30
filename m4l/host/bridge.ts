@@ -40,13 +40,19 @@ export interface BridgeOptions {
 const DEFAULT_PARAMS: HostParams = {
   startChord: [60, 64, 67],
   cells: [
-    { op: 'P', velocity: 1.0, gate: 0.9, probability: 1.0, timing: 0 },
-    { op: 'L', velocity: 1.0, gate: 0.9, probability: 1.0, timing: 0 },
-    { op: 'R', velocity: 1.0, gate: 0.9, probability: 1.0, timing: 0 },
-    { op: 'hold', velocity: 1.0, gate: 0.9, probability: 1.0, timing: 0 },
+    // Default sequence R-L-L-R produces a cyclical Tonnetz progression that
+    // returns to the start every 4 cells (C → Am → F → Am → C). Borrowed
+    // from inboil's Tonnetz scene default — a more musically grounded
+    // starting point than the prior P-L-R-hold which never returned home.
+    { op: 'R', velocity: 1.0, gate: 1.0, probability: 1.0, timing: 0 },
+    { op: 'L', velocity: 1.0, gate: 1.0, probability: 1.0, timing: 0 },
+    { op: 'L', velocity: 1.0, gate: 1.0, probability: 1.0, timing: 0 },
+    { op: 'R', velocity: 1.0, gate: 1.0, probability: 1.0, timing: 0 },
   ],
   stepsPerTransform: 4,
-  voicing: 'close',
+  // Spread voicing octave-distributes the triad — fuller sound that lets
+  // chord-rate progressions read as harmony rather than block stabs.
+  voicing: 'spread',
   seventh: false,
   jitter: 0,
   seed: 0,
@@ -69,6 +75,13 @@ const DEFAULT_PARAMS: HostParams = {
   outputLevel: 1.0,
 }
 
+// User-facing cell duration is expressed in BARS. Internally the engine
+// consumes cells via stepsPerTransform (subdivision-steps per cell); the
+// bridge derives spt = cellLength * TICKS_PER_BAR / ticksPerStep so that
+// changing the subdivision (a feel axis) does NOT alter the audible cell
+// rate. PPQN=24 × 4 quarters = 96 ticks per bar at 4/4 (ADR 005 §Subdivision).
+const TICKS_PER_BAR = 96
+
 export class Bridge {
   private host: Host
   private deps: BridgeDeps
@@ -76,6 +89,10 @@ export class Bridge {
   private lastStepPos: number | null = null
   private msPerPos = 0
   private lastCellIdx = -1
+  // Cell duration in bars. Default 1 bar = 4-cell pattern of 4 bars (8 sec
+  // at 120 BPM), which sits in chord-progression territory rather than the
+  // arpeggio-rate quarter-note default the prior model defaulted into.
+  private cellLengthBars = 1
 
   constructor(deps: BridgeDeps, options: BridgeOptions = {}) {
     this.host = new Host({ ...DEFAULT_PARAMS, ...options.initialParams })
@@ -142,9 +159,33 @@ export class Bridge {
     return key === 'cells' || key === 'jitter' || key === 'seed' || key === 'startChord'
   }
 
-  setParams(key: keyof HostParams, value: unknown): void {
+  setParams(key: keyof HostParams | 'cellLength', value: unknown): void {
+    if (key === 'cellLength') {
+      const bars = Number(value)
+      if (!Number.isFinite(bars) || bars < 1) return
+      this.cellLengthBars = bars
+      this.applyCellLength()
+      return
+    }
+    if (key === 'ticksPerStep') {
+      const tps = Number(value)
+      if (!Number.isFinite(tps) || tps < 1) return
+      this.host.setParams({ ticksPerStep: tps })
+      this.applyCellLength()
+      return
+    }
     this.host.setParams({ [key]: value } as Partial<HostParams>)
     if (this.isSlotField(key)) this.emitSlotStore(this.host.activeSlot)
+  }
+
+  // Translate the user-facing (cellLengthBars, ticksPerStep) pair into the
+  // engine's stepsPerTransform. Called whenever either input changes.
+  private applyCellLength(): void {
+    const tps = (this.host as unknown as { params: HostParams }).params.ticksPerStep
+    if (tps <= 0) return
+    const spt = (this.cellLengthBars * TICKS_PER_BAR) / tps
+    if (!Number.isInteger(spt) || spt < 1) return
+    this.host.setParams({ stepsPerTransform: spt })
   }
 
   setStartChord(p1: number, p2: number, p3: number): void {
@@ -175,7 +216,7 @@ export class Bridge {
     const current = (this.host as unknown as { params: HostParams }).params.cells
     const cells = ops.map((op, i) => {
       const prev = current[i]
-      return prev ? { ...prev, op } : { op, velocity: 1.0, gate: 0.9, probability: 1.0, timing: 0 }
+      return prev ? { ...prev, op } : { op, velocity: 1.0, gate: 1.0, probability: 1.0, timing: 0 }
     })
     this.host.setParams({ cells })
     this.emitSlotStore(this.host.activeSlot)

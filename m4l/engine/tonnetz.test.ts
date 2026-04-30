@@ -393,7 +393,7 @@ test('makeCell: defaults applied when overrides omitted', () => {
   const c = makeCell('P')
   assert.equal(c.op, 'P')
   assert.equal(c.velocity, 1.0)
-  assert.equal(c.gate, 0.9)
+  assert.equal(c.gate, 1.0)
   assert.equal(c.probability, 1.0)
   assert.equal(c.timing, 0.0)
 })
@@ -404,7 +404,7 @@ test('makeCell: overrides win', () => {
   assert.equal(c.velocity, 0.5)
   assert.equal(c.timing, -0.1)
   // unchanged defaults
-  assert.equal(c.gate, 0.9)
+  assert.equal(c.gate, 1.0)
   assert.equal(c.probability, 1.0)
 })
 

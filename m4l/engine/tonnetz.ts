@@ -27,7 +27,12 @@ export interface Cell {
 
 export const DEFAULT_CELL_FIELDS: Readonly<Omit<Cell, 'op'>> = Object.freeze({
   velocity: 1.0,
-  gate: 0.9,
+  // gate=1.0 is legato handoff: cell's noteOff coincides with the next cell's
+  // noteOn, no audible gap. Combined with hold-as-silent-advance, hold cells
+  // truly sustain the prior chord. The earlier 0.9 default produced a 10%
+  // gap per cell, which read as "chord stab" rather than chord progression
+  // and made hold cells fully silent.
+  gate: 1.0,
   probability: 1.0,
   timing: 0.0,
 })
@@ -259,8 +264,14 @@ function stepBoundary(
   }
   // 'hold' and 'rest' leave the cursor untouched.
 
-  // rest is silent by definition; otherwise probability fail = silent-advance.
-  const played = op !== 'rest' && rProb < cell.probability
+  // 'hold' = sustain previous chord (silent advance, no new attack). Combined
+  // with prior cell's legato handoff (gate=1.0) this extends the held chord
+  // through the hold cell — the natural "this chord lasts longer" gesture.
+  // With prior gate < 1.0 the prior chord has already released, so a hold
+  // cell produces audible silence; that's expected — the user is asking for
+  // "no new event here". 'rest' is silent by definition; for P/L/R/jittered
+  // ops, probability fail also collapses to silent-advance.
+  const played = op !== 'rest' && op !== 'hold' && rProb < cell.probability
   return { resolvedOp: op, played, humanizeVel, humanizeGate, humanizeTiming }
 }
 

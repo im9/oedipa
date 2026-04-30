@@ -71,8 +71,14 @@ proximity and avoids large jumps.
 The walk is driven by a small array of **cells**, each a record
 `{ op, velocity, gate, probability, timing }` where:
 
-- `op ∈ { P, L, R }` — apply that neo-Riemannian operation
-- `op = hold` — leave the walker on the current triad, re-emit it
+- `op ∈ { P, L, R }` — apply that neo-Riemannian operation, emit a noteOn
+- `op = hold` — leave the walker on the current triad, **silent-advance** (no
+  new attack). The previous chord's gate determines whether the listener
+  still hears it during the hold cell: gate=1.0 (legato handoff) extends the
+  prior chord through the hold cell, gate<1.0 means the chord has already
+  released and the hold cell is audible silence. The "this chord lasts
+  longer" gesture lives in `{ P/L/R, hold, hold, ... }` patterns combined
+  with a high gate on the preceding op.
 - `op = rest` — leave the walker untouched and emit nothing (authored silence;
   excluded from the jitter substitution pool so random op replacement never
   injects unintended silence)
@@ -113,11 +119,31 @@ it, or animates one cell field via host automation to evolve the walk over
 time. This is the design's replacement for both inboil's variable-length
 sequence editor and the discarded attractor model.
 
-**Rate**: `stepsPerTransform` controls how many subdivision steps each chord
-is held before the next cell is consumed. Rate = 1 yields a moving chord
-every step (O&C / arpeggio feel). Rate = 4–16 yields a pad-style progression.
-The subdivision unit is set by the global `subdivision` parameter (see
-§Rhythm).
+**Rate**: `cellLength` controls how long one cell holds, in **bars** (default
+`1` bar; range 1..32 integer). A 4-cell pattern at `cellLength = 1` is a
+4-bar progression — chord-rendering territory. Larger values give long-form
+pad / drift behaviour. The user-facing parameter is in bars deliberately,
+matching how Ableton (the reference DAW) frames chord progressions and how
+inboil's groovebox Tonnetz scene paces its "pad style" default; the
+historical "rate = subdivision-steps × stepsPerTransform" formulation
+exposed two knobs for one musical decision and defaulted to arpeggio-rate
+quarter-note cells, which broke the instrument's chord-progression intent.
+
+**Default cells** are `[R, L, L, R]` (borrowed from inboil's Tonnetz scene
+default), producing a cyclical Tonnetz progression that returns to the
+start every four cells: `C → Am → F → Am → C`. The previous default
+`[P, L, R, hold]` never returned home, which read as drift rather than
+progression. **Default per-cell `gate = 1.0`** (legato handoff) — combined
+with hold-as-silent-advance this makes hold cells true sustain and removes
+the audible 10% gap between cells that read as "chord stab" rather than
+"chord rendering". **Default `voicing = spread`** distributes the triad
+across octaves for a fuller harmonic body that survives sustain.
+
+Internally the engine still consumes one cell per `stepsPerTransform`
+subdivision-steps; the bridge layer derives `stepsPerTransform = cellLength
+× 96 / ticksPerStep` (PPQN=24 → 96 ticks/bar) so the engine math is
+unchanged. Subdivision (see §Rhythm) is a feel axis only — changing it does
+not alter cell rate, only the swing / timing-offset grid.
 
 ## Output model
 
@@ -253,7 +279,7 @@ The minimum parameter set each target must expose:
 | `cells`             | `Cell[]`                             | ordered cell sequence (4 by default)        |
 | `jitter`            | float 0..1                           | per-step random-substitute probability      |
 | `seed`              | int                                  | RNG seed for reproducibility                |
-| `stepsPerTransform` | int ≥ 1                              | rate (subdivision steps per cell)           |
+| `cellLength`        | int (bars; 1 / 2 / 4 / 8)            | cell duration in bars (default 1)           |
 | `voicing`           | `close \| spread \| drop2`           | output voicing                              |
 | `seventh`           | bool                                 | add 7th extension                           |
 
