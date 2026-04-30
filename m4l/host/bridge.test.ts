@@ -1,6 +1,8 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Bridge, type BridgeDeps } from './bridge.ts'
+import { mulberry32 } from '../engine/tonnetz.ts'
+import { FACTORY_PRESETS } from './presets.ts'
 
 interface NoteCall {
   pitch: number
@@ -264,5 +266,156 @@ describe('Bridge — full transport cycle (regression for "first note only" bug)
     //         (cells[1]=L applied to Cmin = Ab maj) noteOns at clock=1000.
     const distinctNoteOnTimes = [...new Set(h.notes.filter(n => n.velocity > 0).map(n => n.at))].sort((a, b) => a - b)
     assert.deepEqual(distinctNoteOnTimes, [0, 500, 1000], 'noteOns at three distinct chord-change times')
+  })
+})
+
+describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
+  // The bridge layer wraps the host's slot ops and emits side-channel
+  // outlets so the patcher can silently rehydrate its visible widgets
+  // (live.tab cells, jitter / seed live.numbox, live.text program string,
+  // active-slot tab) after a slot mutation. Tests cover the action surface
+  // and outlet protocol; storage rehydrate (patcher → bridge on loadbang)
+  // is deferred to commit D once the patcher's storage layout is decided.
+
+  function slotOutlets(h: Harness): OutletCall[] {
+    return h.outlets.filter(o => o.channel.startsWith('slot-'))
+  }
+
+  function byChannel(outs: OutletCall[], channel: string): OutletCall[] {
+    return outs.filter(o => o.channel === channel)
+  }
+
+  describe('switchSlot', () => {
+    test('updates host activeSlot and emits full slot UI rehydrate', () => {
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      // Stage slot 1 with a distinctive program so the rehydrate outlets
+      // carry recognizable values.
+      assert.equal(b.loadFromProgramString('PPP_|s=42|j=0.3|c=Em'), true)
+      // After loadFromProgramString, slot 0 (initial active) is now Em-set.
+      // Switch to slot 2 (still default) and back to confirm switching emits.
+      h.outlets.length = 0
+      b.switchSlot(2)
+      const outs = slotOutlets(h)
+      // Expected: slot-active, slot-program, slot-cell-op×4, slot-jitter, slot-seed.
+      assert.equal(byChannel(outs, 'slot-active').length, 1, 'slot-active emitted once')
+      assert.deepEqual(byChannel(outs, 'slot-active')[0]!.args, [2])
+      assert.equal(byChannel(outs, 'slot-program').length, 1, 'slot-program emitted once')
+      assert.equal(byChannel(outs, 'slot-cell-op').length, 4, 'one slot-cell-op per cell')
+      assert.equal(byChannel(outs, 'slot-jitter').length, 1)
+      assert.equal(byChannel(outs, 'slot-seed').length, 1)
+    })
+
+    test('out-of-range index emits nothing', () => {
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      h.outlets.length = 0
+      b.switchSlot(-1)
+      b.switchSlot(4)
+      assert.equal(slotOutlets(h).length, 0)
+    })
+
+    test('slot-cell-op carries (index, op) pairs', () => {
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      // Default slot 0 cells = "PLR_" (from DEFAULT_PARAMS in bridge.ts).
+      h.outlets.length = 0
+      b.switchSlot(1) // slot 1 default also "PLR_"
+      const cellOps = byChannel(slotOutlets(h), 'slot-cell-op')
+      assert.deepEqual(cellOps.map(o => o.args), [
+        [0, 'P'], [1, 'L'], [2, 'R'], [3, 'hold'],
+      ])
+    })
+  })
+
+  describe('saveCurrent', () => {
+    test('emits slot-program but not the per-widget rehydrate outlets', () => {
+      // saveCurrent captures live params into the active slot — the live
+      // widgets already display those values, so re-emitting cells/jitter/
+      // seed would be a no-op. Only the program string display changes.
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      h.outlets.length = 0
+      b.saveCurrent()
+      const outs = slotOutlets(h)
+      assert.equal(byChannel(outs, 'slot-program').length, 1, 'slot-program emitted')
+      assert.equal(byChannel(outs, 'slot-cell-op').length, 0, 'no slot-cell-op')
+      assert.equal(byChannel(outs, 'slot-jitter').length, 0)
+      assert.equal(byChannel(outs, 'slot-seed').length, 0)
+      assert.equal(byChannel(outs, 'slot-active').length, 0)
+    })
+  })
+
+  describe('loadFactoryPreset', () => {
+    test('returns true and emits full rehydrate on valid index', () => {
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      h.outlets.length = 0
+      const ok = b.loadFactoryPreset(0)
+      assert.equal(ok, true)
+      const outs = slotOutlets(h)
+      assert.equal(byChannel(outs, 'slot-program').length, 1)
+      assert.equal(byChannel(outs, 'slot-cell-op').length, 4)
+      assert.equal(byChannel(outs, 'slot-jitter').length, 1)
+      assert.equal(byChannel(outs, 'slot-seed').length, 1)
+      // Program-string outlet carries the preset's program verbatim.
+      assert.deepEqual(byChannel(outs, 'slot-program')[0]!.args, [FACTORY_PRESETS[0]!.program])
+    })
+
+    test('returns false and emits nothing on out-of-range index', () => {
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      h.outlets.length = 0
+      assert.equal(b.loadFactoryPreset(-1), false)
+      assert.equal(b.loadFactoryPreset(FACTORY_PRESETS.length), false)
+      assert.equal(slotOutlets(h).length, 0)
+    })
+  })
+
+  describe('randomize', () => {
+    test('with deterministic RNG, two bridges produce identical program strings', () => {
+      const h1 = new Harness(); const b1 = new Bridge(h1.deps); b1.randomize(mulberry32(7))
+      const h2 = new Harness(); const b2 = new Bridge(h2.deps); b2.randomize(mulberry32(7))
+      const p1 = byChannel(slotOutlets(h1), 'slot-program')[0]!.args[0]
+      const p2 = byChannel(slotOutlets(h2), 'slot-program')[0]!.args[0]
+      assert.equal(p1, p2)
+    })
+
+    test('emits full slot UI rehydrate', () => {
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      h.outlets.length = 0
+      b.randomize(mulberry32(1))
+      const outs = slotOutlets(h)
+      assert.equal(byChannel(outs, 'slot-program').length, 1)
+      assert.equal(byChannel(outs, 'slot-cell-op').length, 4)
+      assert.equal(byChannel(outs, 'slot-jitter').length, 1)
+      assert.equal(byChannel(outs, 'slot-seed').length, 1)
+    })
+  })
+
+  describe('loadFromProgramString', () => {
+    test('returns true and emits full rehydrate on valid string', () => {
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      h.outlets.length = 0
+      const ok = b.loadFromProgramString('PPP_|s=42|j=0.3|c=Em')
+      assert.equal(ok, true)
+      const outs = slotOutlets(h)
+      assert.equal(byChannel(outs, 'slot-program').length, 1)
+      assert.deepEqual(byChannel(outs, 'slot-program')[0]!.args, ['PPP_|s=42|j=0.3|c=Em'])
+      assert.equal(byChannel(outs, 'slot-cell-op').length, 4)
+      assert.deepEqual(byChannel(outs, 'slot-jitter')[0]!.args, [0.3])
+      assert.deepEqual(byChannel(outs, 'slot-seed')[0]!.args, [42])
+    })
+
+    test('returns false and emits nothing on malformed input', () => {
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      h.outlets.length = 0
+      assert.equal(b.loadFromProgramString('not-a-program'), false)
+      assert.equal(b.loadFromProgramString(''), false)
+      assert.equal(slotOutlets(h).length, 0)
+    })
   })
 })

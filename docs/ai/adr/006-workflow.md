@@ -175,19 +175,48 @@ device-shared per ADR 006 §"Axis 1" and survive a slot switch.
 octave so the player stays in their register, and is a no-op when the
 loaded chord matches current (preserves walker continuity).
 
-### Phase 3 — Patcher integration (one bake)
+### Phase 3 — Patcher integration
 
-Hidden persistence + visible UI + bridge wiring in a single patcher
-pass — same `.maxpat` file, one `pnpm bake`.
+Split into a TS-side bridge layer (testable under `node:test`, no patcher
+work) and the actual `.maxpat` bake. The bridge is shipped first so the
+bake only has to wire patcher messages to already-tested entry points.
+
+**Phase 3a — Bridge layer (TS, no patcher work):**
+
+- [x] `Bridge.switchSlot(idx)` — wraps `host.switchSlot`, emits the full
+  slot UI rehydrate outlet bundle.
+- [x] `Bridge.saveCurrent()` — wraps `host.saveCurrent`, emits only
+  `slot-program` (live widgets already display the captured state).
+- [x] `Bridge.loadFactoryPreset(idx)` — emits full rehydrate on success,
+  returns boolean.
+- [x] `Bridge.randomize(rng?)` — emits full rehydrate; rng injectable for
+  test determinism, defaults to `Math.random` in production.
+- [x] `Bridge.loadFromProgramString(s)` — emits full rehydrate on
+  success, returns boolean.
+- [x] Outlet protocol for silent UI rehydrate: `slot-active <idx>`,
+  `slot-program <s>`, `slot-cell-op <i> <op>` × cells.length, `slot-jitter
+  <v>`, `slot-seed <v>`. Patcher routes each to the silent-rehydrate path
+  on the corresponding visible widget (per memory: `live.toggle bang
+  inversion` — outlet 0 = user changes, outlet 1 = silent rehydrate).
+
+**Phase 3b — Patcher bake (one `.maxpat` pass):**
 
 - [ ] Hidden persistence: 4 slots × per-field hidden `live.*` params
   (per memory: pattr unreliable; use hidden `live.numbox` / `live.menu`).
 - [ ] Hidden active-slot index param.
 - [ ] Visible UI: 4 slot select controls (`live.tab` or 4 × `live.button`).
 - [ ] Visible save-current button.
+- [ ] 🎲 random-generate button (Phase 5 UI).
+- [ ] `live.menu` factory presets dropdown (Phase 4 UI).
+- [ ] Visible `live.text` program-string field with paste handler
+  (Phase 6 UI).
 - [ ] Visual indication of active slot.
-- [ ] Bridge wires: patcher → `bridge.switchSlot(idx)` /
-  `bridge.saveCurrent()`; rehydrate hidden params on device load.
+- [ ] Bridge → patcher: route the slot-* outlets above to silent
+  rehydrate paths on the visible widgets.
+- [ ] Patcher → bridge on `loadbang`: dump each slot's stored fields and
+  call a bridge restoration entry point (exact API TBD with patcher
+  storage layout — adds `bridge.setSlotProgram(idx, s)` /
+  `bridge.setActiveSlot(idx)` or per-field setters).
 
 ### Phase 4 — Factory presets
 

@@ -13,6 +13,7 @@
 
 import { Host, type CellNumericField, type HostParams, type NoteEvent } from './host.ts'
 import type { MidiNote, Op, Triad } from '../engine/tonnetz.ts'
+import { stringToCells } from './slot.ts'
 
 export interface BridgeDeps {
   // Send a MIDI event downstream. velocity=0 means note-off in this protocol.
@@ -166,6 +167,43 @@ export class Bridge {
     this.emitLatticeCurrent()
   }
 
+  // -------- ADR 006 Phase 3 — slots --------
+  //
+  // Each slot-mutating action emits a "slot UI rehydrate" outlet bundle so
+  // the patcher can silently re-set its visible widgets (4 cell live.tab,
+  // jitter / seed live.numbox, slot-active tab, program-string live.text)
+  // without echoing back through the user-edit path. saveCurrent is the
+  // sole exception: the live widgets already display the captured state,
+  // so only the program-string display needs refreshing.
+
+  switchSlot(idx: number): void {
+    if (idx < 0 || idx >= 4) return
+    this.host.switchSlot(idx)
+    this.emitSlotRehydrate()
+  }
+
+  saveCurrent(): void {
+    this.host.saveCurrent()
+    this.emitProgramString()
+  }
+
+  loadFactoryPreset(idx: number): boolean {
+    const ok = this.host.loadFactoryPreset(idx)
+    if (ok) this.emitSlotRehydrate()
+    return ok
+  }
+
+  randomize(rng?: () => number): void {
+    this.host.randomizeActiveSlot(rng)
+    this.emitSlotRehydrate()
+  }
+
+  loadFromProgramString(s: string): boolean {
+    const ok = this.host.loadFromProgramString(s)
+    if (ok) this.emitSlotRehydrate()
+    return ok
+  }
+
   // -------- internal --------
 
   private dispatch(ev: NoteEvent): void {
@@ -234,6 +272,27 @@ export class Bridge {
       this.deps.emitOutlet('cellIdx', -1)
       this.lastCellIdx = -1
     }
+  }
+
+  // ADR 006 Phase 3 — emit the full slot UI outlet bundle. Called after any
+  // slot mutation that may have changed the active slot's contents.
+  private emitSlotRehydrate(): void {
+    this.deps.emitOutlet('slot-active', this.host.activeSlot)
+    this.emitProgramString()
+    const slot = this.host.getSlot(this.host.activeSlot)
+    if (slot === null) return
+    const ops = stringToCells(slot.cells)
+    if (ops !== null) {
+      for (let i = 0; i < ops.length; i++) {
+        this.deps.emitOutlet('slot-cell-op', i, ops[i]!)
+      }
+    }
+    this.deps.emitOutlet('slot-jitter', slot.jitter)
+    this.deps.emitOutlet('slot-seed', slot.seed)
+  }
+
+  private emitProgramString(): void {
+    this.deps.emitOutlet('slot-program', this.host.getActiveProgramString())
   }
 }
 
