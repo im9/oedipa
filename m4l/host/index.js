@@ -62,6 +62,22 @@ Max.addHandler('noteOff', (pitch, channel) =>
 Max.addHandler('transportStart', () => bridge.transportStart())
 Max.addHandler('latticeRefresh', () => bridge.latticeRefresh())
 
+// ADR 006 Phase 3 — slot ops. saveCurrent removed 2026-04-30 (auto-save).
+Max.addHandler('switchSlot', (idx) => bridge.switchSlot(Number(idx)))
+Max.addHandler('loadFactoryPreset', (idx) => bridge.loadFactoryPreset(Number(idx)))
+Max.addHandler('randomize', () => bridge.randomize())
+Max.addHandler('loadFromProgramString', (s) => bridge.loadFromProgramString(String(s)))
+// ADR 006 Phase 3b — silent slot rehydrate from hidden live.numbox dumps on
+// loadbang. Patcher sends one setSlotFields per slot, then `switchSlot
+// <activeIdx>` to apply the persisted active slot to host params and emit
+// the rehydrate bundle.
+Max.addHandler('setSlotFields', (idx, c0, c1, c2, c3, jitter, seed, root, quality) =>
+  bridge.setSlotFields(
+    Number(idx),
+    Number(c0), Number(c1), Number(c2), Number(c3),
+    Number(jitter), Number(seed), Number(root), Number(quality),
+  ))
+
 // Signal the patcher that node.script is up and all handlers are registered.
 // The patcher gates its initial param dump cascade (live.* + pattr rehydrate)
 // on this so messages don't arrive before this script can handle them —

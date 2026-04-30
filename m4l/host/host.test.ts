@@ -1665,55 +1665,91 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
   })
 
-  describe('saveCurrent — capture state into active slot', () => {
-    test('captures cells, startChord (root+quality), jitter, seed', () => {
-      const host = new Host(baseParams({
-        startChord: [65, 68, 72], // F minor
-        cells: cells('P', 'hold', 'rest', 'L'),
-        jitter: 0.4,
-        seed: 12345,
-      }))
-      host.switchSlot(2)
-      host.saveCurrent()
-      assert.deepEqual(host.getSlot(2), {
-        cells: 'P_-L',
-        startChord: { root: 5, quality: 'min' },
-        jitter: 0.4,
-        seed: 12345,
-      })
-    })
+  describe('auto-save — user edits sync to active slot', () => {
+    // ADR 006 §"Axis 1" amendment (2026-04-30) — explicit saveCurrent is
+    // gone; user-driven setCell / setParams (cells / jitter / seed /
+    // startChord) mirror their changes into slots[active] immediately.
+    // MIDI-input-driven recomputeStartChord stays a live override and
+    // does NOT auto-save (the slot keeps its anchor across performance).
 
-    test('writes only to the active slot', () => {
+    test('setParams({jitter}) syncs jitter to active slot', () => {
       const host = new Host(baseParams({ jitter: 0 }))
-      // Workflow: select slot 3, edit jitter, save. Editing must happen
-      // AFTER switchSlot — switchSlot itself loads the slot's stored
-      // values into params and would clobber pre-switch edits.
       host.switchSlot(3)
       host.setParams({ jitter: 0.9 })
-      host.saveCurrent()
-      assert.equal(host.getSlot(3)!.jitter, 0.9)
-      // Other slots still at their initial value (0).
+      assert.equal(host.getSlot(3)!.jitter, 0.9, 'active slot updated')
+      // Other slots still at their initial value.
       for (const i of [0, 1, 2]) {
         assert.equal(host.getSlot(i)!.jitter, 0)
       }
     })
 
-    test('saveCurrent then switchSlot away and back roundtrips', () => {
+    test('setParams({seed}) syncs seed', () => {
+      const host = new Host(baseParams({ seed: 0 }))
+      host.switchSlot(2)
+      host.setParams({ seed: 12345 })
+      assert.equal(host.getSlot(2)!.seed, 12345)
+    })
+
+    test('setParams({startChord}) syncs startChord (lattice click path)', () => {
+      const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+      host.switchSlot(1)
+      host.setParams({ startChord: [65, 68, 72] }) // F minor
+      assert.deepEqual(host.getSlot(1)!.startChord, { root: 5, quality: 'min' })
+    })
+
+    test('setCell syncs cells to active slot', () => {
+      const host = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
+      host.switchSlot(2)
+      host.setCell(0, 'rest')
+      host.setCell(1, 'rest')
+      host.setCell(2, 'rest')
+      host.setCell(3, 'rest')
+      assert.equal(host.getSlot(2)!.cells, '----')
+    })
+
+    test('setCellField does NOT auto-save (per-cell numeric fields are device-shared)', () => {
+      const host = new Host(baseParams())
+      host.switchSlot(2)
+      const before = host.getSlot(2)
+      host.setCellField(0, 'velocity', 0.5)
+      host.setCellField(1, 'gate', 0.7)
+      host.setCellField(2, 'probability', 0.3)
+      host.setCellField(3, 'timing', 0.1)
+      // Slot is unaffected — vel/gate/probability/timing are device-shared
+      // (ADR 006 §"Axis 1" — only cells/jitter/seed/startChord are slot-stored).
+      assert.deepEqual(host.getSlot(2), before)
+    })
+
+    test('MIDI-input note-on does NOT auto-save startChord (live override)', () => {
+      // recomputeStartChord (MIDI-driven) updates params.startChord but
+      // intentionally bypasses auto-save: the slot keeps its anchor chord;
+      // MIDI input is what the player is playing right now, not what they
+      // want to commit to the slot.
+      const host = new Host(baseParams({ startChord: [60, 64, 67] })) // C maj
+      host.switchSlot(2)
+      const before = host.getSlot(2)
+      // Player presses an F major triad: should update params but NOT slot.
+      host.noteIn(65, 100, 1)
+      host.noteIn(69, 100, 1)
+      host.noteIn(72, 100, 1)
+      assert.deepEqual(host.getSlot(2), before, 'slot unchanged by MIDI input')
+    })
+
+    test('roundtrip: switch / edit / switch away / switch back preserves edits', () => {
       const host = new Host(baseParams({
         startChord: [60, 64, 67],
         cells: cells('P', 'L', 'R', 'hold'),
         jitter: 0,
         seed: 0,
       }))
-      // Configure something distinct on slot 1 via setParams + saveCurrent.
+      // Edits on slot 1 via the user-driven paths (no explicit save).
       host.switchSlot(1)
       host.setParams({ jitter: 0.6, seed: 777 })
       host.setCell(0, 'rest')
       host.setCell(1, 'rest')
       host.setCell(2, 'rest')
       host.setCell(3, 'rest')
-      host.saveCurrent()
-      // Switch to slot 0 and back.
+      // Switch away and back.
       host.switchSlot(0)
       host.switchSlot(1)
       assert.deepEqual(host.getSlot(1), {
@@ -1722,6 +1758,42 @@ describe('Host slots — ADR 006 Phase 2', () => {
         jitter: 0.6,
         seed: 777,
       })
+    })
+
+    test('setParams with non-slot fields (voicing, etc.) does NOT auto-save', () => {
+      const host = new Host(baseParams())
+      host.switchSlot(1)
+      const before = host.getSlot(1)
+      host.setParams({ voicing: 'spread' })
+      host.setParams({ swing: 0.6 })
+      host.setParams({ humanizeVelocity: 0.3 })
+      host.setParams({ outputLevel: 0.5 })
+      // None of these are slot-stored fields — slot stays untouched.
+      assert.deepEqual(host.getSlot(1), before)
+    })
+
+    test('auto-save does NOT touch timing params (ticksPerStep, stepsPerTransform)', () => {
+      // Regression guard: the user reported step interval became "abnormally
+      // fast" after the auto-save changes. Verify that setCell / setParams
+      // for slot fields (cells / jitter / seed / startChord) do not
+      // accidentally mutate or reset ticksPerStep or stepsPerTransform.
+      const host = new Host(baseParams({
+        ticksPerStep: 6,        // 16th-note subdivision
+        stepsPerTransform: 4,
+      }))
+      // Sequence of mutations like the hostReady widget cascade would
+      // produce (cells/jit/seed/chord all setting via the user-output
+      // path → bridge → host).
+      host.setCell(0, 'L')
+      host.setParams({ jitter: 0.5 })
+      host.setParams({ seed: 99 })
+      host.setParams({ startChord: [62, 65, 69] }) // D minor
+      // Timing params must remain at the values set by the device-shared
+      // widget cascade (subdivision, steps).
+      assert.equal((host as any).params.ticksPerStep, 6,
+        'ticksPerStep preserved through slot-field auto-save')
+      assert.equal((host as any).params.stepsPerTransform, 4,
+        'stepsPerTransform preserved through slot-field auto-save')
     })
   })
 
@@ -1908,13 +1980,11 @@ describe('Host slots — ADR 006 Phase 2', () => {
         assert.equal(host.getActiveProgramString(), serializeSlot(slot1))
       })
 
-      test('reflects saveCurrent edits in the active slot', () => {
+      test('reflects auto-saved edits in the active slot', () => {
         const host = new Host(baseParams({ jitter: 0 }))
         host.switchSlot(2)
         host.setParams({ jitter: 0.5 })
-        host.saveCurrent()
-        const after = host.getActiveProgramString()
-        const parsed = parseSlot(after)!
+        const parsed = parseSlot(host.getActiveProgramString())!
         assert.equal(parsed.jitter, 0.5)
       })
 
@@ -1931,15 +2001,14 @@ describe('Host slots — ADR 006 Phase 2', () => {
         assert.equal(host.getActiveProgramString(), FACTORY_PRESETS[0]!.program)
       })
 
-      test('does NOT reflect un-saved per-param edits', () => {
-        // Per ADR 006 §"Axis 2": program string == serialized slot. Live
-        // edits to params (e.g. setParams(jitter)) do not auto-save into
-        // the slot, so the displayed program string follows the saved
-        // slot until the user explicitly hits save-current.
+      test('reflects auto-saved per-param edits', () => {
+        // Per ADR 006 §"Axis 1" amendment (2026-04-30): user-driven
+        // setParams(jitter) auto-saves into the active slot, so the
+        // program string updates immediately.
         const host = new Host(baseParams({ jitter: 0 }))
-        const before = host.getActiveProgramString()
         host.setParams({ jitter: 0.7 })
-        assert.equal(host.getActiveProgramString(), before)
+        assert.ok(host.getActiveProgramString().includes('|j=0.7|'),
+          `expected updated jitter in program string, got ${host.getActiveProgramString()}`)
       })
     })
 
@@ -1977,13 +2046,15 @@ describe('Host slots — ADR 006 Phase 2', () => {
       })
 
       test('round-trip: getActiveProgramString → loadFromProgramString restores slot', () => {
+        // Auto-save model: constructor seeds slot 0 from initial params
+        // (no explicit saveCurrent needed). Reading the program string
+        // and loading it into a fresh host should reproduce slot 0.
         const host1 = new Host(baseParams({
           startChord: [65, 68, 72], // F minor
           cells: cells('P', 'hold', 'rest', 'L'),
           jitter: 0.4,
           seed: 12345,
         }))
-        host1.saveCurrent() // capture into active slot
         const program = host1.getActiveProgramString()
 
         const host2 = new Host(baseParams())

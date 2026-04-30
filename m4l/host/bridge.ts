@@ -13,7 +13,13 @@
 
 import { Host, type CellNumericField, type HostParams, type NoteEvent } from './host.ts'
 import type { MidiNote, Op, Triad } from '../engine/tonnetz.ts'
-import { stringToCells } from './slot.ts'
+import { cellsToString, stringToCells, type Slot, type SlotQuality } from './slot.ts'
+
+// ADR 006 Phase 3b — wire encoding for hidden-persistence dumps. Order
+// matches host.ts RANDOM_OPS so the patcher's hidden live.numbox can store
+// raw int 0..4 and round-trip through randomize / setSlotFields without a
+// translation table on the Max side.
+const OP_CODES: readonly Op[] = ['P', 'L', 'R', 'hold', 'rest']
 
 export interface BridgeDeps {
   // Send a MIDI event downstream. velocity=0 means note-off in this protocol.
@@ -127,8 +133,18 @@ export class Bridge {
     if (events.length > 0) this.emitLatticeCurrent()
   }
 
+  // ADR 006 §"Axis 1" amendment (2026-04-30) — auto-save model. The
+  // host mirrors slot-field edits (cells / jitter / seed / startChord)
+  // into slots[active] internally; the bridge needs to push the updated
+  // hidden persistence (`slot-store`) so the patcher's 32 hidden numboxes
+  // stay in sync with the in-memory slot.
+  private isSlotField(key: keyof HostParams): boolean {
+    return key === 'cells' || key === 'jitter' || key === 'seed' || key === 'startChord'
+  }
+
   setParams(key: keyof HostParams, value: unknown): void {
     this.host.setParams({ [key]: value } as Partial<HostParams>)
+    if (this.isSlotField(key)) this.emitSlotStore(this.host.activeSlot)
   }
 
   setStartChord(p1: number, p2: number, p3: number): void {
@@ -136,10 +152,12 @@ export class Bridge {
     if (Number.isNaN(p1) || Number.isNaN(p2) || Number.isNaN(p3)) return
     this.host.setParams({ startChord: [p1, p2, p3] })
     this.emitLatticeCenter()
+    this.emitSlotStore(this.host.activeSlot)
   }
 
   setCell(idx: number, op: Op): void {
     this.host.setCell(idx, op)
+    this.emitSlotStore(this.host.activeSlot)
   }
 
   // Patcher entry point for the per-cell numbox dumps (ADR 005 Phase 4).
@@ -160,6 +178,7 @@ export class Bridge {
       return prev ? { ...prev, op } : { op, velocity: 1.0, gate: 0.9, probability: 1.0, timing: 0 }
     })
     this.host.setParams({ cells })
+    this.emitSlotStore(this.host.activeSlot)
   }
 
   latticeRefresh(): void {
@@ -171,10 +190,11 @@ export class Bridge {
   //
   // Each slot-mutating action emits a "slot UI rehydrate" outlet bundle so
   // the patcher can silently re-set its visible widgets (4 cell live.tab,
-  // jitter / seed live.numbox, slot-active tab, program-string live.text)
-  // without echoing back through the user-edit path. saveCurrent is the
-  // sole exception: the live widgets already display the captured state,
-  // so only the program-string display needs refreshing.
+  // jitter / seed live.numbox, slot-active tab) without echoing back
+  // through the user-edit path. User-driven setCell / setParams /
+  // setStartChord auto-save into the active slot via the host (ADR 006
+  // §"Axis 1" amendment 2026-04-30); the bridge fires `slot-store` after
+  // those calls to keep the patcher's hidden persistence in sync.
 
   switchSlot(idx: number): void {
     if (idx < 0 || idx >= 4) return
@@ -182,26 +202,58 @@ export class Bridge {
     this.emitSlotRehydrate()
   }
 
-  saveCurrent(): void {
-    this.host.saveCurrent()
-    this.emitProgramString()
-  }
-
   loadFactoryPreset(idx: number): boolean {
     const ok = this.host.loadFactoryPreset(idx)
-    if (ok) this.emitSlotRehydrate()
+    if (ok) {
+      this.emitSlotRehydrate()
+      this.emitSlotStore(this.host.activeSlot)
+    }
     return ok
   }
 
   randomize(rng?: () => number): void {
     this.host.randomizeActiveSlot(rng)
     this.emitSlotRehydrate()
+    this.emitSlotStore(this.host.activeSlot)
   }
 
   loadFromProgramString(s: string): boolean {
     const ok = this.host.loadFromProgramString(s)
-    if (ok) this.emitSlotRehydrate()
+    if (ok) {
+      this.emitSlotRehydrate()
+      this.emitSlotStore(this.host.activeSlot)
+    }
     return ok
+  }
+
+  // ADR 006 Phase 3b — silent restoration entry. The patcher's hidden
+  // persistence layer dumps each slot's fields on loadbang; the bridge
+  // reconstructs a Slot and stores it WITHOUT emitting rehydrate outlets.
+  // The active slot's data reaches the visible widgets via the subsequent
+  // switchSlot call. Out-of-range or NaN inputs are silent no-ops so a
+  // stale dump from an old patcher layout can't corrupt slot state.
+  setSlotFields(
+    idx: number,
+    c0: number, c1: number, c2: number, c3: number,
+    jitter: number, seed: number, root: number, quality: number,
+  ): void {
+    if (!Number.isInteger(idx) || idx < 0 || idx >= 4) return
+    const ops: Op[] = []
+    for (const code of [c0, c1, c2, c3]) {
+      if (!Number.isInteger(code) || code < 0 || code >= OP_CODES.length) return
+      ops.push(OP_CODES[code]!)
+    }
+    if (!Number.isFinite(jitter) || jitter < 0 || jitter > 1) return
+    if (!Number.isFinite(seed) || !Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return
+    if (!Number.isInteger(root) || root < 0 || root > 11) return
+    if (quality !== 0 && quality !== 1) return
+    const slot: Slot = {
+      cells: cellsToString(ops),
+      startChord: { root, quality: quality === 0 ? 'maj' : 'min' as SlotQuality },
+      jitter,
+      seed: seed >>> 0,
+    }
+    this.host.setSlot(idx, slot)
   }
 
   // -------- internal --------
@@ -275,7 +327,11 @@ export class Bridge {
   }
 
   // ADR 006 Phase 3 — emit the full slot UI outlet bundle. Called after any
-  // slot mutation that may have changed the active slot's contents.
+  // slot mutation that may have changed the active slot's contents. Also
+  // re-emits lattice-center because switchSlot / random / factory /
+  // programString may have updated params.startChord (when no MIDI is held)
+  // — without this the jsui lattice would stay on the previous chord until
+  // the next note-on.
   private emitSlotRehydrate(): void {
     this.deps.emitOutlet('slot-active', this.host.activeSlot)
     this.emitProgramString()
@@ -283,16 +339,44 @@ export class Bridge {
     if (slot === null) return
     const ops = stringToCells(slot.cells)
     if (ops !== null) {
+      // Op codes match host RANDOM_OPS so the patcher can route via
+      // [route 0 1 2 3] + [prepend set] without symbol conversion.
       for (let i = 0; i < ops.length; i++) {
-        this.deps.emitOutlet('slot-cell-op', i, ops[i]!)
+        this.deps.emitOutlet('slot-cell-op', i, OP_CODES.indexOf(ops[i]!))
       }
     }
     this.deps.emitOutlet('slot-jitter', slot.jitter)
     this.deps.emitOutlet('slot-seed', slot.seed)
+    this.emitLatticeCenter()
   }
 
   private emitProgramString(): void {
     this.deps.emitOutlet('slot-program', this.host.getActiveProgramString())
+  }
+
+  // ADR 006 Phase 3b — single-message dump of the active slot's per-field
+  // state to the patcher's hidden persistence layer (32 hidden live.numbox,
+  // 8 per slot). Carries (idx, c0..c3, jitter, seed, root, quality) so the
+  // patcher can [route <idx>] + [unpack] into slot{idx}_{field} without
+  // gate routing on each field. Op codes match host.ts RANDOM_OPS:
+  // 0=P 1=L 2=R 3=hold 4=rest. Quality: 0=maj 1=min.
+  private emitSlotStore(idx: number): void {
+    const slot = this.host.getSlot(idx)
+    if (slot === null) return
+    const ops = stringToCells(slot.cells)
+    if (ops === null || ops.length < 4) return
+    const opCodes = ops.slice(0, 4).map(op => OP_CODES.indexOf(op))
+    if (opCodes.some(c => c < 0)) return
+    const quality = slot.startChord.quality === 'min' ? 1 : 0
+    this.deps.emitOutlet(
+      'slot-store',
+      idx,
+      opCodes[0]!, opCodes[1]!, opCodes[2]!, opCodes[3]!,
+      slot.jitter,
+      slot.seed,
+      slot.startChord.root,
+      quality,
+    )
   }
 }
 

@@ -21,7 +21,7 @@ This ADR settles program management for v1.
 
 Four axes, all decided.
 
-### Axis 1 — Snapshot slots
+### Axis 1 — Snapshot slots (auto-save)
 
 **4 slots** in the device. Each slot captures:
 
@@ -33,6 +33,21 @@ Four axes, all decided.
 Other params stay **device-shared**: voicing, transport, ADR 005 feel layer
 (swing, subdivision, stepDirection, humanize × 3, drift, outputLevel),
 input config.
+
+**Auto-save model.** No explicit Save action. User-driven edits to the
+slot-stored fields (cells op via cell tab, jitter dial, seed numbox,
+startChord via lattice click) are mirrored into the active slot
+immediately. Slot switching loads the destination slot's stored state;
+the previous slot's state stays intact because every prior edit was
+already auto-saved. There is no "dirty / clean" distinction to manage —
+the visible widgets and `slots[active]` are always in sync. Random /
+factory-preset / paste-program-string actions replace the active slot's
+content (Live's Cmd-Z reverts the last change).
+
+MIDI-input-driven `startChord` updates (note-on identifies a triad) are
+**live overrides**, not auto-saved — the slot keeps its anchor chord;
+MIDI input is "what the player is playing right now". This preserves
+the slot's identity across performance gestures.
 
 **MIDI-input priority on slot switch.** When switching slots:
 
@@ -75,9 +90,12 @@ program string == serialized slot.
 **6–10 curated programs**, inlined as a const array in `host.ts`. No
 sidecar JSON file, no external pack — those are out of scope for v1.
 
-**UI**: `live.menu` dropdown. Selecting an entry loads the program into
-the **active slot** (overwrites). The user can then tweak, save (= leave
-it), or switch to another slot and load a different preset.
+**UI**: `live.menu` dropdown placed in the slot block, separately from
+the Random button (Random is a creation tool, not a library load —
+they're conceptually distinct). Selecting an entry loads the program
+into the active slot (replaces current content; auto-saved). After
+selection, the menu resets to the placeholder so it acts as an action
+picker, not a state.
 
 **Curation** is content authoring done at implementation time. Target
 range: cover the design space across P-heavy / L-heavy / R-heavy
@@ -103,21 +121,23 @@ MIDI-input priority applies the same way as slot switch: a held chord
 overrides random's `startChord`. Random's main effect during play is
 cells/jitter/seed; the new startChord becomes audible on note-off.
 
-The destructive nature of random (overwrites the active slot) is bounded
-by slots themselves — the player retains 3 other slots as safety, and
-the gesture for protecting a program is "save it to a different slot
-before pressing random."
+The destructive nature of random (replaces active slot's content) is
+bounded by Live's undo (Cmd-Z reverts the parameter changes) and by the
+other 3 slots — to protect a slot's content before exploring with random,
+the player switches to a different slot first.
 
 ## Scope
 
 **In scope:**
 
-- 4 snapshot slots holding `{cells, startChord, jitter, seed}` per slot
+- 4 snapshot slots holding `{cells, startChord, jitter, seed}` per slot,
+  auto-saved on every user-driven edit (no explicit Save action)
 - MIDI-input-priority slot switch
-- Compact program-string format (parse / serialize, round-trip tested)
+- Compact program-string format (parse / serialize, round-trip tested) —
+  used internally for hidden-persistence representation and the program
+  string is reachable from the Max patcher; not exposed on the device strip
 - 6–10 inlined factory presets, accessed via `live.menu`
 - Random-generate button (🎲)
-- Program-string copy/paste affordance (visible `live.text` field)
 
 **Out of scope:**
 
@@ -126,8 +146,12 @@ before pressing random."
 - MIDI program change to switch slots (future)
 - Slot crossfade / morph (defer)
 - Importing programs from other Tonnetz tools (future, unlikely)
-- Clipboard automation (Max has no first-class clipboard write API; the
-  visible `live.text` field is sufficient — user copies/pastes manually)
+- Visible program-string field on the device strip (dropped 2026-04-30 —
+  the use case "share a slot's program textually across Live sets" is
+  niche, the textedit added clutter without commensurate value, and the
+  serialization is still available via the patcher for advanced users)
+- Explicit Save button (dropped 2026-04-30 — auto-save model removes the
+  need; `Host.saveCurrent` and `Bridge.saveCurrent` are deleted)
 
 ## Implementation checklist
 
@@ -159,12 +183,16 @@ Host-only, no patcher work — all logic verifiable under `node:test`.
   currently held; otherwise stash it as pending and defer.
 - [x] Pending-startChord application on the last note-off (hybrid mode);
   cleared without applying in hold-to-play (next note-on supersedes).
-- [x] `saveCurrent()`: capture current cells (op pattern), startChord
-  (root + quality from `identifyTriad`), jitter, seed into the active
-  slot.
+- [x] ~~`saveCurrent()`: capture current cells / startChord / jitter / seed
+  into the active slot.~~ **Removed 2026-04-30** — auto-save model
+  replaces explicit save (see Axis 1 amendment).
+- [x] **Auto-save**: user-driven `setCell` and `setParams({cells, jitter,
+  seed, startChord})` mirror their changes into `slots[active]`
+  immediately. MIDI-input-driven `recomputeStartChord` does NOT
+  auto-save (live override, slot keeps its anchor).
 - [x] Accessors for active-slot index and slot contents (`activeSlot`,
   `getSlot(idx)`, `setSlot(idx, slot)` for rehydration).
-- [x] Tests: state-machine behavior across switch / save / pending
+- [x] Tests: state-machine behavior across switch / auto-save / pending
   apply / pending clear.
 
 Implementation: `m4l/host/host.ts` (Slot store + state machine).
@@ -185,8 +213,10 @@ bake only has to wire patcher messages to already-tested entry points.
 
 - [x] `Bridge.switchSlot(idx)` — wraps `host.switchSlot`, emits the full
   slot UI rehydrate outlet bundle.
-- [x] `Bridge.saveCurrent()` — wraps `host.saveCurrent`, emits only
-  `slot-program` (live widgets already display the captured state).
+- [x] ~~`Bridge.saveCurrent()`~~ **Removed 2026-04-30** — auto-save
+  replaces it. The bridge's `setCell` / `setParams` / `setStartChord`
+  paths emit `slot-store` for the active slot's hidden persistence after
+  every user-driven change.
 - [x] `Bridge.loadFactoryPreset(idx)` — emits full rehydrate on success,
   returns boolean.
 - [x] `Bridge.randomize(rng?)` — emits full rehydrate; rng injectable for
@@ -201,22 +231,48 @@ bake only has to wire patcher messages to already-tested entry points.
 
 **Phase 3b — Patcher bake (one `.maxpat` pass):**
 
-- [ ] Hidden persistence: 4 slots × per-field hidden `live.*` params
-  (per memory: pattr unreliable; use hidden `live.numbox` / `live.menu`).
-- [ ] Hidden active-slot index param.
-- [ ] Visible UI: 4 slot select controls (`live.tab` or 4 × `live.button`).
-- [ ] Visible save-current button.
-- [ ] 🎲 random-generate button (Phase 5 UI).
-- [ ] `live.menu` factory presets dropdown (Phase 4 UI).
-- [ ] Visible `live.text` program-string field with paste handler
-  (Phase 6 UI).
-- [ ] Visual indication of active slot.
-- [ ] Bridge → patcher: route the slot-* outlets above to silent
-  rehydrate paths on the visible widgets.
-- [ ] Patcher → bridge on `loadbang`: dump each slot's stored fields and
-  call a bridge restoration entry point (exact API TBD with patcher
-  storage layout — adds `bridge.setSlotProgram(idx, s)` /
-  `bridge.setActiveSlot(idx)` or per-field setters).
+- [x] Hidden persistence: 4 slots × 8 per-field hidden `live.numbox`
+  (cells × 4 + jitter + seed + root + quality), `parameter_visible: 0`.
+  Seed numbox is float-typed so it can hold a full 32-bit unsigned without
+  Max-int wraparound (per memory: pattr unreliable).
+- [x] Hidden active-slot: the visible `live.tab` doubles as persistence
+  (Live restores its value automatically), so no separate hidden param.
+- [x] Visible UI: 4-segment `live.tab` for slot select (`OedipaActiveSlot`).
+- [x] ~~Visible save-current `live.button`.~~ **Removed 2026-04-30** —
+  auto-save model.
+- [x] 🎲 random-generate `live.button` (Phase 5 UI). Visually separated
+  from the Preset menu — Random is a creation tool (algorithmic),
+  Preset is a library load (curated entries); they share the same
+  destination (active slot) but conceptually distinct.
+- [x] `live.menu` factory presets dropdown (Phase 4 UI). 7 entries:
+  placeholder "—" plus 6 presets; index 0 is suppressed via `[sel 0]` so
+  selecting "—" is a no-op.
+- [x] ~~Visible program-string `textedit` with paste handler.~~
+  **Removed 2026-04-30** — out of scope (see Scope amendment).
+- [x] Visual indication of active slot via the `live.tab` selection.
+- [x] Bridge → patcher: `slot-active` / `slot-program` / `slot-cell-op` /
+  `slot-jitter` / `slot-seed` route through `[prepend set]` to the
+  visible widgets so the rehydrate doesn't echo back through their
+  user-output path (avoids switchSlot infinite loop on slot-active).
+  `slot-store` routes via `[route 0..3]` + per-slot `[unpack]` to the 8
+  hidden numboxes for the named slot (no `set` needed — hidden numboxes
+  have no listeners on outlet 0).
+- [x] Patcher → bridge on `loadbang`: bridge gains
+  `setSlotFields(idx, c0..c3, jitter, seed, root, quality)` as the
+  silent restoration entry point. Cascade fires AFTER the existing
+  hostReady widget bangs via `[deferlow]` — otherwise the visible-widget
+  cascade overwrites host params before the slot's data lands. Per-slot
+  `[t b ×8]` bangs the 8 hidden numboxes in reverse order so the
+  leftmost (= pack inlet 0 trigger) bang fires last; pack collects → 
+  `prepend setSlotFields N` → nodescript. After all 4 slots populate,
+  the cascade bangs the slot tab so its current value emits → existing
+  `prepend switchSlot` chain → host applies the persisted active slot.
+- [x] Devicewidth stays at 1080. Slot UI lives inside the existing
+  Cells block (x=626..836): slot tab `[1|2|3|4]` at top (y=8) replaces
+  the "Cells" comment header, cells/jit/seed unchanged in the middle,
+  Random / Preset rows at the bottom (y=130, y=152). The slot tab IS
+  the section header — "the cells/jit/seed below ARE this slot's
+  content" reads naturally.
 
 ### Phase 4 — Factory presets
 
@@ -225,8 +281,7 @@ bake only has to wire patcher messages to already-tested entry points.
   Cycle, Mixed, Pulse, Jitter Web.
 - [x] Inline as const array `FACTORY_PRESETS: { name, program }[]` in
   `m4l/host/presets.ts`.
-- [ ] `live.menu` populated from the array. **Deferred to Phase 3
-  (patcher pass).**
+- [x] `live.menu` populated from the array (Phase 3b patcher pass).
 - [x] Selection → parse program → load into active slot.
   `Host.loadFactoryPreset(idx)` composes parseSlot + setSlot +
   switchSlot.
@@ -238,23 +293,28 @@ bake only has to wire patcher messages to already-tested entry points.
   Implemented as `Host.randomizeActiveSlot(rng?)` composing setSlot +
   switchSlot — symmetric with `loadFactoryPreset`. RNG injectable for
   test determinism; production callers pass `Math.random`.
-- [ ] `live.button` triggers gen → serialize → load into active slot.
-  **Deferred to Phase 3 (patcher pass).**
+- [x] `live.button` triggers `randomize` → bridge composes setSlot +
+  switchSlot (Phase 3b patcher pass).
 
 ### Phase 6 — Program string copy/paste
 
-- [x] `Host.getActiveProgramString()` — serializeSlot of the saved active
-  slot. Reflects switchSlot / saveCurrent / random / factory load. Does
-  NOT track un-saved per-param edits.
+**Phase 6 is dropped from v1 scope (2026-04-30).** The TS-side
+`Host.getActiveProgramString` and `Host.loadFromProgramString` remain
+because they're still used internally (program-string is the canonical
+serialization for hidden persistence), but the visible device-strip
+surface is removed — the use case "share a slot's program textually
+across Live sets" is too niche to justify the UI clutter. The
+serialization is still reachable via the Max patcher for debug/advanced
+flows.
+
+- [x] `Host.getActiveProgramString()` — serializeSlot of `slots[active]`.
 - [x] `Host.loadFromProgramString(s)` — parseSlot + setSlot + switchSlot,
   symmetric with `loadFactoryPreset`. Returns false on malformed input.
-- [ ] Visible `live.text` field showing the active slot's serialized form.
-  **Deferred to Phase 3 (patcher pass).**
-- [ ] On user paste + commit → parse → load into active slot.
-  **Deferred to Phase 3 (patcher pass).**
-- [ ] Field updates whenever active slot changes (incl. after random,
-  factory load, save-current). **Deferred to Phase 3 (bridge wiring will
-  push `getActiveProgramString()` to the `live.text` after each mutation).**
+- [ ] ~~Visible `textedit` field~~ **dropped** (out of scope).
+- [x] On user paste + Enter → `loadFromProgramString` (Phase 3b).
+- [x] Field updates whenever active slot changes via the `slot-program`
+  outlet emitted by `emitSlotRehydrate` and `emitProgramString` after
+  each mutation (Phase 3b).
 
 ### Phase 7 — Manual smoke
 

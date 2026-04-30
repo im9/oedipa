@@ -124,6 +124,17 @@ export class Host {
       this.walkerActive = true
     }
     this.params = { ...this.params, ...patch }
+    // ADR 006 §"Axis 1" — auto-save: user-driven slot-field edits mirror
+    // into the active slot. recomputeStartChord (MIDI-driven) bypasses
+    // setParams via direct mutation, so MIDI input does not trigger this.
+    if (
+      patch.cells !== undefined ||
+      patch.jitter !== undefined ||
+      patch.seed !== undefined ||
+      patch.startChord !== undefined
+    ) {
+      this.syncActiveSlot()
+    }
   }
 
   setCell(idx: number, op: Op): void {
@@ -131,6 +142,7 @@ export class Host {
     const cells = this.params.cells.slice()
     cells[idx] = { ...cells[idx]!, op }
     this.params = { ...this.params, cells }
+    this.syncActiveSlot()
   }
 
   setCellField(idx: number, field: CellNumericField, value: number): void {
@@ -159,8 +171,11 @@ export class Host {
     this.slots[idx] = this.cloneSlot(slot)
   }
 
-  // Capture current device state into the active slot.
-  saveCurrent(): void {
+  // ADR 006 §"Axis 1" amendment (2026-04-30) — auto-save replaces
+  // explicit saveCurrent. Called from setCell / setParams when a slot
+  // field changes. setSlot / switchSlot / load* paths bypass this
+  // (they're internal slot mutations, not user-driven edits).
+  private syncActiveSlot(): void {
     this.slots[this.activeSlotIdx] = this.captureSlot()
   }
 
