@@ -222,14 +222,33 @@ describe('Bridge — rhythm / arp / length passthrough (Phase 7)', () => {
     assert.equal(slotStore.length, 0, 'arp is device-shared, not slot-stored')
   })
 
-  test("setParams('length', 2) reaches the host without touching slot-store", () => {
+  test("setParams('length', N) emits slot-store (length is per-slot, ADR 006 Phase 7)", () => {
+    // Length joined the slot-field set when variable cell count shipped.
+    // [+]/[-] must mirror to the patcher's hidden length numbox immediately
+    // — without this the length doesn't persist if the user grows then
+    // saves WITHOUT also editing a cell (the prior auto-save trigger).
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
     h.outlets.length = 0
     b.setParams('length', 2)
     assert.equal(hostFeel(b).length, 2)
     const slotStore = h.outlets.filter(o => o.channel === 'slot-store')
-    assert.equal(slotStore.length, 0, 'length is device-shared, not slot-stored')
+    assert.equal(slotStore.length, 1, 'length change emits slot-store')
+  })
+
+  test("setParams('length', 5) extends host.cells from 4 to 5 with a hold pad", () => {
+    // Reproducer for 2026-05-01 bug: the [+] button grew length but the
+    // engine kept playing only 4 cells because cells.length stayed at 4
+    // and activeCells() clamped via min(cells.length, length). The fix
+    // pads cells with `hold` in host.setParams when length grows, so the
+    // engine sees N entries.
+    const h = new Harness()
+    const b = new Bridge(h.deps)
+    b.setParams('length', 5)
+    const params = (b as unknown as { host: { params: { cells: Array<{ op: string }>; length: number } } }).host.params
+    assert.equal(params.length, 5)
+    assert.equal(params.cells.length, 5, 'cells must extend to match length')
+    assert.equal(params.cells[4]!.op, 'hold', 'new cell defaults to hold')
   })
 })
 
@@ -461,10 +480,12 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       h.outlets.length = 0
       b.switchSlot(2)
       const outs = slotOutlets(h)
-      // Expected: slot-active, slot-program, slot-cell-op×4, slot-jitter, slot-seed.
+      // Expected: slot-active, slot-program, slot-length, slot-cell-op×4,
+      // slot-jitter, slot-seed.
       assert.equal(byChannel(outs, 'slot-active').length, 1, 'slot-active emitted once')
       assert.deepEqual(byChannel(outs, 'slot-active')[0]!.args, [2])
       assert.equal(byChannel(outs, 'slot-program').length, 1, 'slot-program emitted once')
+      assert.equal(byChannel(outs, 'slot-length').length, 1, 'slot-length emitted once')
       assert.equal(byChannel(outs, 'slot-cell-op').length, 4, 'one slot-cell-op per cell')
       assert.equal(byChannel(outs, 'slot-jitter').length, 1)
       assert.equal(byChannel(outs, 'slot-seed').length, 1)
@@ -514,7 +535,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('setCell emits slot-store for the active slot', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       b.setCell(0, 'rest')
       assert.equal(byChannel(slotOutlets(h), 'slot-store').length, 1)
@@ -522,7 +543,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('setParams jitter emits slot-store', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       b.setParams('jitter', 0.5)
       assert.equal(byChannel(slotOutlets(h), 'slot-store').length, 1)
@@ -530,7 +551,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('setStartChord emits slot-store', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       b.setStartChord(60, 64, 67)
       assert.equal(byChannel(slotOutlets(h), 'slot-store').length, 1)
@@ -640,39 +661,38 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       return h.outlets.filter(o => o.channel === 'slot-store')
     }
 
-    test('setCell emits slot-store with active idx and 8 fields', () => {
+    test('setCell emits slot-store with active idx + 13 fields (Phase 7)', () => {
       // Auto-save: the first user-driven setCell on a fresh bridge emits
       // slot-store carrying the (now-mutated) active slot's full state.
-      // Uses LEGACY_TEST_BASELINE cells "PLR_" so the assertion remains
-      // pinned to the original op-code permutation; verifying the encoding
-      // protocol, not the production default cells.
+      // Wire shape post-Phase-7: idx + c0..c7 + length + jitter + seed +
+      // root + quality = 14 atoms. Uses LEGACY_TEST_BASELINE cells "PLR_".
       const h = new Harness()
-      const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
+      const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE, slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       b.setCell(0, 'rest')
       const stores = storeFor(h)
       assert.equal(stores.length, 1)
-      // Default active idx 0; cells "PLR_" → "−LR_" after setCell(0, rest)
-      // → opCodes [4,1,2,3]; jitter 0; seed 0; root C (0); quality maj (0).
-      assert.deepEqual(stores[0]!.args, [0, 4, 1, 2, 3, 0, 0, 0, 0])
+      // idx=0, "−LR_" → opCodes [4,1,2,3]; c4..c7 padded with 'hold'=3;
+      // length=4; jitter=0; seed=0; root=0 (C); quality=0 (maj).
+      assert.deepEqual(stores[0]!.args, [0, 4, 1, 2, 3, 3, 3, 3, 3, 4, 0, 0, 0, 0])
     })
 
     test('randomize emits slot-store reflecting the new program', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       b.randomize(mulberry32(7))
       const stores = storeFor(h)
       assert.equal(stores.length, 1)
-      // First arg is active idx (0 by default). Remaining 8 = the random'd
-      // fields. Just assert shape; specific values are RNG-dependent.
-      assert.equal(stores[0]!.args.length, 9)
+      // 14 atoms post-Phase-7 (idx + 8 cells + length + jitter + seed
+      // + root + quality). First arg is active idx (0 by default).
+      assert.equal(stores[0]!.args.length, 14)
       assert.equal(stores[0]!.args[0], 0)
     })
 
     test('loadFactoryPreset emits slot-store', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       assert.equal(b.loadFactoryPreset(0), true)
       assert.equal(storeFor(h).length, 1)
@@ -680,13 +700,14 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('loadFromProgramString emits slot-store with parsed fields', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       assert.equal(b.loadFromProgramString('PPP_|s=42|j=0.3|c=Em'), true)
       const stores = storeFor(h)
       assert.equal(stores.length, 1)
-      // PPP_ → ops 0,0,0,3; seed 42; jitter 0.3; Em → root 4 quality 1
-      assert.deepEqual(stores[0]!.args, [0, 0, 0, 0, 3, 0.3, 42, 4, 1])
+      // PPP_ → c0..c3=[0,0,0,3]; c4..c7 padded with hold=3; length=4;
+      // jitter=0.3; seed=42; Em → root=4, quality=1.
+      assert.deepEqual(stores[0]!.args, [0, 0, 0, 0, 3, 3, 3, 3, 3, 4, 0.3, 42, 4, 1])
     })
 
     test('switchSlot does NOT emit slot-store', () => {
@@ -701,7 +722,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       const h = new Harness()
       const b = new Bridge(h.deps)
       h.outlets.length = 0
-      b.setSlotFields(1, 0, 0, 0, 0, 0.1, 1, 0, 0)
+      b.setSlotFields(1, 0, 0, 0, 0, 3, 3, 3, 3, 4, 0.1, 1, 0, 0)
       assert.equal(storeFor(h).length, 0)
     })
   })
@@ -746,12 +767,19 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
   //   quality code  0=maj, 1=min
   //   root          0..11
   describe('setSlotFields', () => {
+    // Helper: 4-cell signature shim for tests that predate ADR 006 Phase 7
+    // slot-store widening. Pads c4..c7 with 'hold' (code 3) and sets
+    // length=4 — same slot state as the pre-Phase-7 9-arg call.
+    function setFields4(b: Bridge, idx: number, c0: number, c1: number, c2: number, c3: number, jitter: number, seed: number, root: number, quality: number): void {
+      b.setSlotFields(idx, c0, c1, c2, c3, 3, 3, 3, 3, 4, jitter, seed, root, quality)
+    }
+
     test('populates slot silently; switchSlot then surfaces the saved program', () => {
       const h = new Harness()
       const b = new Bridge(h.deps)
       h.outlets.length = 0
       // P,P,P,hold = "PPP_" | seed 42 | jitter 0.3 | Em (root 4, min)
-      b.setSlotFields(2, 0, 0, 0, 3, 0.3, 42, 4, 1)
+      setFields4(b, 2, 0, 0, 0, 3, 0.3, 42, 4, 1)
       assert.equal(slotOutlets(h).length, 0, 'setSlotFields is silent')
       h.outlets.length = 0
       b.switchSlot(2)
@@ -762,16 +790,13 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
     test('all five op codes round-trip through the wire encoding', () => {
       const h = new Harness()
       const b = new Bridge(h.deps)
-      // 4-cell device — populate slot 1 with P,L,R,hold; slot 3 with rest×4
-      // would violate cellsToString 0-len semantics elsewhere, so verify the
-      // four op codes that occur in a typical 4-cell program.
-      b.setSlotFields(1, 0, 1, 2, 3, 0, 0, 0, 0) // PLR_
+      setFields4(b, 1, 0, 1, 2, 3, 0, 0, 0, 0) // PLR_
       h.outlets.length = 0
       b.switchSlot(1)
       const prog = byChannel(slotOutlets(h), 'slot-program')[0]!.args[0]
       assert.equal(prog, 'PLR_|s=0|j=0|c=C')
       // Now populate with rest in one position.
-      b.setSlotFields(1, 4, 1, 2, 3, 0, 0, 0, 0) // -LR_
+      setFields4(b, 1, 4, 1, 2, 3, 0, 0, 0, 0) // -LR_
       h.outlets.length = 0
       b.switchSlot(1)
       const prog2 = byChannel(slotOutlets(h), 'slot-program')[0]!.args[0]
@@ -784,11 +809,10 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       // without depending on the production default cells (now R-L-L-R).
       const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
       h.outlets.length = 0
-      b.setSlotFields(-1, 0, 0, 0, 0, 0, 0, 0, 0)
-      b.setSlotFields(4, 0, 0, 0, 0, 0, 0, 0, 0)
+      setFields4(b, -1, 0, 0, 0, 0, 0, 0, 0, 0)
+      setFields4(b, 4, 0, 0, 0, 0, 0, 0, 0, 0)
       assert.equal(slotOutlets(h).length, 0)
-      // Verify slot 0 (default initial) is untouched: switch and check program
-      // string still describes the default cells "PLR_".
+      // Verify slot 0 (default initial) is untouched.
       h.outlets.length = 0
       b.switchSlot(0)
       const prog = byChannel(slotOutlets(h), 'slot-program')[0]!.args[0] as string
@@ -799,14 +823,14 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       const h = new Harness()
       const b = new Bridge(h.deps)
       // First seed slot 2 with a known program.
-      b.setSlotFields(2, 0, 0, 0, 0, 0.1, 1, 0, 0) // PPPP|s=1|j=0.1|c=C
+      setFields4(b, 2, 0, 0, 0, 0, 0.1, 1, 0, 0) // PPPP|s=1|j=0.1|c=C
       h.outlets.length = 0
       // Bad cell op (5).
-      b.setSlotFields(2, 5, 0, 0, 0, 0.2, 2, 0, 0)
+      setFields4(b, 2, 5, 0, 0, 0, 0.2, 2, 0, 0)
       // Bad quality (2).
-      b.setSlotFields(2, 0, 0, 0, 0, 0.2, 2, 0, 2)
+      setFields4(b, 2, 0, 0, 0, 0, 0.2, 2, 0, 2)
       // Bad root (12).
-      b.setSlotFields(2, 0, 0, 0, 0, 0.2, 2, 12, 0)
+      setFields4(b, 2, 0, 0, 0, 0, 0.2, 2, 12, 0)
       assert.equal(slotOutlets(h).length, 0, 'no outlets emitted on rejection')
       // Slot 2 should still hold the seeded values, not the rejected ones.
       h.outlets.length = 0
@@ -818,10 +842,10 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
     test('NaN field is a silent no-op', () => {
       const h = new Harness()
       const b = new Bridge(h.deps)
-      b.setSlotFields(2, 0, 0, 0, 0, 0.1, 1, 0, 0)
+      setFields4(b, 2, 0, 0, 0, 0, 0.1, 1, 0, 0)
       h.outlets.length = 0
-      b.setSlotFields(2, 0, 0, 0, 0, NaN, 1, 0, 0)
-      b.setSlotFields(2, 0, 0, 0, 0, 0.1, NaN, 0, 0)
+      setFields4(b, 2, 0, 0, 0, 0, NaN, 1, 0, 0)
+      setFields4(b, 2, 0, 0, 0, 0, 0.1, NaN, 0, 0)
       h.outlets.length = 0
       b.switchSlot(2)
       const prog = byChannel(slotOutlets(h), 'slot-program')[0]!.args[0]
@@ -829,25 +853,145 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
     })
 
     test('loadbang sequence: 4 setSlotFields + switchSlot rehydrates active slot', () => {
-      // Simulate the patcher's restoration cascade: dump per-slot fields for
-      // all four slots silently, then switchSlot to the persisted active idx.
-      // The final switchSlot emits the rehydrate bundle that re-paints the
-      // visible widgets to match the active slot's data.
       const h = new Harness()
       const b = new Bridge(h.deps)
       h.outlets.length = 0
-      b.setSlotFields(0, 0, 1, 2, 3, 0.0, 0, 0, 0)   // slot 0: PLR_  | C
-      b.setSlotFields(1, 0, 0, 0, 0, 0.5, 7, 4, 1)   // slot 1: PPPP  | Em j=0.5 s=7
-      b.setSlotFields(2, 1, 1, 2, 3, 0.2, 99, 9, 0)  // slot 2: LLR_  | A  j=0.2 s=99
-      b.setSlotFields(3, 4, 4, 0, 4, 0.0, 0, 5, 0)   // slot 3: --P-  | F
+      setFields4(b, 0, 0, 1, 2, 3, 0.0, 0, 0, 0)   // slot 0: PLR_  | C
+      setFields4(b, 1, 0, 0, 0, 0, 0.5, 7, 4, 1)   // slot 1: PPPP  | Em j=0.5 s=7
+      setFields4(b, 2, 1, 1, 2, 3, 0.2, 99, 9, 0)  // slot 2: LLR_  | A  j=0.2 s=99
+      setFields4(b, 3, 4, 4, 0, 4, 0.0, 0, 5, 0)   // slot 3: --P-  | F
       assert.equal(slotOutlets(h).length, 0, 'all four restorations silent')
-      // Active = 1.
       b.switchSlot(1)
       const outs = slotOutlets(h)
       const active = byChannel(outs, 'slot-active')[0]!.args
       assert.deepEqual(active, [1])
       const prog = byChannel(outs, 'slot-program')[0]!.args[0]
       assert.equal(prog, 'PPPP|s=7|j=0.5|c=Em')
+    })
+
+    // ── ADR 006 Phase 7 — variable-length slot persistence (cells 5..8) ──
+
+    test('length>4: setSlotFields preserves all 5..8 cells across switchSlot', () => {
+      // User flow this guards: grow length to 5+, edit cells, save Live set,
+      // reload — cells 4..7 must round-trip through the slot-store wire.
+      // 6-cell program: P L R hold P L (codes 0 1 2 3 0 1).
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      h.outlets.length = 0
+      // 8 cells given; length=6 selects first 6 → "PLR_PL".
+      b.setSlotFields(2, 0, 1, 2, 3, 0, 1, 3, 3, 6, 0.4, 11, 7, 0)
+      assert.equal(slotOutlets(h).length, 0, 'silent')
+      h.outlets.length = 0
+      b.switchSlot(2)
+      const prog = byChannel(slotOutlets(h), 'slot-program')[0]!.args[0]
+      assert.equal(prog, 'PLR_PL|s=11|j=0.4|c=G')
+    })
+
+    test('length=8: full-width program round-trips', () => {
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      h.outlets.length = 0
+      // P L R hold P L R hold (codes 0 1 2 3 0 1 2 3).
+      b.setSlotFields(0, 0, 1, 2, 3, 0, 1, 2, 3, 8, 0.0, 0, 0, 0)
+      b.switchSlot(0)
+      const prog = byChannel(slotOutlets(h), 'slot-program')[0]!.args[0]
+      assert.equal(prog, 'PLR_PLR_|s=0|j=0|c=C')
+    })
+
+    test('length=4: codes past length are ignored on load', () => {
+      // Even if the patcher dumps stale c4..c7 from a prior longer program,
+      // length=4 truncates to 4 cells. Garbage codes past length don't leak
+      // into the loaded slot (they get truncated, not validated).
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      // Valid c0..c3, length=4, garbage c4..c7 (all 'hold' so still valid
+      // codes — but ignored).
+      b.setSlotFields(0, 0, 1, 2, 3, 3, 3, 3, 3, 4, 0.0, 0, 0, 0)
+      b.switchSlot(0)
+      const prog = byChannel(slotOutlets(h), 'slot-program')[0]!.args[0]
+      assert.equal(prog, 'PLR_|s=0|j=0|c=C', 'truncated to length=4')
+    })
+
+    test('out-of-range length is a silent no-op', () => {
+      const h = new Harness()
+      const b = new Bridge(h.deps)
+      // Seed slot with known good state.
+      b.setSlotFields(0, 0, 1, 2, 3, 3, 3, 3, 3, 4, 0.0, 0, 0, 0)
+      h.outlets.length = 0
+      // length=0 (below MIN_LENGTH).
+      b.setSlotFields(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.5, 1, 1, 0)
+      // length=9 (above MAX_LENGTH).
+      b.setSlotFields(0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 0.5, 1, 1, 0)
+      // Slot 0 unchanged.
+      h.outlets.length = 0
+      b.switchSlot(0)
+      const prog = byChannel(slotOutlets(h), 'slot-program')[0]!.args[0]
+      assert.equal(prog, 'PLR_|s=0|j=0|c=C', 'unchanged after invalid length')
+    })
+
+    test('full round-trip: emitSlotStore args fed back to setSlotFields restores program', () => {
+      // The user-facing failure mode: grow length to 5, set cell 4, save Live
+      // set, reopen → cell 4 lost. This test exercises the exact bridge-layer
+      // round-trip the patcher's hidden numboxes mediate. The slot-store
+      // payload we capture is what the numboxes save; the setSlotFields call
+      // is what they emit back on rehydrate. If the wire format mismatches,
+      // this test fails before any patcher work matters.
+      const h1 = new Harness()
+      const b1 = new Bridge(h1.deps, { slotsAlreadyRehydrated: true })
+      // 1. Grow length to 5 (auto-pads cells with 'hold').
+      b1.setParams('length', 5)
+      // 2. Set cell 4 to 'P' (overwrites the hold pad).
+      b1.setCell(4, 'P')
+      // 3. Capture the most recent slot-store outlet payload.
+      const stores = h1.outlets.filter(o => o.channel === 'slot-store')
+      assert.ok(stores.length >= 1, 'at least one slot-store emission')
+      const last = stores[stores.length - 1]!.args
+      // [idx, c0..c7, length, jitter, seed, root, quality] = 14 atoms.
+      assert.equal(last.length, 14, 'wire shape: 14 atoms')
+      const [idx, c0, c1, c2, c3, c4, c5, c6, c7, length, jitter, seed, root, quality] = last as number[]
+
+      // 4. Replay into a fresh bridge via setSlotFields (silent restore).
+      const h2 = new Harness()
+      const b2 = new Bridge(h2.deps)
+      h2.outlets.length = 0
+      b2.setSlotFields(idx!, c0!, c1!, c2!, c3!, c4!, c5!, c6!, c7!, length!, jitter!, seed!, root!, quality!)
+      b2.switchSlot(idx!)
+
+      // 5. The restored slot's program string must match the saved program.
+      const prog2 = byChannel(slotOutlets(h2), 'slot-program')[0]!.args[0] as string
+      // Default program is "RLLR" with the user's edits applied:
+      //   length=5 + grow → cells = [R, L, L, R, hold] (auto-pad).
+      //   then setCell(4, 'P') → cells = [R, L, L, R, P]. Program "RLLRP".
+      assert.equal(prog2, 'RLLRP|s=0|j=0|c=C', 'program string round-trips')
+
+      // 6. host.params.length must match.
+      const hostParams = (b2 as unknown as { host: { params: { length: number; cells: Array<{ op: string }> } } }).host.params
+      assert.equal(hostParams.length, 5, 'length restored')
+      assert.equal(hostParams.cells.length, 5, 'cells.length matches')
+      assert.equal(hostParams.cells[4]!.op, 'P', 'cell 4 op restored')
+    })
+
+    test('emitSlotStore wire shape: 13 atoms after slot index, length-padded', () => {
+      // setCell auto-saves; the resulting slot-store outlet must carry
+      // c0..c7 (8) + length + jitter + seed + root + quality = 13 atoms
+      // after the slot index. Verifies the wire format the patcher relies on.
+      const h = new Harness()
+      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
+      h.outlets.length = 0
+      // Edit cell 0 to 'rest' — triggers slot-store for the 4-cell default.
+      b.setCell(0, 'rest')
+      const stores = byChannel(slotOutlets(h), 'slot-store')
+      assert.equal(stores.length, 1)
+      const args = stores[0]!.args
+      // [idx, c0..c7, length, jitter, seed, root, quality] = 14 atoms.
+      assert.equal(args.length, 14, 'slot-store payload length')
+      // length atom at index 9 (after idx + 8 cells).
+      assert.equal(args[9], 4, 'default-cells program has length=4')
+      // c4..c7 padded with 'hold' code (3) since length=4.
+      assert.equal(args[5], 3, 'c4 padded to hold')
+      assert.equal(args[6], 3, 'c5 padded to hold')
+      assert.equal(args[7], 3, 'c6 padded to hold')
+      assert.equal(args[8], 3, 'c7 padded to hold')
     })
   })
 })

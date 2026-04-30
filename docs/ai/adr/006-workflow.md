@@ -362,14 +362,21 @@ note at the cell head, with `straight`, one per quarter.
 active cells dynamically. Click a pill to cycle op
 `P → L → R → — → · → P` (cycling is acceptable here per memory because the
 strip is high-frequency and feedback is immediate). `+` / `−` buttons
-append / pop the last cell (Min 1, Max 8). LED row underneath extends to
-N indicators. Pure-TS logic layer in `m4l/host` (hit testing, op cycling,
-state); jsui wrapper draws. Hidden persistence: all
- 8 cells × 4 expression
-fields (vel / gate / prob / timing) = 32 hidden `live.numbox` pre-allocated;
-indices `≥ length` are ignored at engine time. The slot-store program
-format already serializes cells as a string (Phase 1), so variable length
-needs no new persistence.
+append / pop the last cell (Min 1, Max 8). Playhead drawn inside the
+jsui (replaces the legacy LED-row widgets). Pure-TS logic layer in
+`m4l/host/cellstrip.ts` (hit testing, layout); jsui wrapper draws. The
+slot-store program format already serializes cells as a string
+(Phase 1), so variable length needs no new persistence on that axis;
+the slot-fields wire format gains 4 cell-op slots + a `length` field
+so all 8 cells round-trip across Live save / reload (see Step 3
+"Slot persistence widening").
+
+Per-cell numeric expression (vel / gate / prob / timing) for cells
+4..7 is **out of scope for Phase 7**: only the existing 16 numboxes
+for cells 0..3 stay live. The remaining 16 land alongside the future
+per-cell expression UI (currently unscheduled — no UI today writes
+those fields, so adding 16 more dormant numboxes now would just be
+dead scaffolding).
 
 **Removed surface.** Engine logic stays where applicable; what's removed is
 the device-strip widget and its wiring.
@@ -436,8 +443,9 @@ sourcing is final.)
   `≥ length` ignored at engine time. Engine-side: `captureSlot` slices
   by `length`, `applySlotCells` extends the cells pool when loading a
   longer program and updates `length`, `randomizeActiveSlot` generates
-  cells matching the active length. Bridge `slot-store` / `setSlotFields`
-  payload widening to 8 cells is bundled with the patcher pass (Step 4).
+  cells matching the active length. (Bridge `slot-store` / `setSlotFields`
+  payload widening to 8 cells + `length` shipped in Step 3 alongside
+  the cell-strip work, not Step 4 as originally planned.)
 - [x] `rhythm` / `arp` / `voicing` device-shared (not slot-stored).
   Defaults: `voicing='spread'`, `rhythm='legato'`, `arp='off'`,
   `length=4`.
@@ -449,18 +457,54 @@ removal from `setParams` — is parked at Step 4 because the bridge
 needs to drop those param keys at the same wave the patcher loses its
 matching widgets, otherwise orphan setParams calls land in the bridge.)
 
-**Step 3 — jsui cell strip (highest UI risk)**
+**Step 3 — jsui cell strip + slot persistence widening**
 
-- [x] Pure-TS logic layer in `m4l/host`: hit testing, **direct-select op
-  palette** (P / L / R / — / · — current op highlighted, click sets
-  `selectedOp`) + click-cell-to-apply (writes `selectedOp` into cell),
-  length state, `+` / `−` append/pop (1–8). No press-to-cycle (memory:
-  next state must be visible). `cellstrip.ts` + 17 unit tests
-  (`PALETTE_OPS`, `clampLength`, `computeLayout`, `hitTest`).
-- [ ] jsui wrapper draws palette row + cell row dynamically; LED row
-  extends to N indicators.
-- [ ] Replaces `obj-cell0..3` in patcher; 32 hidden `live.numbox`
-  pre-allocated for per-cell expression (vel / gate / prob / timing).
+- [x] **Design pivot 2026-05-01.** Original "direct-select op palette"
+  model (global `selectedOp` + click-cell-to-apply) superseded by
+  per-cell popup after re-reading inboil's `TonnetzSheet.svelte`
+  `seq-pills` (each cell is its own `<select>`, no shared tool state).
+  Click cell → horizontal popup of 5 ops above the strip, anchored to
+  clicked cell + clamped to box; click option → cell op set, popup
+  closes. Press-to-cycle rejected (next state must be visible).
+- [x] Pure-TS logic layer `m4l/host/cellstrip.ts`: `OPS`, `clampLength`,
+  `computeStripLayout` (bottom-aligned pill row with inline `[-]`/`[+]`),
+  `computePopupLayout`, `hitStrip`, `hitPopup`. Unit tests cover row
+  layout, popup positioning, hit precedence (popup before strip when
+  open), out-of-range length clamping.
+- [x] jsui wrapper (`cellstrip-renderer.js`): cell row 1..8 dynamic, op
+  glyphs match legacy enum (`P L R — ·`), horizontal popup, playhead
+  drawn inline (light-gray border on active cell) — supersedes the
+  legacy LED-row widgets. Handlers: `setCells`, `setCellOp`, `setLength`,
+  `setCellIdx`. Outlets: `setCell`, `setParams length`.
+- [x] Patcher: `obj-cell0..3` (live.tab) replaced with single
+  `obj-jsui-cellstrip` (presentation_rect [626, 48, 234, 66], gaining
+  the freed LED-band area). Legacy LED row (`obj-led-cellN`,
+  `obj-eq-cellN`, `obj-route-cellidx → eq → led` cascade) removed
+  entirely. cellIdx now routes into the jsui via `prepend setCellIdx`.
+  `route-cell-op-idx` extended `0..7`; `prep-setCellOp-{0..7}` wired
+  to jsui inlet. `route-slot` extended with `slot-length`; `prep-setLength`
+  wired to jsui inlet.
+- [x] Slot persistence widening (originally scheduled for Step 4 alongside
+  the engine surface revoke; pulled forward when variable length
+  surfaced as broken across save / reload). Bridge `emitSlotStore` /
+  `setSlotFields` widened to 14 atoms (idx + c0..c7 + length + jitter +
+  seed + root + quality). Patcher hidden persistence: 16 new
+  `OedipaSlotMC{4..7}` + 4 new `OedipaSlotMLength` `live.numbox`;
+  `pack-restore-slotN` / `unpack-storeN` / `trig-restore-slotN` widened
+  8→13. `emitSlotRehydrate` emits `slot-length` before `slot-cell-op` so
+  the renderer grows its visible cell count first.
+- [x] **Init feedback gate.** Bridge gained a `slotsRehydrated` flag that
+  suppresses `emitSlotStore` until the rehydrate cascade calls
+  `setSlotFields` at least once. Without this, the patcher's
+  hostReady-driven visible-widget dumps (jitter / seed / …) flowed
+  through `setParams` → `emitSlotStore` and overwrote the user-saved
+  hidden numboxes with bridge defaults BEFORE the silent rehydrate
+  cascade could read them. Symptom (found 2026-05-01): saved
+  `length=5` reverted to default `4` across reload while saved cells
+  appeared to round-trip — they happened to match the bridge's
+  compile-time `[R,L,L,R]` default. See
+  `m4l/host/bridge.ts` near `slotsRehydrated` for the load-bearing
+  comment.
 
 **Step 4 — Patcher pass + engine surface revoke**
 

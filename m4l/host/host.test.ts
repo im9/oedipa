@@ -2339,6 +2339,36 @@ describe('Host.params — length (Phase 7)', () => {
     assert.equal(pitchesOf(host1.step(5), 'noteOn').length, 3, 'length=1 pos=5 P wraps')
   })
 
+  test('setParams({ length: N }) auto-extends cells when N > cells.length', () => {
+    // [+] button user flow: user grows length from 4 to 5. Without
+    // auto-extension activeCells caps at min(cells.length, length)=4 and
+    // the new cell silently never plays — observed bug 2026-05-01. Pad
+    // new cells with 'hold' (musically inert) so the user can grow the
+    // program audibly; they then set the new cell's op via the popup.
+    const host = new Host(baseParams({
+      cells: cells('P', 'L', 'R', 'hold'),
+      length: 4,
+    }))
+    host.setParams({ length: 5 })
+    const params = (host as unknown as { params: HostParams }).params
+    assert.equal(params.cells.length, 5, 'cells extended to match new length')
+    assert.equal(params.cells[4]!.op, 'hold', 'new cell defaults to hold')
+  })
+
+  test('setParams({ length: N }) does not shrink cells when N < cells.length', () => {
+    // Shrinking via [-] keeps cells past the new length so growing back
+    // does not lose user edits. Engine clamps via activeCells().
+    const host = new Host(baseParams({
+      cells: cells('P', 'L', 'R', 'hold'),
+      length: 4,
+    }))
+    host.setParams({ length: 2 })
+    const params = (host as unknown as { params: HostParams }).params
+    assert.equal(params.cells.length, 4, 'cells preserved on shrink')
+    assert.equal(params.cells[2]!.op, 'R')
+    assert.equal(params.cells[3]!.op, 'hold')
+  })
+
   test('length is clamped at cells.length (no out-of-bounds reads)', () => {
     // cells.length=2, length=8 → effective active = 2; engine sees cells[0..1].
     const host = new Host(baseParams({

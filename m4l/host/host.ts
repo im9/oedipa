@@ -160,6 +160,20 @@ export class Host {
       this.arpRng = mulberry32(patch.seed >>> 0)
     }
     this.params = { ...this.params, ...patch }
+    // ADR 006 Phase 7 — when length grows past cells.length, pad cells
+    // with 'hold' so the engine sees N entries. Without this, [+] would
+    // silently fail to add a playable cell (activeCells clamps at
+    // min(cells.length, length)). Only triggers on an explicit length
+    // patch — pre-existing cells.length < length mismatches from the
+    // constructor are left alone (defended by activeCells's own clamp).
+    if (
+      patch.length !== undefined
+      && patch.length > this.params.cells.length
+    ) {
+      const padded = this.params.cells.slice()
+      while (padded.length < this.params.length) padded.push(makeCell('hold'))
+      this.params = { ...this.params, cells: padded }
+    }
     // ADR 006 §"Axis 1" — auto-save: user-driven slot-field edits mirror
     // into the active slot. recomputeStartChord (MIDI-driven) bypasses
     // setParams via direct mutation, so MIDI input does not trigger this.

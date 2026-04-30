@@ -71,10 +71,15 @@ Max.addHandler('loadFromProgramString', (s) => bridge.loadFromProgramString(Stri
 // loadbang. Patcher sends one setSlotFields per slot, then `switchSlot
 // <activeIdx>` to apply the persisted active slot to host params and emit
 // the rehydrate bundle.
-Max.addHandler('setSlotFields', (idx, c0, c1, c2, c3, jitter, seed, root, quality) =>
+// ADR 006 Phase 7 — slot field dump widened from 4 to 8 cells + length.
+// Patcher pak emits 14 atoms in this order: idx, c0..c7, length, jitter,
+// seed, root, quality (matches bridge.emitSlotStore wire format).
+Max.addHandler('setSlotFields', (idx, c0, c1, c2, c3, c4, c5, c6, c7, length, jitter, seed, root, quality) =>
   bridge.setSlotFields(
     Number(idx),
     Number(c0), Number(c1), Number(c2), Number(c3),
+    Number(c4), Number(c5), Number(c6), Number(c7),
+    Number(length),
     Number(jitter), Number(seed), Number(root), Number(quality),
   ))
 

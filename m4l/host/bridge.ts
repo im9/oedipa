@@ -35,6 +35,7 @@ export interface BridgeDeps {
 
 export interface BridgeOptions {
   initialParams?: Partial<HostParams>
+  slotsAlreadyRehydrated?: boolean
 }
 
 const DEFAULT_PARAMS: HostParams = {
@@ -103,6 +104,7 @@ export class Bridge {
   constructor(deps: BridgeDeps, options: BridgeOptions = {}) {
     this.host = new Host({ ...DEFAULT_PARAMS, ...options.initialParams })
     this.deps = deps
+    if (options.slotsAlreadyRehydrated) this.slotsRehydrated = true
   }
 
   // Test inspection only.
@@ -161,8 +163,53 @@ export class Bridge {
   // into slots[active] internally; the bridge needs to push the updated
   // hidden persistence (`slot-store`) so the patcher's 32 hidden numboxes
   // stay in sync with the in-memory slot.
+  // ── Init feedback window (load-bearing invariant) ──
+  //
+  // The patcher persists per-slot state in hidden live.numbox params
+  // (cells, length, jitter, seed, startChord). On Live device load, two
+  // event streams race for those numboxes, both ultimately driven by
+  // hostReady:
+  //
+  //   (A) Visible-widget dumps. The patcher bangs visible live.* widgets
+  //       (jitter, seed, voicing, …) so their saved values feed back into
+  //       the bridge as `prepend setParams <key>` messages.
+  //   (B) Rehydrate cascade. A deferlow chain bangs the *hidden* slot
+  //       numboxes through pack-restore-slotN → `setSlotFields N …`,
+  //       silently restoring all four slots' saved data.
+  //
+  // (A) reaches setParams BEFORE (B) reaches setSlotFields. If
+  // emitSlotStore fired during (A), it would read bridge's compile-time
+  // initial slot (e.g. length=4 default) and broadcast it back to the
+  // patcher — overwriting the user-saved length, c4..c7, etc. in the
+  // hidden numboxes with bridge defaults. The cascade then bangs those
+  // (now-corrupted) numboxes and replays the corruption back as
+  // setSlotFields. User's saved program is silently lost.
+  //
+  // The gate breaks the loop: emitSlotStore is suppressed until (B)
+  // calls setSlotFields at least once, which proves the cascade has
+  // injected real saved data. After that flips, user-driven setParams
+  // / setCell / etc. emit slot-store as normal.
+  //
+  // Symptom shape if you ever see this regress: a slot field's saved
+  // value round-trips correctly only when it happens to equal bridge's
+  // compile-time default. Fields that differ silently revert to default
+  // on save+reload. (Found 2026-05-01 against length: bridge default
+  // cells [R,L,L,R] matched the user's saved cells, masking c0..c3
+  // corruption; length default 4 ≠ saved 5 surfaced the loop first.)
+  //
+  // Tests pre-flip via the `slotsAlreadyRehydrated` BridgeOption to
+  // avoid simulating the cascade in every emitSlotStore test.
+  private slotsRehydrated = false
+
   private isSlotField(key: keyof HostParams): boolean {
-    return key === 'cells' || key === 'jitter' || key === 'seed' || key === 'startChord'
+    // ADR 006 Phase 7 — `length` joined the slot-field set when variable
+    // cell count (1..8) shipped: it's part of the slot identity (slot.cells
+    // string length encodes it) and must mirror to the patcher's hidden
+    // numbox via emitSlotStore on every change. Without this, [+]/[-]
+    // updates the in-memory slot but the patcher's persistence stays
+    // stale until the next setCell auto-save fires.
+    return key === 'cells' || key === 'jitter' || key === 'seed'
+      || key === 'startChord' || key === 'length'
   }
 
   setParams(key: keyof HostParams | 'cellLength', value: unknown): void {
@@ -282,14 +329,21 @@ export class Bridge {
   setSlotFields(
     idx: number,
     c0: number, c1: number, c2: number, c3: number,
+    c4: number, c5: number, c6: number, c7: number,
+    length: number,
     jitter: number, seed: number, root: number, quality: number,
   ): void {
     if (!Number.isInteger(idx) || idx < 0 || idx >= 4) return
-    const ops: Op[] = []
-    for (const code of [c0, c1, c2, c3]) {
+    if (!Number.isInteger(length) || length < 1 || length > 8) return
+    const allCodes = [c0, c1, c2, c3, c4, c5, c6, c7]
+    // Validate all 8 codes (even pad slots) so a malformed dump from a
+    // stale patcher layout aborts cleanly. Construct the cells string
+    // from the first `length` ops only — codes past length are padding.
+    for (const code of allCodes) {
       if (!Number.isInteger(code) || code < 0 || code >= OP_CODES.length) return
-      ops.push(OP_CODES[code]!)
     }
+    const ops: Op[] = []
+    for (let i = 0; i < length; i++) ops.push(OP_CODES[allCodes[i]!]!)
     if (!Number.isFinite(jitter) || jitter < 0 || jitter > 1) return
     if (!Number.isFinite(seed) || !Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return
     if (!Number.isInteger(root) || root < 0 || root > 11) return
@@ -301,6 +355,7 @@ export class Bridge {
       seed: seed >>> 0,
     }
     this.host.setSlot(idx, slot)
+    this.slotsRehydrated = true
   }
 
   // -------- internal --------
@@ -386,8 +441,14 @@ export class Bridge {
     if (slot === null) return
     const ops = stringToCells(slot.cells)
     if (ops !== null) {
+      // ADR 006 Phase 7 — emit length BEFORE per-cell ops so the cellstrip
+      // renderer grows its visible cell count first; otherwise setCellOp
+      // for idx >= renderer's old length would land on a hidden cell. The
+      // renderer's setLength handler also auto-closes any open popup whose
+      // source cell is now beyond length, keeping the visible state safe.
+      this.deps.emitOutlet('slot-length', ops.length)
       // Op codes match host RANDOM_OPS so the patcher can route via
-      // [route 0 1 2 3] + [prepend set] without symbol conversion.
+      // [route 0..7] + [prepend setCellOp] without symbol conversion.
       for (let i = 0; i < ops.length; i++) {
         this.deps.emitOutlet('slot-cell-op', i, OP_CODES.indexOf(ops[i]!))
       }
@@ -402,23 +463,33 @@ export class Bridge {
   }
 
   // ADR 006 Phase 3b — single-message dump of the active slot's per-field
-  // state to the patcher's hidden persistence layer (32 hidden live.numbox,
-  // 8 per slot). Carries (idx, c0..c3, jitter, seed, root, quality) so the
-  // patcher can [route <idx>] + [unpack] into slot{idx}_{field} without
-  // gate routing on each field. Op codes match host.ts RANDOM_OPS:
-  // 0=P 1=L 2=R 3=hold 4=rest. Quality: 0=maj 1=min.
+  // state to the patcher's hidden persistence layer (52 hidden live.numbox,
+  // 13 per slot since Phase 7 widened cells from 4 to 8). Wire format,
+  // after the slot index demux:
+  //   c0..c7 (8 ints) + length (int) + jitter (float) + seed (int)
+  //   + root (int) + quality (int)
+  // Op codes match host.ts RANDOM_OPS: 0=P 1=L 2=R 3=hold 4=rest.
+  // Quality: 0=maj 1=min. Cells past `length` are padded with 'hold'
+  // (code 3) so the wire format is fixed-width regardless of program
+  // length; the loader reconstructs cells from the first `length` ops.
   private emitSlotStore(idx: number): void {
+    if (!this.slotsRehydrated) return
     const slot = this.host.getSlot(idx)
     if (slot === null) return
     const ops = stringToCells(slot.cells)
-    if (ops === null || ops.length < 4) return
-    const opCodes = ops.slice(0, 4).map(op => OP_CODES.indexOf(op))
+    if (ops === null || ops.length < 1 || ops.length > 8) return
+    const length = ops.length
+    const padded: Op[] = []
+    for (let i = 0; i < 8; i++) padded.push(i < length ? ops[i]! : 'hold')
+    const opCodes = padded.map(op => OP_CODES.indexOf(op))
     if (opCodes.some(c => c < 0)) return
     const quality = slot.startChord.quality === 'min' ? 1 : 0
     this.deps.emitOutlet(
       'slot-store',
       idx,
       opCodes[0]!, opCodes[1]!, opCodes[2]!, opCodes[3]!,
+      opCodes[4]!, opCodes[5]!, opCodes[6]!, opCodes[7]!,
+      length,
       slot.jitter,
       slot.seed,
       slot.startChord.root,
