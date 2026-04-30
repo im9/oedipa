@@ -420,9 +420,11 @@ ships first as a zero-risk patcher edit before engine work.
   off/up/down/updown/random with caller-managed `fireIdx` and shared
   `rng` for `random`. Cell-boundary reset of `fireIdx` is the host's
   responsibility; integration tracked in Step 2.
-- [ ] New cases in `tonnetz-test-vectors.json` for RHYTHM gating × ARP
-  mode combinations (per ADR 001) — added after host wiring so vectors
-  describe end-to-end behavior, not pure-helper inputs.
+
+(Test-vector authoring `tonnetz-test-vectors.json` for RHYTHM × ARP
+combinations is parked at Step 4 — it describes end-to-end behavior, so
+it lands after the surface revoke when the host's swing/humanize
+sourcing is final.)
 
 **Step 2 — Host wiring**
 
@@ -439,24 +441,42 @@ ships first as a zero-risk patcher edit before engine work.
 - [x] `rhythm` / `arp` / `voicing` device-shared (not slot-stored).
   Defaults: `voicing='spread'`, `rhythm='legato'`, `arp='off'`,
   `length=4`.
-- [ ] `ticksPerStep` hardcoded to 6 in host (= 16th @ PPQN24);
-  `subdivision` / `swing` / `humanizeVelocity` / `humanizeGate` /
-  `humanizeTiming` / `humanizeDrift` removed from `setParams` surface.
-  Engine swing/humanize values now come from `mapRhythmPreset`.
 - [x] Old 4-cell programs load unchanged; `length` defaults to 4 on
   load.
 
+(The engine surface revoke — `subdivision` / `swing` / 4× `humanize*`
+removal from `setParams` — is parked at Step 4 because the bridge
+needs to drop those param keys at the same wave the patcher loses its
+matching widgets, otherwise orphan setParams calls land in the bridge.)
+
 **Step 3 — jsui cell strip (highest UI risk)**
 
-- [ ] Pure-TS logic layer in `m4l/host`: hit testing, op cycle
-  `P → L → R → — → · → P`, length state, `+` / `−` append/pop (1–8).
-- [ ] jsui wrapper draws cells dynamically; LED row extends to N
-  indicators.
+- [x] Pure-TS logic layer in `m4l/host`: hit testing, **direct-select op
+  palette** (P / L / R / — / · — current op highlighted, click sets
+  `selectedOp`) + click-cell-to-apply (writes `selectedOp` into cell),
+  length state, `+` / `−` append/pop (1–8). No press-to-cycle (memory:
+  next state must be visible). `cellstrip.ts` + 17 unit tests
+  (`PALETTE_OPS`, `clampLength`, `computeLayout`, `hitTest`).
+- [ ] jsui wrapper draws palette row + cell row dynamically; LED row
+  extends to N indicators.
 - [ ] Replaces `obj-cell0..3` in patcher; 32 hidden `live.numbox`
   pre-allocated for per-cell expression (vel / gate / prob / timing).
 
-**Step 4 — Patcher pass**
+**Step 4 — Patcher pass + engine surface revoke**
 
+Single-session bundle: the engine surface revoke and the patcher widget
+removal must ship together, otherwise either the bridge accepts param
+keys that no longer exist on `HostParams` (TS error) or the patcher
+sends to dropped widgets (orphan controls). Order: TS surface revoke
+first (largest test-fixture churn — see "Migration" + ADR 005 cancel
+note), then the patcher edits + bake. Test-vector authoring closes the
+session.
+
+- [ ] Engine surface revoke: `ticksPerStep` hardcoded to 6 in host
+  (= 16th @ PPQN24); `subdivision` / `swing` / `humanizeVelocity` /
+  `humanizeGate` / `humanizeTiming` / `humanizeDrift` removed from
+  `setParams` surface and from `HostParams`. Engine swing/humanize
+  values sourced from `mapRhythmPreset` only. (Was Step 2.)
 - [ ] RHYTHM as `live.menu` (palette above).
 - [ ] ARP as `live.menu`.
 - [ ] `obj-stepdir` `live.tab` → `live.menu`.
@@ -464,6 +484,9 @@ ships first as a zero-risk patcher edit before engine work.
   `obj-humtime`, `obj-humdrift` widgets and wiring.
 - [ ] VOICE / RHYTHM / ARP / StepDir menu widths unified.
 - [ ] Bake.
+- [ ] New cases in `tonnetz-test-vectors.json` for RHYTHM gating × ARP
+  mode combinations (per ADR 001) — describe end-to-end behavior now
+  that the host's feel sourcing is final. (Was Step 1.)
 
 **Step 5 — Manual smoke (Live)**
 
