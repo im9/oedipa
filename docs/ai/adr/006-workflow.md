@@ -316,14 +316,106 @@ flows.
   outlet emitted by `emitSlotRehydrate` and `emitProgramString` after
   each mutation (Phase 3b).
 
-### Phase 7 — Manual smoke
+### Phase 7 — Feel-preset RHYTHM, variable cells, chord rendering
 
-- [ ] Save a Live set with non-default slots; reopen; verify recall.
-- [ ] Paste a string from another Live set; verify load.
-- [ ] During play (chord held), switch slots → cells change, audible
-  chord stays; release → slot's startChord takes over.
-- [ ] Random button → produces different programs each press; ≥1 motion
-  op always present.
+The largest reshaping of Oedipa since Phase A: ports VOICE / ARP from
+inboil's Tonnetz UI, introduces an Oedipa-specific RHYTHM feel-preset,
+expands cell sequence length from fixed-4 to variable 1–8, and revokes
+under-used surface from ADR 005 (swing + four humanize dials) plus the
+long-redundant subdivision selector. inboil's ADR 126 v2 is the reference
+for VOICE and ARP semantics; RHYTHM intentionally diverges from inboil's
+pure gating type — playable feel matters more than clean abstraction.
+
+**Voicing dropdown.** `voicing ∈ {close, spread, drop2}` moves from the
+122-px `live.tab` to a `live.menu`. Pure UI compaction; `applyVoicing` is
+already in the engine.
+
+**RHYTHM as feel preset.** Each preset bundles a gating pattern with
+implicit swing + humanize side effects, driving the ADR 005 engine code
+internally. Default `rhythm='legato'` matches Phase A's gate=1.0
+head-attack-and-sustain feel — adding the dropdown does not change
+perceived behavior at zero. Within-cell ticks evaluate against
+`subdivision = 16th` (hardcoded — see "Removed surface" below). ARP and
+rhythm index both reset at every cell boundary.
+
+| Preset     | Gating       | Swing | Humanize | Use                              |
+| ---------- | ------------ | ----- | -------- | -------------------------------- |
+| `legato`   | head-only    | 0     | 0        | Pad style (Phase A default-eq)   |
+| `chord`    | every tick   | 0     | 0        | Tight 16th chord stab            |
+| `straight` | onbeat       | 0     | 0        | Quarter-note pulse               |
+| `offbeat`  | offbeat      | 0     | 0        | 8th-note off-beat                |
+| `shuffle`  | offbeat      | 0.6   | 0        | Built-in swung 8ths              |
+| `loose`    | every tick   | 0     | mid      | Human feel, vel/gate/time wiggle |
+
+`syncopated`, `euclidean`, `turing` deferred — additive later without
+breaking compatibility.
+
+**ARP.** Each active rhythm tick plays one chord note instead of the full
+voiced chord; advances per active tick, resets at cell boundary. Modes:
+`off` (default), `up`, `down`, `updown`, `random` (seed shared with cells
+RNG). ARP only "spreads" a chord when RHYTHM fires more than once per cell
+(`chord` / `offbeat` / `shuffle` / `loose`); with `legato`, ARP plays one
+note at the cell head, with `straight`, one per quarter.
+
+**Variable cell length (1–8).** The four fixed `live.tab` widgets at
+`[626/750, 62/92]` are replaced by a single `jsui` cell strip rendering the
+active cells dynamically. Click a pill to cycle op
+`P → L → R → — → · → P` (cycling is acceptable here per memory because the
+strip is high-frequency and feedback is immediate). `+` / `−` buttons
+append / pop the last cell (Min 1, Max 8). LED row underneath extends to
+N indicators. Pure-TS logic layer in `m4l/host` (hit testing, op cycling,
+state); jsui wrapper draws. Hidden persistence: all 8 cells × 4 expression
+fields (vel / gate / prob / timing) = 32 hidden `live.numbox` pre-allocated;
+indices `≥ length` are ignored at engine time. The slot-store program
+format already serializes cells as a string (Phase 1), so variable length
+needs no new persistence.
+
+**Removed surface.** Engine logic stays where applicable; what's removed is
+the device-strip widget and its wiring.
+
+| Widget            | Origin    | Disposition                                     |
+| ----------------- | --------- | ----------------------------------------------- |
+| `obj-subdivision` | (initial) | `ticksPerStep` hardcoded to 6 (= 16th @ PPQN24) |
+| `obj-swing`       | ADR 005   | Internal state driven by RHYTHM preset          |
+| `obj-humvel`      | ADR 005   | Internal state driven by RHYTHM preset          |
+| `obj-humgate`     | ADR 005   | Internal state driven by RHYTHM preset          |
+| `obj-humtime`     | ADR 005   | Internal state driven by RHYTHM preset          |
+| `obj-humdrift`    | ADR 005   | Removed (no preset role; long-term drift dropped) |
+| `obj-cell0..3`    | ADR 003   | Replaced by jsui strip                          |
+
+`obj-stepdir` (live.tab) compacts to `live.menu` per the
+no-wastefully-flat-widgets directive. `obj-seventh` and `obj-level`
+unchanged. ADR 005's open Phase 5 (humanize-axis expansion) is **canceled**
+by this revocation.
+
+**Defaults.** `voicing='spread'`, `rhythm='legato'`, `arp='off'`,
+`cells=[R, L, L, R]`, `length=4`. `rhythm`, `arp`, `voicing` remain
+**device-shared**; slot store keeps `cells` / `jitter` / `seed` /
+`startChord` per Axis 1.
+
+**Implementation order.**
+
+1. Engine: `RhythmPreset` and `ArpMode` types; gating evaluation in
+   `stepBoundary` keyed off the preset's gating column; ARP state machine
+   inside the cell loop with cell-boundary reset; internal mapper
+   `rhythmPreset → { gating, swing, humanize }`. New cases in
+   `tonnetz-test-vectors.json` per ADR 001.
+2. Host: `setParams` accepts `rhythm`, `arp`, `length`; slot-store routing
+   extended to 8 cells per slot (was 4).
+3. jsui cell strip — highest UI risk, do once the engine + host accept
+   variable length.
+4. Patcher: VOICE / RHYTHM / ARP / StepDir as `live.menu`; remove
+   subdivision / swing / humanize widgets and wiring; bake.
+5. Manual smoke in Live.
+
+The voicing-dropdown step alone (just the patcher edit) can ship as a
+zero-risk warm-up commit before the engine + jsui work begins.
+
+**Migration.** Live sets saved before Phase 7 retain hidden subdivision /
+swing / humanize values via Live's own param-restore mechanism; engine
+ignores them. No automatic mapping from old swing/humanize values to a
+RHYTHM preset guess — first device load post-Phase 7 → `rhythm='legato'`.
+Old 4-cell programs load unchanged; `length` defaults to 4.
 
 ## Per-target notes
 
