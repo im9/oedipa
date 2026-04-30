@@ -426,20 +426,24 @@ ships first as a zero-risk patcher edit before engine work.
 
 **Step 2 — Host wiring**
 
-- [ ] Tick loop integrates `gatingFires` + `arpIndex`; per-cell
+- [x] Tick loop integrates `gatingFires` + `arpIndex`; per-cell
   `fireIdx` counter advances on each ARP-active fire, resets to 0 at
   every cell boundary.
-- [ ] `setParams` accepts `rhythm`, `arp`, `length` (1–8).
-- [ ] Slot-store routing extended to 8 cells per slot (was 4); indices
-  `≥ length` ignored at engine time.
-- [ ] `rhythm` / `arp` / `voicing` device-shared (not slot-stored).
+- [x] `setParams` accepts `rhythm`, `arp`, `length` (1–8).
+- [x] Slot-store routing extended to 8 cells per slot (was 4); indices
+  `≥ length` ignored at engine time. Engine-side: `captureSlot` slices
+  by `length`, `applySlotCells` extends the cells pool when loading a
+  longer program and updates `length`, `randomizeActiveSlot` generates
+  cells matching the active length. Bridge `slot-store` / `setSlotFields`
+  payload widening to 8 cells is bundled with the patcher pass (Step 4).
+- [x] `rhythm` / `arp` / `voicing` device-shared (not slot-stored).
   Defaults: `voicing='spread'`, `rhythm='legato'`, `arp='off'`,
   `length=4`.
 - [ ] `ticksPerStep` hardcoded to 6 in host (= 16th @ PPQN24);
   `subdivision` / `swing` / `humanizeVelocity` / `humanizeGate` /
   `humanizeTiming` / `humanizeDrift` removed from `setParams` surface.
   Engine swing/humanize values now come from `mapRhythmPreset`.
-- [ ] Old 4-cell programs load unchanged; `length` defaults to 4 on
+- [x] Old 4-cell programs load unchanged; `length` defaults to 4 on
   load.
 
 **Step 3 — jsui cell strip (highest UI risk)**

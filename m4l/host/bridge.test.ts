@@ -189,6 +189,50 @@ describe('Bridge — cellLength (cell duration in bars)', () => {
   })
 })
 
+// ── ADR 006 Phase 7 — RHYTHM/ARP/length params ───────────────────────────
+//
+// Slice (a) wires the new params through Bridge.setParams. They are
+// device-shared per ADR 006 §"Phase 7": rhythm/arp don't reach the slot
+// store, length stays out of slot-store too (cell ops are slot-stored, but
+// active count is a device-level cap).
+
+describe('Bridge — rhythm / arp / length passthrough (Phase 7)', () => {
+  function hostFeel(b: Bridge): { rhythm: string; arp: string; length: number } {
+    return (b as unknown as { host: { params: { rhythm: string; arp: string; length: number } } })
+      .host.params
+  }
+
+  test("setParams('rhythm', 'chord') reaches the host without touching slot-store", () => {
+    const h = new Harness()
+    const b = new Bridge(h.deps)
+    h.outlets.length = 0
+    b.setParams('rhythm', 'chord')
+    assert.equal(hostFeel(b).rhythm, 'chord')
+    const slotStore = h.outlets.filter(o => o.channel === 'slot-store')
+    assert.equal(slotStore.length, 0, 'rhythm is device-shared, not slot-stored')
+  })
+
+  test("setParams('arp', 'up') reaches the host without touching slot-store", () => {
+    const h = new Harness()
+    const b = new Bridge(h.deps)
+    h.outlets.length = 0
+    b.setParams('arp', 'up')
+    assert.equal(hostFeel(b).arp, 'up')
+    const slotStore = h.outlets.filter(o => o.channel === 'slot-store')
+    assert.equal(slotStore.length, 0, 'arp is device-shared, not slot-stored')
+  })
+
+  test("setParams('length', 2) reaches the host without touching slot-store", () => {
+    const h = new Harness()
+    const b = new Bridge(h.deps)
+    h.outlets.length = 0
+    b.setParams('length', 2)
+    assert.equal(hostFeel(b).length, 2)
+    const slotStore = h.outlets.filter(o => o.channel === 'slot-store')
+    assert.equal(slotStore.length, 0, 'length is device-shared, not slot-stored')
+  })
+})
+
 describe('Bridge — step timing estimator', () => {
   test('msPerPos starts at 0 and stays 0 until two steps observed', () => {
     const h = new Harness()

@@ -73,6 +73,12 @@ const DEFAULT_PARAMS: HostParams = {
   humanizeTiming: 0,
   humanizeDrift: 0,
   outputLevel: 1.0,
+  // ADR 006 Phase 7 — RHYTHM/ARP/length defaults. legato preserves Phase A
+  // single-fire-per-cell behavior; off emits the full chord. length=4
+  // matches the 4-cell default; engine ignores indices >= length.
+  rhythm: 'legato',
+  arp: 'off',
+  length: 4,
 }
 
 // User-facing cell duration is expressed in BARS. Internally the engine

@@ -31,6 +31,10 @@ function baseParams(overrides: Partial<HostParams> = {}): HostParams {
     humanizeTiming: 0,
     humanizeDrift: 0,
     outputLevel: 1.0,
+    // ADR 006 Phase 7 defaults — legato + off preserve Phase A behavior.
+    rhythm: 'legato',
+    arp: 'off',
+    length: 4,
     ...overrides,
   }
 }
@@ -2114,5 +2118,371 @@ describe('Host slots — ADR 006 Phase 2', () => {
         assert.deepEqual(pcSet(host.startChord), [4, 7, 11])
       })
     })
+  })
+})
+
+// ── ADR 006 Phase 7 — RHYTHM gating ──────────────────────────────────────
+//
+// rhythm='legato' (default) preserves Phase A single-fire-per-cell behavior
+// — verified implicitly by the existing Host.step suite which doesn't set
+// rhythm. New presets fire multiple times per cell per gating mode.
+
+describe('Host.step — RHYTHM gating (Phase 7)', () => {
+  test("rhythm='chord' fires the held chord at every sub-step within a cell", () => {
+    // spt=4, ticksPerStep=1 → cell = 4 sub-steps. cells=[hold] keeps chord
+    // at startChord across the cell so each refire is the same triad.
+    const host = new Host(baseParams({
+      cells: cells('hold'),
+      stepsPerTransform: 4,
+      rhythm: 'chord',
+    }))
+    assert.equal(pitchesOf(host.step(0), 'noteOn').length, 3, 'pos=0 init fires startChord')
+    for (const p of [1, 2, 3]) {
+      assert.equal(pitchesOf(host.step(p), 'noteOn').length, 3, `pos=${p} every-tick refire`)
+    }
+  })
+
+  test("rhythm='straight' fires only on the quarter (idx % 4 === 0)", () => {
+    // spt=8, ticksPerStep=1 → 8 sub-steps per cell. onbeat fires at idx=0,4.
+    const host = new Host(baseParams({
+      cells: cells('hold'),
+      stepsPerTransform: 8,
+      rhythm: 'straight',
+    }))
+    assert.equal(pitchesOf(host.step(0), 'noteOn').length, 3, 'pos=0 onbeat fires')
+    for (const p of [1, 2, 3]) {
+      assert.equal(pitchesOf(host.step(p), 'noteOn').length, 0, `pos=${p} silent`)
+    }
+    assert.equal(pitchesOf(host.step(4), 'noteOn').length, 3, 'pos=4 onbeat fires')
+    for (const p of [5, 6, 7]) {
+      assert.equal(pitchesOf(host.step(p), 'noteOn').length, 0, `pos=${p} silent`)
+    }
+  })
+
+  test("rhythm='offbeat' fires only at idx % 4 === 2", () => {
+    const host = new Host(baseParams({
+      cells: cells('hold'),
+      stepsPerTransform: 8,
+      rhythm: 'offbeat',
+    }))
+    assert.equal(pitchesOf(host.step(0), 'noteOn').length, 0, 'pos=0 offbeat skips downbeat')
+    assert.equal(pitchesOf(host.step(1), 'noteOn').length, 0)
+    assert.equal(pitchesOf(host.step(2), 'noteOn').length, 3, 'pos=2 offbeat fires')
+    for (const p of [3, 4, 5]) {
+      assert.equal(pitchesOf(host.step(p), 'noteOn').length, 0, `pos=${p} silent`)
+    }
+    assert.equal(pitchesOf(host.step(6), 'noteOn').length, 3, 'pos=6 offbeat fires')
+    assert.equal(pitchesOf(host.step(7), 'noteOn').length, 0)
+  })
+
+  test("rhythm='legato' (default) preserves single-fire-per-cell behavior", () => {
+    // Regression check: head-only gating fires only at the cell head.
+    const host = new Host(baseParams({
+      cells: cells('hold'),
+      stepsPerTransform: 4,
+    }))
+    assert.equal(pitchesOf(host.step(0), 'noteOn').length, 3, 'pos=0 cell head fires')
+    for (const p of [1, 2, 3]) {
+      assert.equal(pitchesOf(host.step(p), 'noteOn').length, 0, `pos=${p} silent (head-only)`)
+    }
+  })
+
+  test('within-cell refires use the same cell chord across sub-steps', () => {
+    // cells=[P], spt=4: cell 0 boundary at pos=4 applies P → C major flips
+    // to C minor. Sub-steps 5..7 should refire the SAME minor chord.
+    const host = new Host(baseParams({
+      cells: cells('P'),
+      stepsPerTransform: 4,
+      rhythm: 'chord',
+    }))
+    host.step(0); host.step(1); host.step(2); host.step(3)
+    const ev4 = host.step(4)
+    const pcs4 = pitchesOf(ev4, 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    // Reason: P inverts major↔minor with shared root → C minor pcs.
+    assert.deepEqual(pcs4, [0, 3, 7], 'pos=4 cell 0 P → C minor')
+    for (const p of [5, 6, 7]) {
+      const ev = host.step(p)
+      const pcs = pitchesOf(ev, 'noteOn').map(x => x % 12).sort((a, b) => a - b)
+      assert.deepEqual(pcs, [0, 3, 7], `pos=${p} refires C minor`)
+    }
+  })
+})
+
+// ── ADR 006 Phase 7 — ARP picker ─────────────────────────────────────────
+
+describe('Host.step — ARP (Phase 7)', () => {
+  test("arp='up' rotates voiced notes within a cell, resets at cell boundary", () => {
+    // cells=[P] with length=1, spt=4: init period (pos 0..3) holds startChord
+    // (C major); cell 0 boundary at pos=4 applies P → C minor [60,63,67].
+    // arp='up' with chord size 3 cycles voiced indices 0,1,2,0 within each
+    // cell; fireIdx resets to 0 at the boundary. The fact that pos=4 lands
+    // on ARP[0]=60 distinguishes reset (would yield 60) from no-reset (would
+    // yield ARP[4%3]=ARP[1]=63).
+    const host = new Host(baseParams({
+      cells: cells('P'),
+      stepsPerTransform: 4,
+      length: 1,
+      voicing: 'close',
+      rhythm: 'chord',
+      arp: 'up',
+    }))
+    // C major voiced = [60, 64, 67]
+    assert.deepEqual(pitchesOf(host.step(0), 'noteOn'), [60], 'pos=0 ARP[0]')
+    assert.deepEqual(pitchesOf(host.step(1), 'noteOn'), [64], 'pos=1 ARP[1]')
+    assert.deepEqual(pitchesOf(host.step(2), 'noteOn'), [67], 'pos=2 ARP[2]')
+    assert.deepEqual(pitchesOf(host.step(3), 'noteOn'), [60], 'pos=3 ARP wraps within cell')
+    // pos=4: cell 0 boundary, P → C minor [60,63,67]. fireIdx resets → ARP[0]=60.
+    assert.deepEqual(pitchesOf(host.step(4), 'noteOn'), [60], 'pos=4 boundary resets fireIdx')
+    assert.deepEqual(pitchesOf(host.step(5), 'noteOn'), [63], 'pos=5 ARP[1] of C minor')
+  })
+
+  test("arp='down' rotates from highest voiced index to lowest", () => {
+    // Init period (pos 0..7) holds C major; arpIndex(down, 3, fireIdx) =
+    // 2,1,0,2,...
+    const host = new Host(baseParams({
+      cells: cells('P'),
+      stepsPerTransform: 8,
+      length: 1,
+      voicing: 'close',
+      rhythm: 'chord',
+      arp: 'down',
+    }))
+    assert.deepEqual(pitchesOf(host.step(0), 'noteOn'), [67], 'down[0]=2')
+    assert.deepEqual(pitchesOf(host.step(1), 'noteOn'), [64], 'down[1]=1')
+    assert.deepEqual(pitchesOf(host.step(2), 'noteOn'), [60], 'down[2]=0')
+    assert.deepEqual(pitchesOf(host.step(3), 'noteOn'), [67], 'down[3]=2 (wraps)')
+  })
+
+  test("arp='off' (default) emits the full voiced chord", () => {
+    // Regression check: with arp='off', a multi-fire RHYTHM still emits the
+    // full voiced chord on each fire.
+    const host = new Host(baseParams({
+      cells: cells('P'),
+      stepsPerTransform: 4,
+      length: 1,
+      voicing: 'close',
+      rhythm: 'chord',
+    }))
+    assert.deepEqual(pitchesOf(host.step(0), 'noteOn').sort((a, b) => a - b), [60, 64, 67])
+    assert.deepEqual(pitchesOf(host.step(1), 'noteOn').sort((a, b) => a - b), [60, 64, 67])
+  })
+
+  test("arp='updown' bounces through voiced indices without replaying endpoints", () => {
+    // chord size 3 → period = 2*(3-1) = 4 → indices 0,1,2,1,0,1,2,1,...
+    const host = new Host(baseParams({
+      cells: cells('P'),
+      stepsPerTransform: 8,
+      length: 1,
+      voicing: 'close',
+      rhythm: 'chord',
+      arp: 'updown',
+    }))
+    assert.deepEqual(pitchesOf(host.step(0), 'noteOn'), [60], 'updown[0]=0')
+    assert.deepEqual(pitchesOf(host.step(1), 'noteOn'), [64], 'updown[1]=1')
+    assert.deepEqual(pitchesOf(host.step(2), 'noteOn'), [67], 'updown[2]=2')
+    assert.deepEqual(pitchesOf(host.step(3), 'noteOn'), [64], 'updown[3]=1 (descending)')
+    assert.deepEqual(pitchesOf(host.step(4), 'noteOn'), [60], 'updown[4]=0 (period wraps)')
+  })
+
+  test("arp='random' is seed-deterministic across two fresh hosts", () => {
+    // All sub-steps fire within the init period; arp='random' draws one
+    // index per fire from the host's reseeded mulberry32 stream. Two fresh
+    // hosts with matching seed must produce identical ARP picks.
+    const params = baseParams({
+      cells: cells('P'),
+      stepsPerTransform: 8,
+      length: 1,
+      voicing: 'close',
+      rhythm: 'chord',
+      arp: 'random',
+      seed: 12345,
+    })
+    const a = new Host(params)
+    const b = new Host(params)
+    for (let p = 0; p < 8; p++) {
+      const evA = pitchesOf(a.step(p), 'noteOn')
+      const evB = pitchesOf(b.step(p), 'noteOn')
+      assert.deepEqual(evA, evB, `pos=${p} ARP random matches`)
+      assert.equal(evA.length, 1, `pos=${p} fires exactly one ARP note`)
+    }
+  })
+})
+
+// ── ADR 006 Phase 7 — variable cell length ───────────────────────────────
+
+describe('Host.params — length (Phase 7)', () => {
+  test('length < cells.length restricts active cells', () => {
+    // cells=[P,hold,hold,hold]: with length=4 the engine cycles through all
+    // four cells (P, then three silent holds, then wraps back to P at pos=5).
+    // With length=1 only cell 0 is active → P fires at every boundary.
+    const longParams = baseParams({
+      cells: cells('P', 'hold', 'hold', 'hold'),
+      stepsPerTransform: 1,
+      length: 4,
+    })
+    const shortParams = baseParams({
+      cells: cells('P', 'hold', 'hold', 'hold'),
+      stepsPerTransform: 1,
+      length: 1,
+    })
+    const host4 = new Host(longParams)
+    const host1 = new Host(shortParams)
+    host4.step(0); host1.step(0)
+    // pos=1: both fire cell 0 (P) → C minor
+    assert.equal(pitchesOf(host4.step(1), 'noteOn').length, 3, 'length=4 pos=1 fires P')
+    assert.equal(pitchesOf(host1.step(1), 'noteOn').length, 3, 'length=1 pos=1 fires P')
+    // pos=2: length=4 visits cell 1 (hold, silent); length=1 wraps to cell 0 (P)
+    assert.equal(pitchesOf(host4.step(2), 'noteOn').length, 0, 'length=4 pos=2 hold cell silent')
+    assert.equal(pitchesOf(host1.step(2), 'noteOn').length, 3, 'length=1 pos=2 P wraps')
+    // pos=5: length=4 wraps back to cell 0 (P fires again); length=1 fires P
+    assert.equal(pitchesOf(host4.step(5), 'noteOn').length, 3, 'length=4 pos=5 wraps to P')
+    assert.equal(pitchesOf(host1.step(5), 'noteOn').length, 3, 'length=1 pos=5 P wraps')
+  })
+
+  test('length is clamped at cells.length (no out-of-bounds reads)', () => {
+    // cells.length=2, length=8 → effective active = 2; engine sees cells[0..1].
+    const host = new Host(baseParams({
+      cells: cells('P', 'L'),
+      stepsPerTransform: 1,
+      length: 8,
+    }))
+    host.step(0)
+    // pos=1: cell 0 P → minor
+    const pcs1 = pitchesOf(host.step(1), 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.deepEqual(pcs1, [0, 3, 7], 'pos=1 fires C minor (P from C major)')
+    // pos=3: cells [P,L] wraps (length clamped to 2) → cell 0 P again.
+    // Sequence after init: P → minor, L → ?, P → ?, L → ?
+    // At minimum, verify pos=3 produces SOME chord change (no out-of-range crash).
+    const pcs3 = pitchesOf(host.step(3), 'noteOn').map(p => p % 12).sort((a, b) => a - b)
+    assert.equal(pcs3.length, 3, 'pos=3 fires a triad (no out-of-range)')
+  })
+})
+
+// ── ADR 006 Phase 7 — variable-length slot persistence (slice b) ─────────
+//
+// captureSlot must serialize only the active region (cells[0..length-1]) so
+// switching back to the slot reproduces the same active count. applySlot
+// must update length to match the loaded program string and extend the
+// cells pool when loading a longer program. Round-trips at lengths 1, 4,
+// and 8 must be lossless.
+
+describe('Host slots — variable cell length (Phase 7 slice b)', () => {
+  test('captureSlot serializes only the active region (length < cells.length)', () => {
+    // cells=[P,L,L,R] but length=2 → slot.cells should be "PL", not "PLLR".
+    const host = new Host(baseParams({
+      cells: cells('P', 'L', 'L', 'R'),
+      length: 2,
+    }))
+    const slot = host.getSlot(host.activeSlot)!
+    assert.equal(slot.cells, 'PL', 'slot persists only the active 2 cells')
+  })
+
+  test('captureSlot at length=cells.length matches pre-Phase-7 behavior', () => {
+    // Regression: when length === cells.length, slot serialization is
+    // identical to the legacy form. Guards against breaking saved Live sets.
+    const host = new Host(baseParams({
+      cells: cells('P', 'L', 'R', 'hold'),
+      length: 4,
+    }))
+    assert.equal(host.getSlot(host.activeSlot)!.cells, 'PLR_')
+  })
+
+  test('switchSlot to an 8-cell program extends cells pool and sets length=8', () => {
+    // Default device starts with 4-cell pool. Loading an 8-char cells string
+    // must extend the pool (so cells 4..7 receive the new ops) and update
+    // length so the engine fires through all 8. Force a fresh captureSlot
+    // by changing seed (auto-saves into slots[1]) so the round-trip reflects
+    // the active params, not the stored input.
+    const host = new Host(baseParams())
+    host.setSlot(1, {
+      cells: 'PLRPLR_-',
+      startChord: { root: 0, quality: 'maj' },
+      jitter: 0,
+      seed: 0,
+    })
+    host.switchSlot(1)
+    host.setParams({ seed: 42 })
+    const captured = host.getSlot(1)!
+    assert.equal(captured.cells, 'PLRPLR_-', 'active params round-trip an 8-cell program')
+    assert.equal(captured.seed, 42)
+  })
+
+  test('switchSlot to a shorter program shrinks the active length', () => {
+    // Start with an 8-cell slot, switch to a 4-cell slot, then auto-save.
+    // captureSlot reflects only the new 4-cell active region; cells beyond
+    // remain in the pool (untouched) but are inert per the length cap.
+    const host = new Host(baseParams())
+    host.setSlot(1, {
+      cells: 'PLRPLR_-',
+      startChord: { root: 0, quality: 'maj' },
+      jitter: 0,
+      seed: 0,
+    })
+    host.switchSlot(1)
+    host.setSlot(2, {
+      cells: 'PLLR',
+      startChord: { root: 0, quality: 'maj' },
+      jitter: 0,
+      seed: 0,
+    })
+    host.switchSlot(2)
+    host.setParams({ seed: 99 })
+    assert.equal(host.getSlot(2)!.cells, 'PLLR', 'active region shrinks to 4 chars')
+  })
+
+  test('captureSlot round-trip preserves cells across switchSlot at lengths 1, 4, 8', () => {
+    // For each length, set a slot, switch into it, force a fresh capture
+    // (auto-save via seed change), then verify the cells string matches
+    // the input. Tests the full applySlotCells → captureSlot path against
+    // the active params (not just the stored slot reference).
+    for (const cellsStr of ['P', 'PLLR', 'PLRPLR_-']) {
+      const host = new Host(baseParams())
+      host.setSlot(1, {
+        cells: cellsStr,
+        startChord: { root: 0, quality: 'maj' },
+        jitter: 0.25,
+        seed: 7,
+      })
+      host.switchSlot(1)
+      host.setParams({ seed: 8 }) // force syncActiveSlot
+      assert.equal(host.getSlot(1)!.cells, cellsStr, `length=${cellsStr.length} round-trip`)
+    }
+  })
+
+  test('randomizeActiveSlot generates cells matching the active length', () => {
+    // length=2 → randomized slot has exactly 2 cells. length=8 → 8 cells.
+    // Reason: randomize must respect the user's chosen pattern length so
+    // cycling pattern length isn't accidentally extended on regenerate.
+    let counter = 0
+    const fakeRng = () => {
+      const seq = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.05, 0.15]
+      const v = seq[counter % seq.length]!
+      counter++
+      return v
+    }
+    const host2 = new Host(baseParams({ length: 2 }))
+    host2.randomizeActiveSlot(fakeRng)
+    assert.equal(host2.getSlot(host2.activeSlot)!.cells.length, 2, 'length=2 → 2 cells generated')
+
+    counter = 0
+    const host8 = new Host(baseParams({
+      cells: [...cells('P', 'L', 'L', 'R', 'hold', 'hold', 'hold', 'hold')],
+      length: 8,
+    }))
+    host8.randomizeActiveSlot(fakeRng)
+    assert.equal(host8.getSlot(host8.activeSlot)!.cells.length, 8, 'length=8 → 8 cells generated')
+  })
+
+  test('setParams with new length triggers auto-save into the active slot', () => {
+    // Reason: length is part of the slot's persistent identity (via cells
+    // string length). Changing it must mirror into slots[active] like other
+    // slot fields, so the patcher's slot-store stays in sync.
+    const host = new Host(baseParams({
+      cells: cells('P', 'L', 'L', 'R'),
+      length: 4,
+    }))
+    assert.equal(host.getSlot(0)!.cells, 'PLLR')
+    host.setParams({ length: 2 })
+    assert.equal(host.getSlot(0)!.cells, 'PL', 'length change auto-saves shorter cells string')
   })
 })
