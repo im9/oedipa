@@ -26,7 +26,7 @@ import {
   type Voicing,
   type WalkState,
 } from '../engine/tonnetz.ts'
-import { cellsToString, parseSlot, stringToCells, type Slot, type SlotQuality } from './slot.ts'
+import { cellsToString, parseSlot, serializeSlot, stringToCells, type Slot, type SlotQuality } from './slot.ts'
 import { FACTORY_PRESETS } from './presets.ts'
 
 // delayPos is in pos-units (the same domain as step(pos)). Undefined or 0
@@ -80,6 +80,10 @@ export interface HostParams {
 
 // ADR 006 §"Axis 1" — 4 snapshot slots in the device.
 const SLOT_COUNT = 4
+
+// ADR 006 §"Axis 4" — random-generate alphabet. Uniform draw per cell with
+// re-roll until ≥1 motion op (P/L/R) is present in the cell string.
+const RANDOM_OPS: readonly Op[] = ['P', 'L', 'R', 'hold', 'rest']
 
 export class Host {
   private params: HostParams
@@ -171,6 +175,58 @@ export class Host {
     this.setSlot(this.activeSlotIdx, slot)
     this.switchSlot(this.activeSlotIdx)
     return true
+  }
+
+  // ADR 006 Phase 6 — program string for the active slot. Reflects the
+  // SAVED slot, not live params: un-saved per-param edits do not change
+  // the displayed string until the user calls saveCurrent. Updates on
+  // switchSlot / saveCurrent / randomizeActiveSlot / loadFactoryPreset
+  // (all paths that mutate the slot).
+  getActiveProgramString(): string {
+    return serializeSlot(this.slots[this.activeSlotIdx]!)
+  }
+
+  // ADR 006 Phase 6 — paste handler. Parses a program string and loads it
+  // into the active slot via the same setSlot + switchSlot composition as
+  // loadFactoryPreset. Returns false on malformed input (no state change).
+  loadFromProgramString(s: string): boolean {
+    const slot = parseSlot(s)
+    if (slot === null) return false
+    this.setSlot(this.activeSlotIdx, slot)
+    this.switchSlot(this.activeSlotIdx)
+    return true
+  }
+
+  // ADR 006 Phase 5 — randomize the active slot. Generates fresh cells (with
+  // ≥1 motion op constraint), jitter (0..0.6, 3-decimal), seed (uint), and
+  // startChord (uniform root × quality), then setSlot + switchSlot so the
+  // new program is persisted to the slot AND audibly applied via the same
+  // path as loadFactoryPreset. RNG is injected for testability; production
+  // callers (the m4l bridge) pass Math.random.
+  randomizeActiveSlot(rng: () => number = Math.random): void {
+    const cellCount = this.params.cells.length
+    let cellsStr = ''
+    if (cellCount > 0) {
+      while (true) {
+        const ops: Op[] = []
+        for (let i = 0; i < cellCount; i++) {
+          ops.push(RANDOM_OPS[Math.floor(rng() * RANDOM_OPS.length)]!)
+        }
+        if (ops.some(op => op === 'P' || op === 'L' || op === 'R')) {
+          cellsStr = cellsToString(ops)
+          break
+        }
+      }
+    }
+    // jitter quantized to 3 decimals so the in-memory slot round-trips
+    // through serializeSlot's 3-decimal format identically.
+    const jitter = Math.round(rng() * 600) / 1000
+    const seed = Math.floor(rng() * 0x100000000) >>> 0
+    const root = Math.floor(rng() * 12)
+    const quality: SlotQuality = rng() < 0.5 ? 'maj' : 'min'
+    const slot: Slot = { cells: cellsStr, startChord: { root, quality }, jitter, seed }
+    this.setSlot(this.activeSlotIdx, slot)
+    this.switchSlot(this.activeSlotIdx)
   }
 
   // Switch to slot `idx` and apply its contents. cells/jitter/seed apply

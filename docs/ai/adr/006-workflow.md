@@ -204,16 +204,28 @@ pass — same `.maxpat` file, one `pnpm bake`.
 
 ### Phase 5 — Random generate
 
-- [ ] RNG cells with `≥1 motion op` constraint (re-roll on violation).
-- [ ] Random jitter (0–0.6), seed (uint), startChord (root × quality).
+- [x] RNG cells with `≥1 motion op` constraint (re-roll on violation).
+- [x] Random jitter (0–0.6), seed (uint), startChord (root × quality).
+  Implemented as `Host.randomizeActiveSlot(rng?)` composing setSlot +
+  switchSlot — symmetric with `loadFactoryPreset`. RNG injectable for
+  test determinism; production callers pass `Math.random`.
 - [ ] `live.button` triggers gen → serialize → load into active slot.
+  **Deferred to Phase 3 (patcher pass).**
 
 ### Phase 6 — Program string copy/paste
 
+- [x] `Host.getActiveProgramString()` — serializeSlot of the saved active
+  slot. Reflects switchSlot / saveCurrent / random / factory load. Does
+  NOT track un-saved per-param edits.
+- [x] `Host.loadFromProgramString(s)` — parseSlot + setSlot + switchSlot,
+  symmetric with `loadFactoryPreset`. Returns false on malformed input.
 - [ ] Visible `live.text` field showing the active slot's serialized form.
+  **Deferred to Phase 3 (patcher pass).**
 - [ ] On user paste + commit → parse → load into active slot.
+  **Deferred to Phase 3 (patcher pass).**
 - [ ] Field updates whenever active slot changes (incl. after random,
-  factory load, save-current).
+  factory load, save-current). **Deferred to Phase 3 (bridge wiring will
+  push `getActiveProgramString()` to the `live.text` after each mutation).**
 
 ### Phase 7 — Manual smoke
 

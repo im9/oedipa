@@ -1,8 +1,8 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { makeCell, type Op } from '../engine/tonnetz.ts'
+import { makeCell, mulberry32, type Op } from '../engine/tonnetz.ts'
 import { Host, type HostParams, type NoteEvent } from './host.ts'
-import { parseSlot, type Slot } from './slot.ts'
+import { parseSlot, serializeSlot, type Slot } from './slot.ts'
 import { FACTORY_PRESETS } from './presets.ts'
 
 function cells(...ops: Op[]): HostParams['cells'] {
@@ -1780,6 +1780,236 @@ describe('Host slots — ADR 006 Phase 2', () => {
       assert.equal(host.loadFactoryPreset(-1), false)
       assert.equal(host.loadFactoryPreset(FACTORY_PRESETS.length), false)
       assert.deepEqual(host.getSlot(0), before)
+    })
+  })
+
+  describe('randomizeActiveSlot — ADR 006 Phase 5', () => {
+    test('writes to the active slot', () => {
+      const host = new Host(baseParams())
+      host.switchSlot(2)
+      const before = host.getSlot(2)
+      host.randomizeActiveSlot(mulberry32(1))
+      assert.notDeepEqual(host.getSlot(2), before)
+    })
+
+    test('writes only to the active slot', () => {
+      const host = new Host(baseParams())
+      const before = [0, 1, 2, 3].map(i => host.getSlot(i)!)
+      host.switchSlot(2)
+      host.randomizeActiveSlot(mulberry32(99))
+      assert.notDeepEqual(host.getSlot(2), before[2])
+      for (const i of [0, 1, 3]) {
+        assert.deepEqual(host.getSlot(i), before[i])
+      }
+    })
+
+    test('cells string length matches the host cells.length', () => {
+      const host = new Host(baseParams()) // 4 cells
+      host.randomizeActiveSlot(mulberry32(0))
+      assert.equal(host.getSlot(0)!.cells.length, 4)
+    })
+
+    test('cells always contains ≥1 motion op (re-roll constraint)', () => {
+      // ADR 006 §"Axis 4" — All-hold / all-rest programs have no harmonic
+      // motion and aren't useful output; re-roll until ≥1 of P/L/R appears.
+      // Sweep many seeds — each result must contain at least one motion op.
+      for (let s = 0; s < 200; s++) {
+        const host = new Host(baseParams())
+        host.randomizeActiveSlot(mulberry32(s))
+        const cells = host.getSlot(0)!.cells
+        assert.match(cells, /[PLR]/, `seed ${s} produced cells "${cells}" without motion op`)
+      }
+    })
+
+    test('re-roll triggers when first batch is all-hold/all-rest', () => {
+      // RANDOM_OPS = ['P', 'L', 'R', 'hold', 'rest']. floor(rng()*5):
+      //   0.6 → 3 (hold), 0.0 → 0 (P).
+      // First 4 draws = all hold (no motion op) → re-roll. Next 4 draws =
+      // P, P, P, hold → valid. Trailing draws feed jitter/seed/root/quality.
+      const draws = [
+        0.6, 0.6, 0.6, 0.6, // first batch — all hold (rejected)
+        0.0, 0.0, 0.0, 0.6, // second batch — PPP_ (accepted)
+        0.5, 0.5, 0.5, 0.5, // jitter, seed, root, quality
+      ]
+      let i = 0
+      const rng = () => draws[i++]!
+      const host = new Host(baseParams())
+      host.randomizeActiveSlot(rng)
+      assert.equal(host.getSlot(0)!.cells, 'PPP_')
+    })
+
+    test('field ranges hold across many seeds', () => {
+      // ADR 006 §"Axis 4": jitter 0..0.6; seed uint; root 0..11; quality
+      // maj|min. Sweep 200 seeds — every generated slot must satisfy these.
+      for (let s = 0; s < 200; s++) {
+        const host = new Host(baseParams())
+        host.randomizeActiveSlot(mulberry32(s))
+        const slot = host.getSlot(0)!
+        assert.ok(slot.jitter >= 0 && slot.jitter <= 0.6,
+          `seed ${s} jitter=${slot.jitter} out of [0, 0.6]`)
+        assert.ok(Number.isInteger(slot.seed) && slot.seed >= 0 && slot.seed <= 0xffffffff,
+          `seed ${s} produced invalid uint seed=${slot.seed}`)
+        assert.ok(Number.isInteger(slot.startChord.root)
+          && slot.startChord.root >= 0 && slot.startChord.root <= 11,
+          `seed ${s} root=${slot.startChord.root}`)
+        assert.ok(slot.startChord.quality === 'maj' || slot.startChord.quality === 'min')
+      }
+    })
+
+    test('same RNG sequence is deterministic across two fresh hosts', () => {
+      const host1 = new Host(baseParams())
+      const host2 = new Host(baseParams())
+      host1.randomizeActiveSlot(mulberry32(42))
+      host2.randomizeActiveSlot(mulberry32(42))
+      assert.deepEqual(host1.getSlot(0), host2.getSlot(0))
+    })
+
+    test('randomized slot startChord is loaded into running params (no MIDI held)', () => {
+      // Verifies the setSlot + switchSlot composition — same contract as
+      // loadFactoryPreset. With no MIDI held, the slot's startChord must
+      // become params.startChord (subject to the bass-note octave anchor).
+      const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+      host.randomizeActiveSlot(mulberry32(7))
+      const slot = host.getSlot(host.activeSlot)!
+      const r = slot.startChord.root
+      const third = slot.startChord.quality === 'maj' ? 4 : 3
+      const expected = [r, (r + third) % 12, (r + 7) % 12].sort((a, b) => a - b)
+      assert.deepEqual(pcSet(host.startChord), expected)
+    })
+
+    test('startChord defers when MIDI is held (same priority rule as switchSlot)', () => {
+      const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+      host.noteIn(64, 100, 1); host.noteIn(67, 100, 1); host.noteIn(71, 100, 1) // E minor
+      assert.deepEqual(pcSet(host.startChord), [4, 7, 11])
+      host.randomizeActiveSlot(mulberry32(13))
+      // Held E minor still wins regardless of what the random produced.
+      assert.deepEqual(pcSet(host.startChord), [4, 7, 11])
+    })
+  })
+
+  describe('program string copy/paste — ADR 006 Phase 6', () => {
+    describe('getActiveProgramString', () => {
+      test('returns the serialized form of the active slot', () => {
+        const host = new Host(baseParams({
+          startChord: [60, 64, 67],
+          cells: cells('P', 'L', 'R', 'hold'),
+          jitter: 0.25,
+          seed: 7,
+        }))
+        const expected = serializeSlot(host.getSlot(0)!)
+        assert.equal(host.getActiveProgramString(), expected)
+      })
+
+      test('reflects active-slot change on switchSlot', () => {
+        const host = new Host(baseParams())
+        const slot1 = makeSlot({ cells: 'PPP_', jitter: 0.4, seed: 99 })
+        host.setSlot(1, slot1)
+        host.switchSlot(1)
+        assert.equal(host.getActiveProgramString(), serializeSlot(slot1))
+      })
+
+      test('reflects saveCurrent edits in the active slot', () => {
+        const host = new Host(baseParams({ jitter: 0 }))
+        host.switchSlot(2)
+        host.setParams({ jitter: 0.5 })
+        host.saveCurrent()
+        const after = host.getActiveProgramString()
+        const parsed = parseSlot(after)!
+        assert.equal(parsed.jitter, 0.5)
+      })
+
+      test('reflects randomizeActiveSlot output', () => {
+        const host = new Host(baseParams())
+        host.randomizeActiveSlot(mulberry32(3))
+        const generated = host.getSlot(host.activeSlot)!
+        assert.equal(host.getActiveProgramString(), serializeSlot(generated))
+      })
+
+      test('reflects loadFactoryPreset', () => {
+        const host = new Host(baseParams())
+        host.loadFactoryPreset(0)
+        assert.equal(host.getActiveProgramString(), FACTORY_PRESETS[0]!.program)
+      })
+
+      test('does NOT reflect un-saved per-param edits', () => {
+        // Per ADR 006 §"Axis 2": program string == serialized slot. Live
+        // edits to params (e.g. setParams(jitter)) do not auto-save into
+        // the slot, so the displayed program string follows the saved
+        // slot until the user explicitly hits save-current.
+        const host = new Host(baseParams({ jitter: 0 }))
+        const before = host.getActiveProgramString()
+        host.setParams({ jitter: 0.7 })
+        assert.equal(host.getActiveProgramString(), before)
+      })
+    })
+
+    describe('loadFromProgramString', () => {
+      test('parses + loads valid program into the active slot', () => {
+        const host = new Host(baseParams())
+        host.switchSlot(2)
+        const ok = host.loadFromProgramString('PPP_|s=42|j=0.3|c=Em')
+        assert.equal(ok, true)
+        const slot = host.getSlot(2)!
+        assert.equal(slot.cells, 'PPP_')
+        assert.equal(slot.seed, 42)
+        assert.equal(slot.jitter, 0.3)
+        assert.deepEqual(slot.startChord, { root: 4, quality: 'min' })
+      })
+
+      test('applies loaded slot to running params (no MIDI held)', () => {
+        // Same setSlot + switchSlot composition as loadFactoryPreset —
+        // the loaded program must drive the next step output, not just
+        // sit in the slot.
+        const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+        host.loadFromProgramString('PLR_|s=0|j=0|c=F#m')
+        // F# minor: F#=6, A=9, C#=1
+        assert.deepEqual(pcSet(host.startChord), [1, 6, 9])
+      })
+
+      test('malformed string returns false and does not mutate state', () => {
+        const host = new Host(baseParams())
+        const before = host.getSlot(0)
+        assert.equal(host.loadFromProgramString('not-a-program'), false)
+        assert.equal(host.loadFromProgramString(''), false)
+        assert.equal(host.loadFromProgramString('PLR_|s=abc|j=0|c=C'), false)
+        assert.equal(host.loadFromProgramString('PLR_|j=0|c=C'), false) // missing seed
+        assert.deepEqual(host.getSlot(0), before)
+      })
+
+      test('round-trip: getActiveProgramString → loadFromProgramString restores slot', () => {
+        const host1 = new Host(baseParams({
+          startChord: [65, 68, 72], // F minor
+          cells: cells('P', 'hold', 'rest', 'L'),
+          jitter: 0.4,
+          seed: 12345,
+        }))
+        host1.saveCurrent() // capture into active slot
+        const program = host1.getActiveProgramString()
+
+        const host2 = new Host(baseParams())
+        host2.loadFromProgramString(program)
+        assert.deepEqual(host2.getSlot(0), host1.getSlot(0))
+      })
+
+      test('writes only to the active slot', () => {
+        const host = new Host(baseParams())
+        const before = [0, 1, 2, 3].map(i => host.getSlot(i)!)
+        host.switchSlot(2)
+        host.loadFromProgramString('PPP_|s=1|j=0.1|c=A')
+        assert.notDeepEqual(host.getSlot(2), before[2])
+        for (const i of [0, 1, 3]) {
+          assert.deepEqual(host.getSlot(i), before[i])
+        }
+      })
+
+      test('startChord defers when MIDI is held (same priority rule as switchSlot)', () => {
+        const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+        host.noteIn(64, 100, 1); host.noteIn(67, 100, 1); host.noteIn(71, 100, 1) // E minor
+        assert.deepEqual(pcSet(host.startChord), [4, 7, 11])
+        host.loadFromProgramString('PLR_|s=0|j=0|c=F') // F major
+        // Held E minor still wins; loaded F major suppressed until release.
+        assert.deepEqual(pcSet(host.startChord), [4, 7, 11])
+      })
     })
   })
 })
