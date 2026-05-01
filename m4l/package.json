@@ -8,10 +8,12 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "bake": "node scripts/maxpat-to-amxd.mjs"
+    "bundle:host": "esbuild oedipa-host.entry.mjs --bundle --platform=node --format=esm --external:max-api --outfile=oedipa-host.mjs",
+    "bake": "pnpm bundle:host && node scripts/maxpat-to-amxd.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0"
   }
 }

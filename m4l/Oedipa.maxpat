@@ -60,7 +60,7 @@
             {"box": {"id": "obj-panic-comment", "maxclass": "comment", "text": "panic (all notes off)", "numinlets": 1, "numoutlets": 0, "patching_rect": [800.0, 62.0, 140.0, 20.0]}},
             {"box": {"id": "obj-panic-msg", "maxclass": "message", "text": "panic", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [770.0, 110.0, 46.0, 22.0]}},
 
-            {"box": {"id": "obj-nodescript", "maxclass": "newobj", "text": "node.script oedipa-host.js @autostart 1", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""], "patching_rect": [130.0, 390.0, 420.0, 22.0]}},
+            {"box": {"id": "obj-nodescript", "maxclass": "newobj", "text": "node.script oedipa-host.mjs @autostart 1", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""], "patching_rect": [130.0, 390.0, 420.0, 22.0]}},
 
             {"box": {"id": "obj-print", "maxclass": "newobj", "text": "print from_node", "numinlets": 1, "numoutlets": 0, "patching_rect": [130.0, 440.0, 105.0, 22.0]}},
 

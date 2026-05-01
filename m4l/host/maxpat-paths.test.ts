@@ -25,7 +25,7 @@ describe('Oedipa.maxpat path conventions (ADR 007)', () => {
         offenders.map((o) => `  - ${o.name}: ${o.count} occurrence(s)`).join('\n') +
         `\nReplace with Max-native relative refs:\n` +
         `  - jsui: bare sibling filename (e.g. cellstrip-renderer.js)\n` +
-        `  - node.script: bare sibling filename (e.g. oedipa-host.js)`,
+        `  - node.script: bare sibling filename (e.g. oedipa-host.mjs)`,
     )
   })
 })

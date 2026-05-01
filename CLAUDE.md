@@ -78,13 +78,22 @@ pnpm test            # run tests against TS source
 pnpm build           # compile dist/tonnetz.js for jsui
 ```
 
-Open `.amxd` in Max for Live to use the device. The device loads
-`dist/tonnetz.js` via `[node.script oedipa-host.js]`, so run `pnpm -r build`
-after engine or host changes.
+Open `.amxd` in Max for Live to use the device. The device loads the bundled
+host (`m4l/oedipa-host.mjs`) via `[node.script oedipa-host.mjs]`, so run
+`pnpm -r build && pnpm bake` after engine or host changes (bake re-bundles
+the entry into `oedipa-host.mjs`).
 
 **Do NOT add `max-api` to dependencies.** It's injected by Max at runtime;
-the npm version conflicts with the injected one. See `m4l/oedipa-host.js`
-header comment.
+the npm version conflicts with the injected one. See
+`m4l/oedipa-host.entry.mjs` header comment.
+
+**Distribution (release builds).** `make release` (from repo root) runs
+build + bake and prepares `dist/`. The baked dev `.amxd` references
+sibling JS on disk, so it only loads on the build machine. To ship: open
+`m4l/Oedipa.amxd` in Max → click the **snowflake (Freeze)** button in the
+patcher toolbar (inlines every referenced JS) → *File → Save As*
+`dist/Oedipa.amxd`. The frozen file is self-contained and works on any
+Live install. See ADR 007.
 
 ### vst/
 

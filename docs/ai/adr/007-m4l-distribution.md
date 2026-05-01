@@ -3,7 +3,7 @@
 ## Status: Proposed
 
 **Created**: 2026-05-01
-**Revised**: 2026-05-01 — node.script entry script moved to `.amxd` sibling level (`m4l/oedipa-host.js`) after observing that subdirectory-relative paths (`host/index.js`) fail to resolve at runtime under Max for Live; only bare-sibling resolution is reliable for `[node.script]`. jsui's bare-sibling resolution was unaffected.
+**Revised**: 2026-05-01 — node.script entry script moved to `.amxd` sibling level (`m4l/oedipa-host.mjs` after Phase 5; originally `oedipa-host.js`) after observing that subdirectory-relative paths (`host/index.js`) fail to resolve at runtime under Max for Live; only bare-sibling resolution is reliable for `[node.script]`. jsui's bare-sibling resolution was unaffected. Phase 5 also switched the bundle's extension from `.js` to `.mjs` so freeze-extracted scripts parse as ESM in the sandbox tempdir where there is no sibling `package.json` (see Phase 5).
 
 ## Context
 
@@ -45,8 +45,8 @@ lookup, never via absolute paths to a developer machine.
   jsui resolves the `filename` attribute through the search path; the
   patcher's directory is reachable, so sibling files always resolve.
 - **`node.script`**: the text argument is the bare filename of a
-  sibling of `Oedipa.maxpat` (e.g. `oedipa-host.js`). The script entry
-  lives next to the `.amxd`, not inside a subdirectory. Subdirectory-
+  sibling of `Oedipa.maxpat` (currently `oedipa-host.mjs`). The script
+  entry lives next to the `.amxd`, not inside a subdirectory. Subdirectory-
   relative forms (e.g. `host/index.js`) are **not reliable** under
   Live's runtime: when the patcher has no Max Project context, Max
   emits `"a project without a name is like a day without sunshine.
@@ -60,11 +60,13 @@ lookup, never via absolute paths to a developer machine.
   and break on the receiver's machine. The Max-native bare-sibling
   approach is the only one that survives distribution.
 
-Entry script (`m4l/oedipa-host.js`) is a thin wrapper that imports
+Entry source (`m4l/oedipa-host.entry.mjs`) is a thin wrapper around
 the host package's compiled output (`./host/dist/host/bridge.js`).
-The host TS source / tests / build artefacts continue to live under
-`m4l/host/`; only the `[node.script]` entry point sits at the .amxd
-sibling level.
+`pnpm bundle:host` (esbuild) inlines that import chain into a single
+self-contained `.mjs` bundle, `m4l/oedipa-host.mjs`, which is what
+`[node.script]` actually loads. The host TS source / tests / build
+artefacts continue to live under `m4l/host/`; only the bundled entry
+sits at the .amxd sibling level.
 
 Memory guard: `feedback_jsui_filename` already recorded that jsui's
 bare-sibling resolution works. The same constraint applies, more
@@ -178,17 +180,85 @@ Phased per CLAUDE.md TDD gates.
 
 ### Phase 4 — Distribution flow + verification
 
-- [ ] Document the freeze step in the m4l section of `CLAUDE.md`
+- [x] Document the freeze step in the m4l section of `CLAUDE.md`
   (or a fresh `m4l/README.md` if it doesn't fit cleanly under
   *Build*). Cover: bake → Freeze in Max → ship.
-- [ ] Manual cross-path test: copy the frozen `Oedipa.amxd` to a
+- [x] Manual cross-path test: copy the frozen `Oedipa.amxd` to a
   location outside the repo (e.g. the user's downloads folder on a
   fresh path). Drag into Live; confirm device loads and is fully
   playable. This is the canonical distribution-success criterion.
+  Verified 2026-05-01 with the `.mjs` bundle: fresh Live track →
+  `from_node: hostReady 1` prints, slot rehydrate cascade emits the
+  user's saved program (`slot-program PLR_|s=0|j=0|c=C`), MIDI notes
+  flow on transport play, cell-strip + lattice update per step.
 - [ ] (Optional, only if a second machine is conveniently available)
   Repeat the cross-path test on a second machine. Not blocking;
   cross-path on the same machine catches the same class of bug
   because the absolute paths in the un-frozen file would be wrong.
+
+### Phase 5 — Bundle host entry to survive freeze
+
+First Phase 4 cross-path attempt revealed that **Max's freeze does not
+follow ES module `import` statements**. The patcher's `[node.script
+oedipa-host.js]` was inlined, but its import chain
+(`./host/dist/host/bridge.js` → `host.js` / `slot.js` / `cellstrip.js` /
+`presets.js` and `engine/tonnetz.js`) was lost. Symptom in the Live host:
+`node.script: Node script not ready can't handle message step` repeating
+forever as the metro fires.
+
+Fix: pre-bundle the host entry into a single self-contained file before
+freezing, leaving only `max-api` (Max-injected at runtime) as an external
+import. The freeze then captures one entry file that already contains all
+host + engine logic. jsui renderers are exempt — they already avoid
+imports (Max's classic JS engine does not support ES modules).
+
+This is build-time bundling, not a freeze replacement; ADR 007's
+out-of-scope clause on "custom inliner" is unaffected (Max still does the
+final freeze).
+
+- [x] Source rename: `m4l/oedipa-host.js` → `m4l/oedipa-host.entry.mjs`.
+- [x] Add `esbuild` as devDependency at the m4l workspace root.
+- [x] Add `bundle:host` script to `m4l/package.json`:
+  `esbuild oedipa-host.entry.mjs --bundle --platform=node --format=esm --external:max-api --outfile=oedipa-host.mjs`.
+- [x] Patcher reference: `[node.script oedipa-host.mjs @autostart 1]`
+  (bare-sibling form, per the Phase 2 path scrub).
+- [x] Update `bake` script to run `bundle:host` first
+  (`bake = bundle:host && maxpat-to-amxd`).
+- [x] `.gitignore` the bundled `m4l/oedipa-host.mjs` (build artefact).
+- [x] Guard test (`m4l/host/oedipa-host-bundle.test.ts`): bundled
+  `oedipa-host.mjs` has only `max-api` as a remaining external import.
+  Skipped on fresh checkouts where the bundle hasn't been built yet.
+- [x] Bundle output extension is `.mjs`, not `.js`. Empirically
+  required: a `.js` bundle works in dev because `m4l/package.json` has
+  `"type": "module"` next to it, so Node treats the file as ESM. The
+  freeze sandbox extracts the inlined script to a tempdir without any
+  sibling `package.json`, so a `.js` bundle there is interpreted as
+  CommonJS and the entry's `import Max from 'max-api'` throws on parse,
+  leaving `[node.script]` permanently in the "Node script not ready"
+  state. `.mjs` is unconditionally ESM regardless of any sibling
+  `package.json`. Verified 2026-05-01 by Max console log comparison:
+  - dev (with `.js` bundle): early init messages drop with "Node
+    script not ready" but eventually `oedipa host: oedipa-host.js
+    loaded` and `from_node: hostReady 1` print, the cascade re-emits
+    state, and the device plays. The early drops are harmless because
+    the `hostReady` cascade re-emits everything.
+  - dist (with `.js` bundle, after freeze): same drops, but `loaded`
+    and `hostReady 1` **never print**. node.script is permanently
+    stuck and the device is silent. The bundle is correctly inlined in
+    the frozen `.amxd` (`strings dist/Oedipa.amxd | grep -E
+    "SYNCOPATED_PATTERN|Max.post"` confirms presence) — Node simply
+    cannot run it as ESM.
+  This narrows the regression to one cause: ESM resolution requires
+  either a sibling `package.json` or a `.mjs` extension; only the
+  latter survives the freeze→extract round trip. The earlier
+  hypothesis (handoff memo) that the failure was a "loadbang→hostReady
+  gating race" was disproven by this comparison: dev shows the same
+  early-drop pattern and is fine.
+- [x] Re-run Phase 4 cross-path manual test with the `.mjs` bundle:
+  `make release` → Live → Edit → snowflake → Save As `dist/Oedipa.amxd`
+  → drag into a fresh Live track. Verified 2026-05-01: `oedipa host:
+  oedipa-host.mjs loaded` and `from_node: hostReady 1` print, slot
+  rehydrate cascade restores user-saved program, MIDI plays.
 
 ## Per-target notes
 

@@ -9,5 +9,15 @@ m4l/engine/dist/
 # m4l/host build output — regenerate with `npm run build`
 m4l/host/dist/
 
+# m4l host entry bundle — regenerate with `pnpm bake` (esbuild output of oedipa-host.entry.mjs).
+# `.mjs` (not `.js`): the freeze sandbox extracts this script to a tempdir
+# without a sibling package.json, so `.js` would default to CJS and the
+# bundle's `import Max from "max-api"` would fail to parse. Empirically
+# verified 2026-05-01 via dev/dist Max console comparison.
+m4l/oedipa-host.mjs
+
 # Ableton Live project folder (auto-created when m4l/ is added as a Live Project)
 m4l/Oedipa Project/
+
+# Release artifacts (frozen .amxd, future VST builds, etc.)
+/dist/

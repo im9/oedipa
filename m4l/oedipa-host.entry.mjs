@@ -1,12 +1,21 @@
-// n4m entry for the Oedipa M4L device.
-// Loaded by [node.script oedipa-host.js] in the .amxd. Thin wrapper over the
+// n4m entry source for the Oedipa M4L device.
+// Bundled by `pnpm bundle:host` (esbuild) into m4l/oedipa-host.mjs, which is
+// what [node.script] in Oedipa.maxpat actually loads. Thin wrapper over the
 // TS Bridge class in host/dist/host/bridge.js — this file owns nothing
 // musical, only the Max message protocol and dependency injection.
 //
 // Sibling-of-.amxd placement (ADR 007): node.script in M4L resolves the
 // script via Max's file search. Bare-filename siblings of the .amxd resolve
-// reliably; subdirectory paths like `host/index.js` did not, so this file
-// lives next to Oedipa.amxd and imports the host package's compiled output.
+// reliably; subdirectory paths like `host/index.js` did not.
+//
+// `.mjs` (not `.js`) on the bundle output is load-bearing: the freeze
+// sandbox extracts the inlined script to a tempdir with no sibling
+// package.json. `.js` would default to CJS there and the `import Max
+// from "max-api"` line below would fail to parse, leaving [node.script]
+// permanently in "Node script not ready" state. `.mjs` is unconditionally
+// ESM. Empirically verified 2026-05-01 via dev/dist Max console comparison
+// (dev: `oedipa host: oedipa-host.js loaded` printed; dist with `.js`
+// bundle: never printed). See ADR 007 §Phase 5.
 //
 // NOTE: `max-api` is provided by Max at runtime when this file is loaded by
 // [node.script]. Do NOT add it to package.json dependencies — the npm version
@@ -43,7 +52,7 @@
 import Max from 'max-api'
 import { Bridge } from './host/dist/host/bridge.js'
 
-Max.post('oedipa host: oedipa-host.js loaded')
+Max.post('oedipa host: oedipa-host.mjs loaded')
 
 const bridge = new Bridge({
   emitNote: (pitch, velocity, channel) => Max.outlet('note', pitch, velocity, channel),
