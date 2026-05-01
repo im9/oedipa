@@ -60,7 +60,7 @@
             {"box": {"id": "obj-panic-comment", "maxclass": "comment", "text": "panic (all notes off)", "numinlets": 1, "numoutlets": 0, "patching_rect": [800.0, 62.0, 140.0, 20.0]}},
             {"box": {"id": "obj-panic-msg", "maxclass": "message", "text": "panic", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [770.0, 110.0, 46.0, 22.0]}},
 
-            {"box": {"id": "obj-nodescript", "maxclass": "newobj", "text": "node.script /Users/tn/src/vst/oedipa/m4l/host/index.js @autostart 1", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""], "patching_rect": [130.0, 390.0, 420.0, 22.0]}},
+            {"box": {"id": "obj-nodescript", "maxclass": "newobj", "text": "node.script oedipa-host.js @autostart 1", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""], "patching_rect": [130.0, 390.0, 420.0, 22.0]}},
 
             {"box": {"id": "obj-print", "maxclass": "newobj", "text": "print from_node", "numinlets": 1, "numoutlets": 0, "patching_rect": [130.0, 440.0, 105.0, 22.0]}},
 
@@ -73,7 +73,7 @@
 
             {"box": {"id": "obj-panel-controls", "maxclass": "panel", "bgcolor": [0, 0, 0, 0], "bordercolor": [0.4, 0.4, 0.4, 1], "border": 0, "rounded": 4, "patching_rect": [970.0, 50.0, 144.0, 180.0], "presentation": 0}},
 
-            {"box": {"id": "obj-jsui-separator", "maxclass": "jsui", "filename": "/Users/tn/src/vst/oedipa/m4l/separator-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 0, "patching_rect": [970.0, 240.0, 1.0, 172.0], "presentation": 1, "presentation_rect": [477.0, 8.0, 1.0, 172.0]}},
+            {"box": {"id": "obj-jsui-separator", "maxclass": "jsui", "filename": "separator-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 0, "patching_rect": [970.0, 240.0, 1.0, 172.0], "presentation": 1, "presentation_rect": [477.0, 8.0, 1.0, 172.0]}},
 
             {"box": {"id": "obj-celllength", "maxclass": "live.numbox", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"], "parameter_enable": 1, "patching_rect": [970.0, 90.0, 60.0, 22.0], "presentation": 1, "presentation_rect": [486.0, 24.0, 50.0, 18.0], "saved_attribute_attributes": {"valueof": {"parameter_initial": [4], "parameter_initial_enable": 1, "parameter_longname": "OedipaRateV2", "parameter_mmax": 64.0, "parameter_mmin": 1.0, "parameter_shortname": "Rate", "parameter_type": 1, "parameter_unitstyle": 0}}}},
             {"box": {"id": "obj-prep-celllength", "maxclass": "newobj", "text": "prepend setParams rate", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [1100.0, 90.0, 200.0, 22.0]}},
@@ -104,8 +104,8 @@
             {"box": {"id": "obj-msg-voicing-drop2", "maxclass": "message", "text": "setParams voicing drop2", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [1100.0, 360.0, 170.0, 22.0]}},
             {"box": {"id": "obj-lbl-voicing", "maxclass": "comment", "text": "Voicing", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 270.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [486.0, 128.0, 60.0, 14.0]}},
 
-            {"box": {"id": "obj-jsui-separator2", "maxclass": "jsui", "filename": "/Users/tn/src/vst/oedipa/m4l/separator-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 0, "patching_rect": [970.0, 410.0, 1.0, 172.0], "presentation": 1, "presentation_rect": [617.0, 8.0, 1.0, 172.0]}},
-            {"box": {"id": "obj-jsui-cellstrip", "maxclass": "jsui", "filename": "/Users/tn/src/vst/oedipa/m4l/cellstrip-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [970.0, 440.0, 234.0, 48.0], "presentation": 1, "presentation_rect": [626.0, 48.0, 234.0, 66.0]}},
+            {"box": {"id": "obj-jsui-separator2", "maxclass": "jsui", "filename": "separator-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 0, "patching_rect": [970.0, 410.0, 1.0, 172.0], "presentation": 1, "presentation_rect": [617.0, 8.0, 1.0, 172.0]}},
+            {"box": {"id": "obj-jsui-cellstrip", "maxclass": "jsui", "filename": "cellstrip-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [970.0, 440.0, 234.0, 48.0], "presentation": 1, "presentation_rect": [626.0, 48.0, 234.0, 66.0]}},
             {"box": {"id": "obj-prep-setCellOp-0", "maxclass": "newobj", "text": "prepend setCellOp 0", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [1110.0, 440.0, 140.0, 22.0]}},
             {"box": {"id": "obj-prep-setCellOp-1", "maxclass": "newobj", "text": "prepend setCellOp 1", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [1260.0, 440.0, 140.0, 22.0]}},
             {"box": {"id": "obj-prep-setCellOp-2", "maxclass": "newobj", "text": "prepend setCellOp 2", "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [1410.0, 440.0, 140.0, 22.0]}},
@@ -136,7 +136,7 @@
 
             {"box": {"id": "obj-msg-refresh", "maxclass": "message", "text": "latticeRefresh", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [330.0, 130.0, 100.0, 22.0]}},
 
-            {"box": {"id": "obj-jsui", "maxclass": "jsui", "filename": "/Users/tn/src/vst/oedipa/m4l/lattice-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [130.0, 570.0, 460.0, 160.0], "presentation": 1, "presentation_rect": [8.0, 8.0, 460.0, 160.0]}},
+            {"box": {"id": "obj-jsui", "maxclass": "jsui", "filename": "lattice-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 1, "outlettype": [""], "patching_rect": [130.0, 570.0, 460.0, 160.0], "presentation": 1, "presentation_rect": [8.0, 8.0, 460.0, 160.0]}},
 
             {"box": {"id": "obj-route-startchord", "maxclass": "newobj", "text": "route setStartChord", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""], "patching_rect": [600.0, 410.0, 150.0, 22.0]}},
             {"box": {"id": "obj-unpack-sc", "maxclass": "newobj", "text": "unpack 0 0 0", "numinlets": 1, "numoutlets": 3, "outlettype": ["int", "int", "int"], "patching_rect": [600.0, 440.0, 100.0, 22.0]}},
@@ -226,7 +226,7 @@
             {"box": {"id": "obj-msg-stepdir-pp", "maxclass": "message", "text": "setParams stepDirection pingpong", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [1110.0, 1620.0, 230.0, 22.0]}},
             {"box": {"id": "obj-msg-stepdir-rnd", "maxclass": "message", "text": "setParams stepDirection random", "numinlets": 2, "numoutlets": 1, "outlettype": [""], "patching_rect": [1110.0, 1650.0, 230.0, 22.0]}},
 
-            {"box": {"id": "obj-jsui-separator3", "maxclass": "jsui", "filename": "/Users/tn/src/vst/oedipa/m4l/separator-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 0, "patching_rect": [970.0, 1840.0, 1.0, 172.0], "presentation": 1, "presentation_rect": [869.0, 8.0, 1.0, 172.0]}},
+            {"box": {"id": "obj-jsui-separator3", "maxclass": "jsui", "filename": "separator-renderer.js", "border": 0, "numinlets": 1, "numoutlets": 0, "patching_rect": [970.0, 1840.0, 1.0, 172.0], "presentation": 1, "presentation_rect": [869.0, 8.0, 1.0, 172.0]}},
 
             {"box": {"id": "obj-lbl-feel-rhythm", "maxclass": "comment", "text": "Rhythm", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 1110.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [916.0, 8.0, 100.0, 14.0]}},
             {"box": {"id": "obj-lbl-feel-arp", "maxclass": "comment", "text": "Arp", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0, "patching_rect": [1300.0, 1330.0, 60.0, 16.0], "presentation": 1, "presentation_rect": [916.0, 48.0, 100.0, 14.0]}},

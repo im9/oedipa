@@ -1,7 +1,12 @@
 // n4m entry for the Oedipa M4L device.
-// Loaded by [node.script host/index.js] in the .amxd. Thin wrapper over the
-// TS Bridge class in dist/host/bridge.js — this file owns nothing musical,
-// only the Max message protocol and dependency injection.
+// Loaded by [node.script oedipa-host.js] in the .amxd. Thin wrapper over the
+// TS Bridge class in host/dist/host/bridge.js — this file owns nothing
+// musical, only the Max message protocol and dependency injection.
+//
+// Sibling-of-.amxd placement (ADR 007): node.script in M4L resolves the
+// script via Max's file search. Bare-filename siblings of the .amxd resolve
+// reliably; subdirectory paths like `host/index.js` did not, so this file
+// lives next to Oedipa.amxd and imports the host package's compiled output.
 //
 // NOTE: `max-api` is provided by Max at runtime when this file is loaded by
 // [node.script]. Do NOT add it to package.json dependencies — the npm version
@@ -10,9 +15,9 @@
 // doesn't touch it.
 //
 // Protocol (see docs/ai/adr/archive/002-m4l-device-architecture.md §3,
-// docs/ai/adr/003-m4l-parameters-state.md §"Message protocol",
-// docs/ai/adr/004-midi-input.md §"Per-target notes",
-// docs/ai/adr/005-rhythmic-feel.md §"Layer 1 — Per-cell expression"):
+// docs/ai/adr/archive/003-m4l-parameters-state.md §"Message protocol",
+// docs/ai/adr/archive/004-midi-input.md §"Per-target notes",
+// docs/ai/adr/archive/005-rhythmic-feel.md §"Layer 1 — Per-cell expression"):
 //
 //   Max -> here:
 //     step <pos>                          advance to host step index
@@ -36,9 +41,9 @@
 //     cellIdx <n>                         active-cell LED index (-1 == none)
 
 import Max from 'max-api'
-import { Bridge } from './dist/host/bridge.js'
+import { Bridge } from './host/dist/host/bridge.js'
 
-Max.post('oedipa host: index.js loaded')
+Max.post('oedipa host: oedipa-host.js loaded')
 
 const bridge = new Bridge({
   emitNote: (pitch, velocity, channel) => Max.outlet('note', pitch, velocity, channel),
@@ -86,5 +91,5 @@ Max.addHandler('setSlotFields', (idx, c0, c1, c2, c3, c4, c5, c6, c7, length, ji
 // Signal the patcher that node.script is up and all handlers are registered.
 // The patcher gates its initial param dump cascade (live.* + pattr rehydrate)
 // on this so messages don't arrive before this script can handle them —
-// see docs/ai/adr/003-m4l-parameters-state.md "Rehydration order".
+// see docs/ai/adr/archive/003-m4l-parameters-state.md "Rehydration order".
 Max.outlet('hostReady', 1)

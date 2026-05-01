@@ -79,11 +79,11 @@ pnpm build           # compile dist/tonnetz.js for jsui
 ```
 
 Open `.amxd` in Max for Live to use the device. The device loads
-`dist/tonnetz.js` via `[node.script host/index.js]`, so run `pnpm -r build`
+`dist/tonnetz.js` via `[node.script oedipa-host.js]`, so run `pnpm -r build`
 after engine or host changes.
 
 **Do NOT add `max-api` to dependencies.** It's injected by Max at runtime;
-the npm version conflicts with the injected one. See `m4l/host/index.js`
+the npm version conflicts with the injected one. See `m4l/oedipa-host.js`
 header comment.
 
 ### vst/
