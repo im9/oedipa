@@ -17,61 +17,115 @@ export type Op = 'P' | 'L' | 'R' | 'hold' | 'rest'
 export type Voicing = 'close' | 'spread' | 'drop2'
 export type StepDirection = 'forward' | 'reverse' | 'pingpong' | 'random'
 
-// ADR 006 §Phase 7 — RHYTHM as feel preset. Each preset bundles a gating
-// pattern with implicit swing + humanize side effects; the existing ADR 005
-// swing/humanize engine code is driven internally by mapRhythmPreset, and
-// no swing/humanize surface params are exposed.
-export type GatingMode = 'head-only' | 'every-tick' | 'onbeat' | 'offbeat'
-export type RhythmPreset = 'legato' | 'chord' | 'straight' | 'offbeat' | 'shuffle' | 'loose'
+// ADR 006 §Phase 7 Step 4 — RHYTHM preset palette ported from inboil's
+// TonnetzRhythm (see /src/lib/types.ts:196 + generative.ts:478-513 +
+// components/TonnetzSheet.svelte:546 dropdown). Match is at the SPEC
+// level (musical intent), not literal-code level. Full UI dropdown match:
+//   all        → fires every 16th    (= inboil generative.ts:483)
+//   legato     → fires at cell head only (= inboil tonnetzGenerate:598
+//                special-cased chord-boundary). Spec-equivalent to inboil
+//                even though the predicate folding differs.
+//   onbeat     → fires on quarter pulse, i % 4 === 0
+//                (= inboil generative.ts:489)
+//   offbeat    → fires on &-of-each-quarter, i % 4 === 2 — the standard
+//                musical "off-beat" (4 fires/bar, complementary to onbeat,
+//                together partitioning the 8th-note grid). DIFFERS from
+//                inboil's literal `i % 2 === 1` (every odd 16th = 8
+//                fires/bar including e/a positions). Spec-level match
+//                (off-beats), not code-level — see ADR 006 §"Implementation
+//                note (rev 2026-05-01)" for rationale.
+//   syncopated → 8-step pattern [T,F,T,F,F,T,F,T] repeated
+//                (= inboil generative.ts:490-493, classic syncopation)
+//   turing     → turingRhythm (generative.ts:498-513): stochastic shift
+//                register, parameterized by length / lock / seed. Stateful
+//                across sub-step boundaries (the register evolves), so
+//                evaluated via turingFires() with a host-owned register
+//                state, not via the pure gatingFires() predicate.
+// Deferred: euclidean (in inboil's type but not in the UI dropdown — no
+// user-facing parity needed yet); explicit boolean[] (no Live param shape
+// for arrays). Humanize / swing as per-rhythm side effects are gone (no
+// inboil basis — inboil keeps swing project-global, no humanize concept);
+// if reintroduced they ship as a separate parameter axis, not folded into
+// preset.
+export type RhythmPreset = 'all' | 'legato' | 'onbeat' | 'offbeat' | 'syncopated' | 'turing'
 export type ArpMode = 'off' | 'up' | 'down' | 'updown' | 'random'
 
-export interface RhythmFeel {
-  gating: GatingMode
-  // Engine convention (matches host.ts): 0.5 = no swing, 0.75 = max
-  // (off-beat tick offset = (2*swing - 1) * ticksPerStep).
-  swing: number
-  // 0..1 amounts per ADR 005 §humanize: applied as cell + (h*2-1)*amount.
-  humanizeVelocity: number
-  humanizeGate: number
-  humanizeTiming: number
-}
-
-// Iteration order for UI dropdowns. Treat as the spec.
+// Iteration order for UI dropdowns. Treat as the spec — matches inboil's
+// dropdown ordering verbatim.
 export const RHYTHM_PRESETS: readonly RhythmPreset[] = [
-  'legato', 'chord', 'straight', 'offbeat', 'shuffle', 'loose',
+  'all', 'legato', 'onbeat', 'offbeat', 'syncopated', 'turing',
 ] as const
 
 export const ARP_MODES: readonly ArpMode[] = [
   'off', 'up', 'down', 'updown', 'random',
 ] as const
 
-// "Mid" humanize for the loose preset — uniform across vel/gate/timing.
-// 0.4 picked as audibly human without dissolving the grid: at 120 BPM a
-// 16th-note step is ~125 ms, so ±0.4 timing humanize lands around ±50 ms
-// of wiggle, sitting in the "feel" zone before the metric cue gets lost.
-// Tunable during smoke testing — adjust here, not at the call site.
-const LOOSE_HUMANIZE_AMOUNT = 0.4
-
-// Engine-internal swing for the shuffle preset. ADR 006 table calls it
-// "0.6" (descriptive); engine convention is 0.5 = none, 0.75 = max, so
-// 0.6 lands at moderate-heavy shuffled 8ths — clearly audible without
-// reaching the pure-triplet 0.667 cap.
-const SHUFFLE_SWING = 0.6
-
-// Within-cell tick gating. subStepIdx is a 16th-note step index within
-// the current cell (head = 0). Phase 7 hardcodes the 16th-note grid (4
-// sub-steps per quarter), so 'onbeat' and 'offbeat' are defined relative
-// to the quarter-note pulse: onbeat = idx % 4 === 0, offbeat = idx % 4
-// === 2 — disjoint, partitioning the quarter into on/off pairs. Pure
-// function; no PRNG or state. Host evaluates this on every transport
-// sub-step tick.
-export function gatingFires(mode: GatingMode, subStepIdx: number): boolean {
+// Within-cell tick gating for the stateless presets (all/legato/onbeat/
+// offbeat/syncopated). subStepIdx is a 16th-note step index within the
+// current cell (head = 0). Pure function; no PRNG or state. Spec-level
+// match to inboil's resolveRhythm (generative.ts:478) — `offbeat` uses
+// the standard musical "& of each quarter" definition (i % 4 === 2)
+// rather than inboil's literal `i % 2 === 1` (which fires every odd
+// 16th, denser than the typical off-beat semantic). Turing uses a
+// separate stateful path (turingFires) because its register evolves
+// per step.
+const SYNCOPATED_PATTERN: readonly boolean[] = [true, false, true, false, false, true, false, true]
+export function gatingFires(mode: Exclude<RhythmPreset, 'turing'>, subStepIdx: number): boolean {
   switch (mode) {
-    case 'head-only':  return subStepIdx === 0
-    case 'every-tick': return true
+    case 'all':        return true
+    case 'legato':     return subStepIdx === 0
     case 'onbeat':     return subStepIdx % 4 === 0
     case 'offbeat':    return subStepIdx % 4 === 2
+    case 'syncopated': return SYNCOPATED_PATTERN[subStepIdx % SYNCOPATED_PATTERN.length]!
   }
+}
+
+// Turing-machine rhythm (inboil generative.ts:498-513). Stateful: the
+// register evolves on every call (one step per call). Caller owns the
+// state; engine provides constructor + step function. registerToFraction
+// (generative.ts:136-142) computes the unsigned-integer fraction as
+// `sum(register[i] * 2^i) / (2^length - 1)`. fires when frac >= 0.5.
+// After computing, the register shifts: lastBit slides off, with prob
+// (1 - lock) it flips on its way to position 0; otherwise stays.
+export interface TuringRhythmState {
+  // 0/1 bits, length matches the configured length. index 0 = "newest".
+  register: number[]
+  // Seeded mulberry32 stream — same algorithm as inboil's seededRng
+  // (generative.ts:678-685, mulberry32 verbatim).
+  rng: () => number
+}
+
+const TURING_LENGTH_MIN = 2
+const TURING_LENGTH_MAX = 32
+
+export function makeTuringState(length: number, seed: number): TuringRhythmState {
+  // inboil's turingRhythm (generative.ts:499-501) seeds an RNG and fills
+  // the register from random bits before producing any output.
+  const len = Math.max(TURING_LENGTH_MIN, Math.min(TURING_LENGTH_MAX, Math.floor(length)))
+  const rng = mulberry32(seed >>> 0)
+  const register: number[] = []
+  for (let i = 0; i < len; i++) register.push(rng() < 0.5 ? 1 : 0)
+  return { register, rng }
+}
+
+// Compute the fires-this-step bool, then advance the register exactly as
+// inboil's turingRhythm loop body (generative.ts:504-510). lock ∈ [0, 1]:
+// 1.0 = frozen loop (lastBit always carried over), 0.0 = fully random
+// (lastBit always flipped before insertion).
+export function turingFires(state: TuringRhythmState, lock: number): boolean {
+  const len = state.register.length
+  let sum = 0
+  for (let i = 0; i < len; i++) sum += state.register[i]! * (1 << i)
+  const max = (1 << len) - 1 || 1
+  const frac = sum / max
+  const fires = frac >= 0.5
+
+  const lockClamped = lock < 0 ? 0 : lock > 1 ? 1 : lock
+  const flipProb = 1 - lockClamped
+  const lastBit = state.register[len - 1]!
+  for (let j = len - 1; j > 0; j--) state.register[j] = state.register[j - 1]!
+  state.register[0] = state.rng() < flipProb ? (1 - lastBit) : lastBit
+  return fires
 }
 
 // ARP note picker. Returns the index into the voiced chord array to play
@@ -102,21 +156,6 @@ export function arpIndex(
   }
 }
 
-export function mapRhythmPreset(preset: RhythmPreset): RhythmFeel {
-  const dry = { swing: 0.5, humanizeVelocity: 0, humanizeGate: 0, humanizeTiming: 0 }
-  switch (preset) {
-    case 'legato':   return { gating: 'head-only',  ...dry }
-    case 'chord':    return { gating: 'every-tick', ...dry }
-    case 'straight': return { gating: 'onbeat',     ...dry }
-    case 'offbeat':  return { gating: 'offbeat',    ...dry }
-    case 'shuffle':  return { gating: 'offbeat', swing: SHUFFLE_SWING,
-                              humanizeVelocity: 0, humanizeGate: 0, humanizeTiming: 0 }
-    case 'loose':    return { gating: 'every-tick', swing: 0.5,
-                              humanizeVelocity: LOOSE_HUMANIZE_AMOUNT,
-                              humanizeGate:     LOOSE_HUMANIZE_AMOUNT,
-                              humanizeTiming:   LOOSE_HUMANIZE_AMOUNT }
-  }
-}
 
 export interface Cell {
   op: Op
@@ -160,11 +199,6 @@ export interface WalkState {
   seed: number
   // ADR 005 Phase 3 — defaults to 'forward' when omitted.
   stepDirection?: StepDirection
-  // ADR 005 Phase 5 — time-correlated humanize. EMA factor in [0, 1] applied
-  // independently to each of the 4 humanize axes:
-  //   v_t = drift * v_{t-1} + (1 - drift) * raw_t,  prev_init = 0.5
-  // drift=0 (default/omitted) → identity (raw uniform draws). drift→1 → frozen.
-  humanizeDrift?: number
 }
 
 export interface StepEvent {
@@ -173,10 +207,8 @@ export interface StepEvent {
   chord: Triad           // chord cursor AFTER this step's transform
   played: boolean        // false on rest or failed probability roll
   // Uniform [0, 1) values. Always populated regardless of op or probability
-  // outcome — host applies cell humanize-amount and signed-noise math
+  // outcome — host applies preset humanize-amount and signed-noise math
   // (vel + (h*2-1)*amount, etc.) to keep the cross-target stream stable.
-  // When WalkState.humanizeDrift > 0, these are EMA-smoothed (per-axis prev
-  // state initialized at 0.5, see walkStepEvent); drift=0 → raw uniforms.
   humanizeVel: number
   humanizeGate: number
   humanizeTiming: number
@@ -420,22 +452,12 @@ export function walkStepEvent(state: WalkState, pos: number): StepEvent | null {
   const rng = mulberry32(seed)
   let transformIdx = 0
   let result: StepEvent | null = null
-  // ADR 005 Phase 5 — per-axis EMA prev state for time-correlated humanize.
-  // Initialized at 0.5 (the midpoint of the [0, 1) raw-draw domain → maps to
-  // signed 0.0). Reseed-fresh-per-call (matching the chord cursor + PRNG
-  // contract) means any-pos restart reproduces identical smoothed sequences.
-  const drift = state.humanizeDrift ?? 0
-  let prevVel = 0.5, prevGate = 0.5, prevTim = 0.5
   for (let step = 1; step <= pos; step++) {
     if (step % spt !== 0) continue
     const cellIdx = resolveCellIdx(transformIdx, cells.length, direction, rng)
     const cell = cells[cellIdx]!
-    const { resolvedOp, played, humanizeVel: rawVel, humanizeGate: rawGate, humanizeTiming: rawTim } =
+    const { resolvedOp, played, humanizeVel, humanizeGate, humanizeTiming } =
       stepBoundary(cursor, cell, jitter, rng)
-    const humanizeVel = drift * prevVel + (1 - drift) * rawVel
-    const humanizeGate = drift * prevGate + (1 - drift) * rawGate
-    const humanizeTiming = drift * prevTim + (1 - drift) * rawTim
-    prevVel = humanizeVel; prevGate = humanizeGate; prevTim = humanizeTiming
     if (step === pos) {
       result = {
         cellIdx,

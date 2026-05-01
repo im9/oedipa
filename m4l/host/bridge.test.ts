@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Bridge, type BridgeDeps } from './bridge.ts'
+import type { HostParams } from './host.ts'
 import { mulberry32 } from '../engine/tonnetz.ts'
 import { FACTORY_PRESETS } from './presets.ts'
 
@@ -88,104 +89,57 @@ const LEGACY_TEST_BASELINE = {
   ],
 }
 
-describe('Bridge — cellLength (cell duration in bars)', () => {
-  // Rationale: prior model coupled cell rate to subdivision × stepsPerTransform.
-  // That made cell rate change whenever the user shifted subdivision (a feel
-  // axis), and forced the user to mentally compute "subdiv * Steps = duration"
-  // to predict cycle length. The new contract: cellLength is the single
-  // user-facing rate parameter, expressed in BARS (PPQN=24 → 96 ticks/bar at
-  // 4/4). Bridge translates to the engine's stepsPerTransform via:
-  //   stepsPerTransform = cellLength_bars * 96 / ticksPerStep
-  // and recomputes whenever either input changes.
-  //
-  // Helper to peek at the host's params for assertions.
-  function hostParams(b: Bridge): { stepsPerTransform: number; ticksPerStep: number } {
-    return (b as unknown as { host: { params: { stepsPerTransform: number; ticksPerStep: number } } })
-      .host.params
+// Test-only Bridge constructor wrapper. Production hardcodes ticksPerStep=6
+// (16th @ PPQN=24); these tests run with "1 pos = 1 step" semantics for
+// terse pos arithmetic, matching the host.test.ts convention.
+function makeBridge(deps: BridgeDeps, options: { initialParams?: Partial<HostParams>; slotsAlreadyRehydrated?: boolean; ticksPerStep?: number } = {}): Bridge {
+  return new Bridge(deps, { ...options, ticksPerStep: options.ticksPerStep ?? 1 })
+}
+
+describe('Bridge — rate (chord-hold in 16th-note steps, inboil stepsPerTransform port)', () => {
+  // Phase 7 Step 4 rev 2 (2026-05-01) — chord-hold expressed in 16th-note
+  // steps (not bars). 1 step = 1 sixteenth = 1 spt unit, identity mapping.
+  // Range 1..64 (inboil generative.ts:548 + TonnetzSheet.svelte slider).
+  // Default 4 = 1 quarter note = inboil sceneActions.ts:269 default.
+  function hostParams(b: Bridge): { stepsPerTransform: number } {
+    return (b as unknown as { host: { params: { stepsPerTransform: number } } }).host.params
   }
 
-  test('setParams cellLength=1 with ticksPerStep=6 (16th) → stepsPerTransform=16', () => {
-    // 1 bar = 96 raw ticks at PPQN=24. With 16th subdivision (6 ticks/step),
-    // 96/6 = 16 subdivision-steps per cell. The engine still consumes one
-    // cell per spt subdivisions; only the source of truth shifts.
+  test("setParams('rate', 4) → stepsPerTransform = 4 (1 quarter, inboil default)", () => {
     const h = new Harness()
-    const b = new Bridge(h.deps)
-    b.setParams('ticksPerStep', 6)
-    b.setParams('cellLength', 1)
-    assert.equal(hostParams(b).stepsPerTransform, 16,
-      '1 bar / 16th subdivision = 16 spt')
-    assert.equal(hostParams(b).ticksPerStep, 6)
+    const b = makeBridge(h.deps)
+    b.setParams('rate', 4)
+    assert.equal(hostParams(b).stepsPerTransform, 4)
   })
 
-  test('setParams cellLength=2 with ticksPerStep=6 → stepsPerTransform=32', () => {
-    const h = new Harness()
-    const b = new Bridge(h.deps)
-    b.setParams('ticksPerStep', 6)
-    b.setParams('cellLength', 2)
-    assert.equal(hostParams(b).stepsPerTransform, 32, '2 bars / 16th = 32 spt')
-  })
-
-  test('changing ticksPerStep recomputes stepsPerTransform from current cellLength', () => {
-    // User holds cellLength=1 and changes subdivision. Cell duration in
-    // ticks must remain 96 (1 bar) — only the subdivision-step count changes.
-    const h = new Harness()
-    const b = new Bridge(h.deps)
-    b.setParams('cellLength', 1)
-    b.setParams('ticksPerStep', 6)  // 16th
-    assert.equal(hostParams(b).stepsPerTransform, 16)
-    b.setParams('ticksPerStep', 12) // 8th
-    assert.equal(hostParams(b).stepsPerTransform, 8, '1 bar / 8th = 8 spt')
-    b.setParams('ticksPerStep', 3)  // 32nd
-    assert.equal(hostParams(b).stepsPerTransform, 32, '1 bar / 32nd = 32 spt')
-    b.setParams('ticksPerStep', 4)  // 16T
-    assert.equal(hostParams(b).stepsPerTransform, 24, '1 bar / 16T = 24 spt')
-  })
-
-  test('all (cellLength, ticksPerStep) combinations yield integer stepsPerTransform', () => {
-    // Sanity: with the live.tab option sets we expose (cellLength ∈
-    // {1,2,4,8} bars, ticksPerStep ∈ {12,6,3,8,4} per ADR 005 §Subdivision),
-    // every cell duration is an integer number of subdivision-steps. Failing
-    // this would mean the engine's cell-boundary modular arithmetic could
-    // never line up.
-    for (const bars of [1, 2, 4, 8]) {
-      for (const tps of [12, 6, 3, 8, 4]) {
-        const h = new Harness()
-        const b = new Bridge(h.deps)
-        b.setParams('ticksPerStep', tps)
-        b.setParams('cellLength', bars)
-        const spt = hostParams(b).stepsPerTransform
-        assert.ok(Number.isInteger(spt) && spt >= 1,
-          `cellLength=${bars}, tps=${tps}: spt=${spt} must be positive integer`)
-        assert.equal(spt * tps, bars * 96,
-          `cellLength=${bars}, tps=${tps}: cell duration must equal ${bars} bars in ticks`)
-      }
+  test('rate sweep (1..64) maps directly to stepsPerTransform', () => {
+    for (const steps of [1, 2, 4, 8, 16, 32, 64]) {
+      const h = new Harness()
+      const b = makeBridge(h.deps)
+      b.setParams('rate', steps)
+      assert.equal(hostParams(b).stepsPerTransform, steps,
+        `rate=${steps}: spt must equal steps`)
     }
   })
 
-  test('invalid cellLength (0, negative, NaN) is a no-op', () => {
+  test('invalid rate (0, negative, > 64, non-integer, NaN) is a no-op', () => {
     const h = new Harness()
-    const b = new Bridge(h.deps)
-    b.setParams('ticksPerStep', 6)
-    b.setParams('cellLength', 1) // baseline
+    const b = makeBridge(h.deps)
+    b.setParams('rate', 4) // baseline
     const baseline = hostParams(b).stepsPerTransform
-    b.setParams('cellLength', 0)
-    assert.equal(hostParams(b).stepsPerTransform, baseline, '0 ignored')
-    b.setParams('cellLength', -1)
-    assert.equal(hostParams(b).stepsPerTransform, baseline, 'negative ignored')
-    b.setParams('cellLength', NaN)
-    assert.equal(hostParams(b).stepsPerTransform, baseline, 'NaN ignored')
+    for (const bad of [0, -1, 65, 100, 1.5, NaN]) {
+      b.setParams('rate', bad)
+      assert.equal(hostParams(b).stepsPerTransform, baseline, `rate=${bad} must be ignored`)
+    }
   })
 
-  test('cellLength is not auto-saved as a slot field (device-shared)', () => {
-    // Until / unless the spec promotes cellLength to a slot field, changing
-    // it must not write the slot-store outlet (the Drift/Cycle/etc. presets
-    // currently share one global cell duration).
+  test('rate is not auto-saved as a slot field (device-shared)', () => {
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = makeBridge(h.deps)
     h.outlets.length = 0
-    b.setParams('cellLength', 2)
+    b.setParams('rate', 8)
     const slotStore = h.outlets.filter(o => o.channel === 'slot-store')
-    assert.equal(slotStore.length, 0, 'cellLength change must not emit slot-store')
+    assert.equal(slotStore.length, 0, 'rate change must not emit slot-store')
   })
 })
 
@@ -202,19 +156,19 @@ describe('Bridge — rhythm / arp / length passthrough (Phase 7)', () => {
       .host.params
   }
 
-  test("setParams('rhythm', 'chord') reaches the host without touching slot-store", () => {
+  test("setParams('rhythm', 'all') reaches the host without touching slot-store", () => {
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = makeBridge(h.deps)
     h.outlets.length = 0
-    b.setParams('rhythm', 'chord')
-    assert.equal(hostFeel(b).rhythm, 'chord')
+    b.setParams('rhythm', 'all')
+    assert.equal(hostFeel(b).rhythm, 'all')
     const slotStore = h.outlets.filter(o => o.channel === 'slot-store')
     assert.equal(slotStore.length, 0, 'rhythm is device-shared, not slot-stored')
   })
 
   test("setParams('arp', 'up') reaches the host without touching slot-store", () => {
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = makeBridge(h.deps)
     h.outlets.length = 0
     b.setParams('arp', 'up')
     assert.equal(hostFeel(b).arp, 'up')
@@ -228,7 +182,7 @@ describe('Bridge — rhythm / arp / length passthrough (Phase 7)', () => {
     // — without this the length doesn't persist if the user grows then
     // saves WITHOUT also editing a cell (the prior auto-save trigger).
     const h = new Harness()
-    const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
+    const b = makeBridge(h.deps, { slotsAlreadyRehydrated: true })
     h.outlets.length = 0
     b.setParams('length', 2)
     assert.equal(hostFeel(b).length, 2)
@@ -243,7 +197,7 @@ describe('Bridge — rhythm / arp / length passthrough (Phase 7)', () => {
     // pads cells with `hold` in host.setParams when length grows, so the
     // engine sees N entries.
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = makeBridge(h.deps)
     b.setParams('length', 5)
     const params = (b as unknown as { host: { params: { cells: Array<{ op: string }>; length: number } } }).host.params
     assert.equal(params.length, 5)
@@ -255,7 +209,7 @@ describe('Bridge — rhythm / arp / length passthrough (Phase 7)', () => {
 describe('Bridge — step timing estimator', () => {
   test('msPerPos starts at 0 and stays 0 until two steps observed', () => {
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = makeBridge(h.deps)
     h.clock = 100
     b.step(0)
     assert.equal(b.getMsPerPos(), 0, 'no estimate from a single step')
@@ -264,7 +218,7 @@ describe('Bridge — step timing estimator', () => {
   test('two steps separated by dt yield msPerPos = dt / dpos', () => {
     // 16th note @ 120bpm = 125ms per pos. dpos=1 across one metro tick.
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = makeBridge(h.deps)
     h.clock = 1000
     b.step(0)
     h.clock = 1125
@@ -275,7 +229,7 @@ describe('Bridge — step timing estimator', () => {
   test('msPerPos smooths across uneven intervals (does not snap to outlier)', () => {
     // Smoothing factor: msPerPos = msPerPos*0.7 + inst*0.3 after first sample.
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = makeBridge(h.deps)
     h.clock = 0; b.step(0)
     h.clock = 100; b.step(1) // inst=100 → msPerPos=100 (first sample)
     h.clock = 300; b.step(2) // inst=200 → msPerPos = 100*0.7 + 200*0.3 = 130
@@ -284,7 +238,7 @@ describe('Bridge — step timing estimator', () => {
 
   test('large dt (>= 5000ms) is rejected as a stall, not folded into estimate', () => {
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = makeBridge(h.deps)
     h.clock = 0; b.step(0)
     h.clock = 125; b.step(1)
     assert.equal(b.getMsPerPos(), 125)
@@ -296,7 +250,7 @@ describe('Bridge — step timing estimator', () => {
     // After panic, the next two steps re-establish the estimate; the prior
     // timestamp is gone so a single post-panic step doesn't update.
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = makeBridge(h.deps)
     h.clock = 0; b.step(0)
     h.clock = 125; b.step(1)
     b.panic()
@@ -312,7 +266,7 @@ describe('Bridge — dispatch (delayPos handling)', () => {
   test('events with no delayPos emit immediately', () => {
     // step(0) emits the startChord with no delayPos → 3 immediate noteOns.
     const h = new Harness()
-    const b = new Bridge(h.deps)
+    const b = makeBridge(h.deps)
     h.clock = 1000
     b.step(0)
     const ons = h.notes.filter(n => n.velocity > 0)
@@ -325,7 +279,7 @@ describe('Bridge — dispatch (delayPos handling)', () => {
     // After two steps msPerPos=125. Step(4) emits cell-driven events; gate=0.9
     // and spt=4 → scheduled noteOff at delayPos = 0.9*4 = 3.6 → ms=450.
     const h = new Harness()
-    const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
+    const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
     h.clock = 0; b.step(0)
     h.clock = 125; b.step(1)
     h.clock = 250; b.step(2)
@@ -341,7 +295,7 @@ describe('Bridge — dispatch (delayPos handling)', () => {
   test('scheduled noteOff fires at the right wall-clock time', () => {
     // gate=0.9, spt=4, msPerPos≈125 → noteOff fires at step time + 450ms.
     const h = new Harness()
-    const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
+    const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
     h.clock = 0; b.step(0)
     h.clock = 125; b.step(1)
     h.clock = 250; b.step(2)
@@ -362,7 +316,7 @@ describe('Bridge — dispatch (delayPos handling)', () => {
     // step fires (e.g., scrub at pos=spt before any other steps), scheduled
     // noteOffs degrade to immediate emit instead of nonsense ms.
     const h = new Harness()
-    const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
+    const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
     // Jump directly to pos=4 — no prior steps, msPerPos=0.
     h.clock = 0
     b.step(4)
@@ -380,7 +334,7 @@ describe('Bridge — full transport cycle (regression for "first note only" bug)
   // they would arrive at the synth.
   test('Cmaj startChord (step 0) and Cmin (step 4) both produce audible noteOn windows', () => {
     const h = new Harness()
-    const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
+    const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
     // 16th @ 120bpm = 125ms/pos. spt=4 → cell fires every 500ms.
     for (let pos = 0; pos < 4; pos++) {
       h.advanceTo(pos * 125)
@@ -409,7 +363,7 @@ describe('Bridge — full transport cycle (regression for "first note only" bug)
 
   test('audible window for Cmin spans from step(4) to step(4)+gate*spt*ms', () => {
     const h = new Harness()
-    const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
+    const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
     for (let pos = 0; pos < 4; pos++) {
       h.advanceTo(pos * 125)
       b.step(pos)
@@ -432,7 +386,7 @@ describe('Bridge — full transport cycle (regression for "first note only" bug)
     // prior chord's gate-end noteOff handles it via setTimeout, not the
     // host's handoff path).
     const h = new Harness()
-    const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
+    const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
     for (let pos = 0; pos < 9; pos++) {
       h.advanceTo(pos * 125)
       // Fire any due scheduled callbacks before the next step records
@@ -471,7 +425,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
   describe('switchSlot', () => {
     test('updates host activeSlot and emits full slot UI rehydrate', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       // Stage slot 1 with a distinctive program so the rehydrate outlets
       // carry recognizable values.
       assert.equal(b.loadFromProgramString('PPP_|s=42|j=0.3|c=Em'), true)
@@ -493,7 +447,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('out-of-range index emits nothing', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       b.switchSlot(-1)
       b.switchSlot(4)
@@ -518,7 +472,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       // R-L-L-R; this test stays grounded in the original P-L-R-hold encoding
       // by passing initialParams.cells explicitly.
       const h = new Harness()
-      const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
+      const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
       h.outlets.length = 0
       b.switchSlot(1) // slot 1 default also "PLR_"
       const cellOps = byChannel(slotOutlets(h), 'slot-cell-op')
@@ -535,7 +489,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('setCell emits slot-store for the active slot', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
+      const b = makeBridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       b.setCell(0, 'rest')
       assert.equal(byChannel(slotOutlets(h), 'slot-store').length, 1)
@@ -543,7 +497,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('setParams jitter emits slot-store', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
+      const b = makeBridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       b.setParams('jitter', 0.5)
       assert.equal(byChannel(slotOutlets(h), 'slot-store').length, 1)
@@ -551,7 +505,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('setStartChord emits slot-store', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
+      const b = makeBridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       b.setStartChord(60, 64, 67)
       assert.equal(byChannel(slotOutlets(h), 'slot-store').length, 1)
@@ -559,7 +513,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('setParams with non-slot field (voicing) does NOT emit slot-store', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       b.setParams('voicing', 'spread')
       b.setParams('humanizeVelocity', 0.5)
@@ -569,7 +523,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('setCellField does NOT emit slot-store (per-cell numeric is device-shared)', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       b.setCellField(0, 'velocity', 0.5)
       assert.equal(byChannel(slotOutlets(h), 'slot-store').length, 0)
@@ -579,7 +533,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
   describe('loadFactoryPreset', () => {
     test('returns true and emits full rehydrate on valid index', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       const ok = b.loadFactoryPreset(0)
       assert.equal(ok, true)
@@ -594,7 +548,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('returns false and emits nothing on out-of-range index', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       assert.equal(b.loadFactoryPreset(-1), false)
       assert.equal(b.loadFactoryPreset(FACTORY_PRESETS.length), false)
@@ -604,8 +558,8 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
   describe('randomize', () => {
     test('with deterministic RNG, two bridges produce identical program strings', () => {
-      const h1 = new Harness(); const b1 = new Bridge(h1.deps); b1.randomize(mulberry32(7))
-      const h2 = new Harness(); const b2 = new Bridge(h2.deps); b2.randomize(mulberry32(7))
+      const h1 = new Harness(); const b1 = makeBridge(h1.deps); b1.randomize(mulberry32(7))
+      const h2 = new Harness(); const b2 = makeBridge(h2.deps); b2.randomize(mulberry32(7))
       const p1 = byChannel(slotOutlets(h1), 'slot-program')[0]!.args[0]
       const p2 = byChannel(slotOutlets(h2), 'slot-program')[0]!.args[0]
       assert.equal(p1, p2)
@@ -613,7 +567,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('emits full slot UI rehydrate', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       b.randomize(mulberry32(1))
       const outs = slotOutlets(h)
@@ -627,7 +581,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
   describe('loadFromProgramString', () => {
     test('returns true and emits full rehydrate on valid string', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       const ok = b.loadFromProgramString('PPP_|s=42|j=0.3|c=Em')
       assert.equal(ok, true)
@@ -641,7 +595,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('returns false and emits nothing on malformed input', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       assert.equal(b.loadFromProgramString('not-a-program'), false)
       assert.equal(b.loadFromProgramString(''), false)
@@ -667,7 +621,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       // Wire shape post-Phase-7: idx + c0..c7 + length + jitter + seed +
       // root + quality = 14 atoms. Uses LEGACY_TEST_BASELINE cells "PLR_".
       const h = new Harness()
-      const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE, slotsAlreadyRehydrated: true })
+      const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE, slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       b.setCell(0, 'rest')
       const stores = storeFor(h)
@@ -679,7 +633,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('randomize emits slot-store reflecting the new program', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
+      const b = makeBridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       b.randomize(mulberry32(7))
       const stores = storeFor(h)
@@ -692,7 +646,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('loadFactoryPreset emits slot-store', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
+      const b = makeBridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       assert.equal(b.loadFactoryPreset(0), true)
       assert.equal(storeFor(h).length, 1)
@@ -700,7 +654,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('loadFromProgramString emits slot-store with parsed fields', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
+      const b = makeBridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       assert.equal(b.loadFromProgramString('PPP_|s=42|j=0.3|c=Em'), true)
       const stores = storeFor(h)
@@ -712,7 +666,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('switchSlot does NOT emit slot-store', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       b.switchSlot(2)
       assert.equal(storeFor(h).length, 0)
@@ -720,7 +674,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('setSlotFields does NOT emit slot-store (silent restore)', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       b.setSlotFields(1, 0, 0, 0, 0, 3, 3, 3, 3, 4, 0.1, 1, 0, 0)
       assert.equal(storeFor(h).length, 0)
@@ -734,7 +688,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
   describe('lattice updates on slot mutations', () => {
     test('switchSlot to a slot with a different startChord emits lattice-center', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       // Stage slot 1 with Em (root 4) so switch is a real chord change.
       assert.equal(b.loadFromProgramString('PLR_|s=0|j=0|c=Em'), true)
       // Loading was on slot 0; now go to slot 2 (default Cmaj) and back.
@@ -747,7 +701,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('randomize emits lattice-center', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       b.randomize(mulberry32(3))
       const center = h.outlets.filter(o => o.channel === 'lattice-center')
@@ -776,7 +730,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('populates slot silently; switchSlot then surfaces the saved program', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       // P,P,P,hold = "PPP_" | seed 42 | jitter 0.3 | Em (root 4, min)
       setFields4(b, 2, 0, 0, 0, 3, 0.3, 42, 4, 1)
@@ -789,7 +743,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('all five op codes round-trip through the wire encoding', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       setFields4(b, 1, 0, 1, 2, 3, 0, 0, 0, 0) // PLR_
       h.outlets.length = 0
       b.switchSlot(1)
@@ -807,7 +761,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       const h = new Harness()
       // LEGACY baseline so the assertion can pin "default slot 0 cells = PLR_"
       // without depending on the production default cells (now R-L-L-R).
-      const b = new Bridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
+      const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
       h.outlets.length = 0
       setFields4(b, -1, 0, 0, 0, 0, 0, 0, 0, 0)
       setFields4(b, 4, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -821,7 +775,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('out-of-range cell op / quality / root is a silent no-op', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       // First seed slot 2 with a known program.
       setFields4(b, 2, 0, 0, 0, 0, 0.1, 1, 0, 0) // PPPP|s=1|j=0.1|c=C
       h.outlets.length = 0
@@ -841,7 +795,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('NaN field is a silent no-op', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       setFields4(b, 2, 0, 0, 0, 0, 0.1, 1, 0, 0)
       h.outlets.length = 0
       setFields4(b, 2, 0, 0, 0, 0, NaN, 1, 0, 0)
@@ -854,7 +808,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('loadbang sequence: 4 setSlotFields + switchSlot rehydrates active slot', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       setFields4(b, 0, 0, 1, 2, 3, 0.0, 0, 0, 0)   // slot 0: PLR_  | C
       setFields4(b, 1, 0, 0, 0, 0, 0.5, 7, 4, 1)   // slot 1: PPPP  | Em j=0.5 s=7
@@ -876,7 +830,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       // reload — cells 4..7 must round-trip through the slot-store wire.
       // 6-cell program: P L R hold P L (codes 0 1 2 3 0 1).
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       // 8 cells given; length=6 selects first 6 → "PLR_PL".
       b.setSlotFields(2, 0, 1, 2, 3, 0, 1, 3, 3, 6, 0.4, 11, 7, 0)
@@ -889,7 +843,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('length=8: full-width program round-trips', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       h.outlets.length = 0
       // P L R hold P L R hold (codes 0 1 2 3 0 1 2 3).
       b.setSlotFields(0, 0, 1, 2, 3, 0, 1, 2, 3, 8, 0.0, 0, 0, 0)
@@ -903,7 +857,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       // length=4 truncates to 4 cells. Garbage codes past length don't leak
       // into the loaded slot (they get truncated, not validated).
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       // Valid c0..c3, length=4, garbage c4..c7 (all 'hold' so still valid
       // codes — but ignored).
       b.setSlotFields(0, 0, 1, 2, 3, 3, 3, 3, 3, 4, 0.0, 0, 0, 0)
@@ -914,7 +868,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
     test('out-of-range length is a silent no-op', () => {
       const h = new Harness()
-      const b = new Bridge(h.deps)
+      const b = makeBridge(h.deps)
       // Seed slot with known good state.
       b.setSlotFields(0, 0, 1, 2, 3, 3, 3, 3, 3, 4, 0.0, 0, 0, 0)
       h.outlets.length = 0
@@ -937,7 +891,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       // is what they emit back on rehydrate. If the wire format mismatches,
       // this test fails before any patcher work matters.
       const h1 = new Harness()
-      const b1 = new Bridge(h1.deps, { slotsAlreadyRehydrated: true })
+      const b1 = makeBridge(h1.deps, { slotsAlreadyRehydrated: true })
       // 1. Grow length to 5 (auto-pads cells with 'hold').
       b1.setParams('length', 5)
       // 2. Set cell 4 to 'P' (overwrites the hold pad).
@@ -952,7 +906,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
       // 4. Replay into a fresh bridge via setSlotFields (silent restore).
       const h2 = new Harness()
-      const b2 = new Bridge(h2.deps)
+      const b2 = makeBridge(h2.deps)
       h2.outlets.length = 0
       b2.setSlotFields(idx!, c0!, c1!, c2!, c3!, c4!, c5!, c6!, c7!, length!, jitter!, seed!, root!, quality!)
       b2.switchSlot(idx!)
@@ -976,7 +930,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       // c0..c7 (8) + length + jitter + seed + root + quality = 13 atoms
       // after the slot index. Verifies the wire format the patcher relies on.
       const h = new Harness()
-      const b = new Bridge(h.deps, { slotsAlreadyRehydrated: true })
+      const b = makeBridge(h.deps, { slotsAlreadyRehydrated: true })
       h.outlets.length = 0
       // Edit cell 0 to 'rest' — triggers slot-store for the 4-cell default.
       b.setCell(0, 'rest')

@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "description": "Cross-target conformance test vectors for the Tonnetz engine (see docs/ai/adr/archive/001-tonnetz-engine-interface.md and docs/ai/adr/005-rhythmic-feel.md). All target implementations (m4l, vst, app) must pass these. Binding assertion: pitch-class set of output equals expected_pcs (order-independent). Realized octaves may vary by integer multiples of 12 due to target-specific boundary behavior in buildTriad; pitch-class identity is the contract.",
   "conventions": {
     "triad": "[a, b, c] MIDI note numbers. For inputs in close position, a=root, b=root+3 or +4, c=root+7. identify_triad cases also include inversions.",
@@ -395,6 +395,89 @@
         "description": "walk(state, pos=N) must equal the result of advancing the walker step-by-step from pos=0 to N. Cross-target conformance depends on this — Live can resume playback at any position.",
         "structural_assertion": "walk(state, N) === stepwise advance from 0 to N"
       }
+    ]
+  },
+
+  "gating_fires": {
+    "description": "ADR 006 §Phase 7 Step 4 (rev 2026-05-01) — gatingFires(preset, subStepIdx) within-cell predicate. Spec-level match to inboil's resolveRhythm (src/lib/generative.ts:478-496); not a literal-code copy. subStepIdx grows from 0 at cell head to (stepsPerTransform - 1) at the last sub-step before the next boundary. 16th-note grid. Predicates: 'all' = always; 'legato' = idx === 0 (cell head, matches inboil's tonnetzGenerate special-case at line 598); 'onbeat' = idx % 4 === 0 (inboil generative.ts:489, quarter pulse); 'offbeat' = idx % 4 === 2 (the &-of-each-quarter, 4 fires/bar, complementary to onbeat — INTENTIONAL DIVERGENCE from inboil's literal `i % 2 === 1` which fires every odd 16th = 8 fires/bar including e/a positions, audibly an 8th-tremolo rather than an off-beat); 'syncopated' = inboil's [T,F,T,F,F,T,F,T] pattern (generative.ts:490-493) repeated. Pure: no PRNG, no state.",
+    "cases": [
+      { "preset": "all",        "subStepIdx": 0,  "fires": true  },
+      { "preset": "all",        "subStepIdx": 1,  "fires": true  },
+      { "preset": "all",        "subStepIdx": 7,  "fires": true  },
+      { "preset": "all",        "subStepIdx": 15, "fires": true  },
+      { "preset": "legato",     "subStepIdx": 0,  "fires": true  },
+      { "preset": "legato",     "subStepIdx": 1,  "fires": false },
+      { "preset": "legato",     "subStepIdx": 4,  "fires": false },
+      { "preset": "legato",     "subStepIdx": 15, "fires": false },
+      { "preset": "onbeat",     "subStepIdx": 0,  "fires": true  },
+      { "preset": "onbeat",     "subStepIdx": 1,  "fires": false },
+      { "preset": "onbeat",     "subStepIdx": 2,  "fires": false },
+      { "preset": "onbeat",     "subStepIdx": 3,  "fires": false },
+      { "preset": "onbeat",     "subStepIdx": 4,  "fires": true  },
+      { "preset": "onbeat",     "subStepIdx": 8,  "fires": true  },
+      { "preset": "onbeat",     "subStepIdx": 12, "fires": true  },
+      { "preset": "offbeat",    "subStepIdx": 0,  "fires": false },
+      { "preset": "offbeat",    "subStepIdx": 1,  "fires": false },
+      { "preset": "offbeat",    "subStepIdx": 2,  "fires": true  },
+      { "preset": "offbeat",    "subStepIdx": 3,  "fires": false },
+      { "preset": "offbeat",    "subStepIdx": 4,  "fires": false },
+      { "preset": "offbeat",    "subStepIdx": 6,  "fires": true  },
+      { "preset": "offbeat",    "subStepIdx": 10, "fires": true  },
+      { "preset": "offbeat",    "subStepIdx": 14, "fires": true  },
+      { "preset": "offbeat",    "subStepIdx": 15, "fires": false },
+      { "preset": "syncopated", "subStepIdx": 0,  "fires": true  },
+      { "preset": "syncopated", "subStepIdx": 1,  "fires": false },
+      { "preset": "syncopated", "subStepIdx": 2,  "fires": true  },
+      { "preset": "syncopated", "subStepIdx": 3,  "fires": false },
+      { "preset": "syncopated", "subStepIdx": 4,  "fires": false },
+      { "preset": "syncopated", "subStepIdx": 5,  "fires": true  },
+      { "preset": "syncopated", "subStepIdx": 6,  "fires": false },
+      { "preset": "syncopated", "subStepIdx": 7,  "fires": true  },
+      { "preset": "syncopated", "subStepIdx": 8,  "fires": true  },
+      { "preset": "syncopated", "subStepIdx": 10, "fires": true  },
+      { "preset": "syncopated", "subStepIdx": 13, "fires": true  }
+    ]
+  },
+
+  "turing_rhythm": {
+    "description": "ADR 006 §Phase 7 Step 4 rev 2 — turingFires(state, lock) stateful predicate, ported verbatim from inboil's turingRhythm (src/lib/generative.ts:498-513). Stream values are produced by initializing a register of `length` bits via mulberry32(seed) (each bit = (rng() < 0.5)), then for each step: (1) compute frac = sum(register[i] * 2^i) / (2^length - 1), fires when frac >= 0.5; (2) shift register right, with lastBit re-inserted at index 0 — flipped with probability (1 - lock), kept otherwise (rng draw consumed regardless). Stream values below are first-N booleans encoded as 0/1 ints. Cross-target conformance: same (length, lock, seed) MUST produce the same stream.",
+    "cases": [
+      { "length": 8, "lock": 0.7, "seed": 0,  "stream": [0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1] },
+      { "length": 4, "lock": 0.7, "seed": 1,  "stream": [0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1] },
+      { "length": 2, "lock": 0.7, "seed": 99, "stream": [0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0] }
+    ]
+  },
+
+  "arp_index": {
+    "description": "ADR 006 §Phase 7 Step 4 — arpIndex(mode, chordSize, fireIdx, rng) → null | int. 'off' returns null (host fires the full voiced chord, no ARP). Other modes pick a single voiced index per fire; fireIdx is the cell-local fire counter (host resets to 0 at every cell boundary). chordSize ≤ 0 → null; chordSize === 1 → 0 (early-exit, no PRNG draw). 'random' consumes 1 PRNG draw when chordSize > 1; deterministic modes consume 0 draws. These cases cover the deterministic modes only — random is verified separately in engine TS unit tests with mulberry32 seeds.",
+    "cases": [
+      { "mode": "off",    "chordSize": 3, "fireIdx": 0, "expected": null },
+      { "mode": "off",    "chordSize": 1, "fireIdx": 5, "expected": null },
+      { "mode": "up",     "chordSize": 0, "fireIdx": 0, "expected": null },
+      { "mode": "up",     "chordSize": 1, "fireIdx": 7, "expected": 0    },
+      { "mode": "up",     "chordSize": 3, "fireIdx": 0, "expected": 0    },
+      { "mode": "up",     "chordSize": 3, "fireIdx": 1, "expected": 1    },
+      { "mode": "up",     "chordSize": 3, "fireIdx": 2, "expected": 2    },
+      { "mode": "up",     "chordSize": 3, "fireIdx": 3, "expected": 0    },
+      { "mode": "up",     "chordSize": 3, "fireIdx": 5, "expected": 2    },
+      { "mode": "down",   "chordSize": 1, "fireIdx": 4, "expected": 0    },
+      { "mode": "down",   "chordSize": 3, "fireIdx": 0, "expected": 2    },
+      { "mode": "down",   "chordSize": 3, "fireIdx": 1, "expected": 1    },
+      { "mode": "down",   "chordSize": 3, "fireIdx": 2, "expected": 0    },
+      { "mode": "down",   "chordSize": 3, "fireIdx": 3, "expected": 2    },
+      { "mode": "updown", "chordSize": 1, "fireIdx": 5, "expected": 0    },
+      { "mode": "updown", "chordSize": 2, "fireIdx": 0, "expected": 0    },
+      { "mode": "updown", "chordSize": 2, "fireIdx": 1, "expected": 1    },
+      { "mode": "updown", "chordSize": 2, "fireIdx": 2, "expected": 0    },
+      { "mode": "updown", "chordSize": 3, "fireIdx": 0, "expected": 0    },
+      { "mode": "updown", "chordSize": 3, "fireIdx": 1, "expected": 1    },
+      { "mode": "updown", "chordSize": 3, "fireIdx": 2, "expected": 2    },
+      { "mode": "updown", "chordSize": 3, "fireIdx": 3, "expected": 1    },
+      { "mode": "updown", "chordSize": 3, "fireIdx": 4, "expected": 0    },
+      { "mode": "updown", "chordSize": 4, "fireIdx": 0, "expected": 0    },
+      { "mode": "updown", "chordSize": 4, "fireIdx": 3, "expected": 3    },
+      { "mode": "updown", "chordSize": 4, "fireIdx": 4, "expected": 2    },
+      { "mode": "updown", "chordSize": 4, "fireIdx": 6, "expected": 0    }
     ]
   }
 }

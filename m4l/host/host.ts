@@ -19,19 +19,20 @@ import {
   gatingFires,
   identifyTriad,
   makeCell,
-  mapRhythmPreset,
+  makeTuringState,
   mulberry32,
+  turingFires,
   walk,
   walkStepEvent,
   type ArpMode,
   type Cell,
-  type GatingMode,
   type MidiNote,
   type Op,
   type RhythmPreset,
   type StepDirection,
   type StepEvent,
   type Triad,
+  type TuringRhythmState,
   type Voicing,
   type WalkState,
 } from '../engine/tonnetz.ts'
@@ -71,24 +72,15 @@ export interface HostParams {
   inputChannel: number // 0 = omni, 1..16 = single-channel filter
   // ADR 005 Phase 3 — global rhythmic layer
   stepDirection: StepDirection
-  // PPQN tick → subdivision-step multiplier. Patcher streams ticks at PPQN=24
-  // (ADR 005 §Subdivision); the host divides by this to derive engine pos.
-  // Default in production = 6 (16th @ PPQN=24); tests pass 1 to keep
-  // "1 tick = 1 step" semantics.
-  ticksPerStep: number
-  swing: number                // 0.5 (none) .. 0.75 (heavy); off-beat tick offset
-  humanizeVelocity: number     // 0..1 amount
-  humanizeGate: number         // 0..1 amount
-  humanizeTiming: number       // 0..1 amount
-  humanizeDrift: number        // 0..1 EMA factor for time-correlated humanize (ADR 005 Phase 5)
   // Global output velocity multiplier applied AFTER per-cell velocity and
   // humanize. Single dial for "make everything quieter / louder" without
   // touching per-cell automation. 0..1, default 1.0 (no attenuation).
   outputLevel: number
-  // ADR 006 Phase 7 — RHYTHM feel preset (gating + implicit swing/humanize
-  // side effects, see engine.mapRhythmPreset). Slice (a) only consumes the
-  // gating dimension; surface revoke of swing/humanize* params lands in
-  // slice (c).
+  // ADR 006 Phase 7 Step 4 (rev 2026-05-01) — RHYTHM preset, ported from
+  // inboil's TonnetzRhythm subset (see engine.RhythmPreset). Drives the
+  // within-cell gating predicate only; swing / humanize were removed
+  // entirely (no inboil basis — inboil keeps swing project-global, no
+  // humanize). ticksPerStep is hardcoded internally to 6 (16th @ PPQN=24).
   rhythm: RhythmPreset
   // ADR 006 Phase 7 — ARP picker. 'off' emits the full voiced chord per
   // fire (legacy behavior); other modes pick a single voiced index per
@@ -98,6 +90,14 @@ export interface HostParams {
   // indices >= length so the patcher can pre-allocate up to 8 hidden
   // numbox per slot without forcing them to play.
   length: number
+  // ADR 006 Phase 7 Step 4 rev 2026-05-01 — Turing-machine rhythm params
+  // (inboil generative.ts:498-513 + types.ts:204). Apply only when
+  // rhythm='turing'; on other presets they sit dormant. Defaults match
+  // inboil's TonnetzSheet UI initial values (length=8, lock=0.7, seed=0).
+  // Range: length ∈ [2, 32], lock ∈ [0, 1], seed ∈ [0, 0xffffffff].
+  turingLength: number
+  turingLock: number
+  turingSeed: number
 }
 
 // ADR 006 §"Axis 1" — 4 snapshot slots in the device.
@@ -107,8 +107,21 @@ const SLOT_COUNT = 4
 // re-roll until ≥1 motion op (P/L/R) is present in the cell string.
 const RANDOM_OPS: readonly Op[] = ['P', 'L', 'R', 'hold', 'rest']
 
+// ADR 006 Phase 7 Step 4 rev 2 (2026-05-01) — patcher metro is `16n`
+// (Max standard syntax, transport-synced; previously `96n` which is
+// non-standard and BPM-unreliable). Each metro tick = 1 sixteenth-note,
+// so 1 raw tick = 1 sub-step → ticksPerStep = 1. Tests can still pass
+// a higher value via HostOptions for unit tests that want to simulate
+// the old PPQN=24 stream, but production now matches the test default.
+const DEFAULT_TICKS_PER_STEP = 1
+
+export interface HostOptions {
+  ticksPerStep?: number
+}
+
 export class Host {
   private params: HostParams
+  private readonly ticksPerStep: number
   private held: Set<MidiNote> = new Set()      // sustained walker OUTPUT notes
   private lastTriad: Triad | null = null
   // ADR 004 input-side state
@@ -136,10 +149,17 @@ export class Host {
   private currentCellEvent: StepEvent | null = null
   private fireIdxThisCell = 0
   private arpRng: () => number
+  // ADR 006 Phase 7 Step 4 rev 2 — Turing-rhythm register state. Owned by
+  // the host (not engine) because it evolves per sub-step boundary across
+  // cells. Reseeded from (turingLength, turingSeed) on construct, on
+  // transport restart, and on any of the 3 turing params changing.
+  private turingState: TuringRhythmState
 
-  constructor(params: HostParams) {
+  constructor(params: HostParams, opts: HostOptions = {}) {
     this.params = { ...params }
+    this.ticksPerStep = opts.ticksPerStep ?? DEFAULT_TICKS_PER_STEP
     this.arpRng = mulberry32(this.params.seed >>> 0)
+    this.turingState = makeTuringState(this.params.turingLength, this.params.turingSeed)
     const initial = this.captureSlot()
     this.slots = []
     for (let i = 0; i < SLOT_COUNT; i++) this.slots.push(this.cloneSlot(initial))
@@ -159,7 +179,16 @@ export class Host {
     if (patch.seed !== undefined && patch.seed !== this.params.seed) {
       this.arpRng = mulberry32(patch.seed >>> 0)
     }
+    // Reseed turing register when any of its 3 params change. Length and
+    // seed control register init; lock is read live by turingFires (no
+    // reseed needed for lock, but reseeding on lock change is harmless
+    // and keeps the rule simple).
+    const turingLengthChanged = patch.turingLength !== undefined && patch.turingLength !== this.params.turingLength
+    const turingSeedChanged = patch.turingSeed !== undefined && patch.turingSeed !== this.params.turingSeed
     this.params = { ...this.params, ...patch }
+    if (turingLengthChanged || turingSeedChanged) {
+      this.turingState = makeTuringState(this.params.turingLength, this.params.turingSeed)
+    }
     // ADR 006 Phase 7 — when length grows past cells.length, pad cells
     // with 'hold' so the engine sees N entries. Without this, [+] would
     // silently fail to add a playable cell (activeCells clamps at
@@ -325,7 +354,7 @@ export class Host {
 
   cellIdx(pos: number): number {
     if (!this.walkerActive) return -1
-    const { stepsPerTransform: spt, ticksPerStep } = this.params
+    const { stepsPerTransform: spt } = this.params
     const activeCells = this.activeCells()
     if (activeCells.length === 0) return -1
     const effectivePos = pos - this.startPos
@@ -333,10 +362,10 @@ export class Host {
     // Most recent transform boundary in raw-tick coords, then convert to the
     // engine's subdivision-step coords for walkStepEvent (source of truth for
     // direction-aware cellIdx, including random).
-    const transformTicks = spt * ticksPerStep
+    const transformTicks = spt * this.ticksPerStep
     const lastBoundaryTicks = Math.floor(effectivePos / transformTicks) * transformTicks
     if (lastBoundaryTicks <= 0) return -1
-    const lastBoundarySubdivPos = lastBoundaryTicks / ticksPerStep
+    const lastBoundarySubdivPos = lastBoundaryTicks / this.ticksPerStep
     const ev = walkStepEvent(this.makeWalkState(activeCells), lastBoundarySubdivPos)
     return ev?.cellIdx ?? -1
   }
@@ -394,6 +423,10 @@ export class Host {
     if (this.params.triggerMode === 1) {
       this.walkerActive = this.inputHeld.size > 0
     }
+    // Reseed the turing register so a transport-restart reproduces the
+    // same stochastic stream — same contract as arpRng (reset on
+    // pendingPosReset path in step()).
+    this.turingState = makeTuringState(this.params.turingLength, this.params.turingSeed)
     return this.recomputeStartChord()
   }
 
@@ -404,8 +437,10 @@ export class Host {
       this.pendingPosReset = false
       this.lastEmittedEffectivePos = null
       // ADR 006 Phase 7 — reseed the ARP rng so a transport restart
-      // reproduces the exact ARP-random stream.
+      // reproduces the exact ARP-random stream. Same for the turing
+      // register so the stochastic rhythm pattern restarts cleanly.
       this.arpRng = mulberry32(this.params.seed >>> 0)
+      this.turingState = makeTuringState(this.params.turingLength, this.params.turingSeed)
       this.currentCellEvent = null
       this.fireIdxThisCell = 0
     }
@@ -419,13 +454,13 @@ export class Host {
 
     if (effectivePos < 0) return []
 
-    const { ticksPerStep, stepsPerTransform: spt, startChord, channel } = this.params
+    const { stepsPerTransform: spt, startChord, channel } = this.params
 
     // ADR 006 Phase 7 — fire only at sub-step boundaries (every ticksPerStep
     // raw ticks). Non-boundary ticks are silent.
-    if (effectivePos % ticksPerStep !== 0) return []
+    if (effectivePos % this.ticksPerStep !== 0) return []
 
-    const subdivStepPos = effectivePos / ticksPerStep
+    const subdivStepPos = effectivePos / this.ticksPerStep
     const subStepIdxInCell = spt > 0 ? subdivStepPos % spt : 0
 
     // pos=0 init: panic prior held output, synthesize an init StepEvent so
@@ -472,17 +507,24 @@ export class Host {
     return preEvents.concat(fireEvents)
   }
 
-  // ADR 006 Phase 7 — single-fire emission. Decides via gatingFires whether
-  // this sub-step fires; on fire, applies cell expression (vel/gate/timing
-  // + humanize), picks an ARP index (or full chord), and schedules legato
-  // handoff + gate-end note-offs. Returns [] on silent steps.
-  private maybeFire(subStepIdxInCell: number, subdivStepPos: number): NoteEvent[] {
-    const { rhythm, arp, voicing, seventh, channel,
-            humanizeVelocity, humanizeGate, humanizeTiming,
-            outputLevel, swing, ticksPerStep, stepsPerTransform: spt } = this.params
+  // ADR 006 Phase 7 Step 4 — single-fire emission. Decides via gatingFires
+  // whether this sub-step fires; on fire, applies cell expression
+  // (vel/gate/timing), picks an ARP index (or full chord), and schedules
+  // legato handoff + gate-end note-offs. Returns [] on silent steps.
+  // Step 4 rev 2026-05-01 dropped swing + humanize entirely — no inboil
+  // basis; humanize, if reintroduced, ships as a separate parameter axis.
+  private maybeFire(subStepIdxInCell: number, _subdivStepPos: number): NoteEvent[] {
+    const { rhythm, arp, voicing, seventh, channel, outputLevel, stepsPerTransform: spt } = this.params
 
-    const feel = mapRhythmPreset(rhythm)
-    if (!gatingFires(feel.gating, subStepIdxInCell)) {
+    // Turing branches off gatingFires: the register evolves on every
+    // sub-step boundary regardless of whether the step fires, matching
+    // inboil's turingRhythm loop (generative.ts:503-510). Static presets
+    // route through the pure gatingFires predicate.
+    const fires = rhythm === 'turing'
+      ? turingFires(this.turingState, this.params.turingLock)
+      : gatingFires(rhythm, subStepIdxInCell)
+
+    if (!fires) {
       if (this.currentCellEvent) this.lastTriad = this.currentCellEvent.chord
       return []
     }
@@ -502,26 +544,16 @@ export class Host {
     const cellGateBase = cell?.gate ?? 1.0
     const cellTimingBase = cell?.timing ?? 0.0
 
-    // Per-cell humanize: same draws applied to every refire within the cell
-    // (engine produces one set of draws per cell-boundary walkStepEvent).
-    const finalVel = clamp01(cellVel + (ev.humanizeVel * 2 - 1) * humanizeVelocity)
-    const finalGate = clamp01(cellGateBase + (ev.humanizeGate * 2 - 1) * humanizeGate)
-    const finalTiming = clampSigned05(cellTimingBase + (ev.humanizeTiming * 2 - 1) * humanizeTiming)
-
-    // Sub-steps between fires for this gating mode. Drives gate-end
-    // scheduling so gate=1.0 always means "until the next fire" regardless
-    // of preset.
-    const fireIntervalTicks = fireIntervalSubsteps(feel.gating, spt) * ticksPerStep
+    // Sub-steps between fires for this preset. Drives gate-end scheduling
+    // so gate=1.0 always means "until the next fire" regardless of preset.
+    const fireIntervalTicks = fireIntervalSubsteps(rhythm, spt) * this.ticksPerStep
 
     // cell.timing offset applies only at the cell head — subsequent fires
     // within the cell sit on the sub-step grid.
-    const transformTicks = spt * ticksPerStep
+    const transformTicks = spt * this.ticksPerStep
     const isCellHead = subStepIdxInCell === 0
-    const cellTimingTicks = isCellHead ? finalTiming * transformTicks : 0
-    const swingOffsetTicks = subdivStepPos % 2 === 1
-      ? (2 * swing - 1) * ticksPerStep
-      : 0
-    const timingOffset = Math.max(0, swingOffsetTicks + cellTimingTicks)
+    const cellTimingTicks = isCellHead ? cellTimingBase * transformTicks : 0
+    const timingOffset = Math.max(0, cellTimingTicks)
 
     let voiced = applyVoicing(ev.chord, voicing)
     if (seventh) voiced = addSeventh(voiced, ev.chord)
@@ -532,7 +564,7 @@ export class Host {
     const arpIdx = arpIndex(arp, voiced.length, this.fireIdxThisCell, this.arpRng)
     const playPitches = arpIdx === null ? voiced : [voiced[arpIdx]!]
 
-    const velocity = clampVelocity(this.lastInputVelocity * finalVel * outputLevel)
+    const velocity = clampVelocity(this.lastInputVelocity * cellVel * outputLevel)
 
     const events: NoteEvent[] = []
     if (this.handoffPending) {
@@ -547,8 +579,8 @@ export class Host {
       this.held.add(pitch)
     }
 
-    if (finalGate < 1.0) {
-      const gateOffset = timingOffset + finalGate * fireIntervalTicks
+    if (cellGateBase < 1.0) {
+      const gateOffset = timingOffset + cellGateBase * fireIntervalTicks
       for (const pitch of playPitches) {
         events.push(maybeDelay({ type: 'noteOff', pitch, channel }, gateOffset))
       }
@@ -572,8 +604,8 @@ export class Host {
   }
 
   private makeWalkState(activeCells: Cell[]): WalkState {
-    const { startChord, stepsPerTransform: spt, jitter, seed, stepDirection, humanizeDrift } = this.params
-    return { startChord, cells: activeCells, stepsPerTransform: spt, jitter, seed, stepDirection, humanizeDrift }
+    const { startChord, stepsPerTransform: spt, jitter, seed, stepDirection } = this.params
+    return { startChord, cells: activeCells, stepsPerTransform: spt, jitter, seed, stepDirection }
   }
 
   panic(): NoteEvent[] {
@@ -683,18 +715,6 @@ function clampVelocity(v: number): number {
   return rounded
 }
 
-function clamp01(v: number): number {
-  if (v < 0) return 0
-  if (v > 1) return 1
-  return v
-}
-
-function clampSigned05(v: number): number {
-  if (v < -0.5) return -0.5
-  if (v > 0.5) return 0.5
-  return v
-}
-
 // Attach delayPos only when non-zero so default-cell event shapes (and
 // existing unit tests that don't set delayPos) stay clean.
 function maybeDelay(event: NoteEvent, delayPos: number): NoteEvent {
@@ -702,14 +722,26 @@ function maybeDelay(event: NoteEvent, delayPos: number): NoteEvent {
   return { ...event, delayPos }
 }
 
-// ADR 006 Phase 7 — fires-per-cell determines gate-end scaling so gate=1.0
-// is always "until the next fire" regardless of preset. head-only spans the
-// whole cell; every-tick spans one sub-step; on/offbeat span the quarter.
-function fireIntervalSubsteps(mode: GatingMode, spt: number): number {
+// ADR 006 Phase 7 Step 4 — fires-per-preset interval, in sub-steps. Drives
+// gate-end scheduling so gate=1.0 always means "until the next fire"
+// regardless of preset. legato spans the whole cell; all spans 1 sub-step;
+// onbeat spans the quarter (4); offbeat spans every-other-16th (2);
+// syncopated's pattern (`[T,F,T,F,F,T,F,T]`) has variable gaps — fall back
+// to 1 (the pattern's minimum interval) so gate<1.0 always releases by the
+// next 16th boundary, never overlapping a denser fire downstream.
+function fireIntervalSubsteps(mode: RhythmPreset, spt: number): number {
   switch (mode) {
-    case 'head-only':  return spt
-    case 'every-tick': return 1
-    case 'onbeat':
+    case 'legato':     return spt
+    case 'all':        return 1
+    case 'onbeat':     return 4
+    // offbeat fires on quarter-offs (idx % 4 === 2), so the next fire is
+    // always 4 sub-steps later — same gate-end scaling as onbeat.
     case 'offbeat':    return 4
+    case 'syncopated': return 1
+    // Turing's interval is stochastic — minimum is 1 (consecutive bits
+    // can both fire). Use 1 as a safe gate-end scaler so gate < 1.0
+    // releases by the next 16th boundary, never overlapping the next
+    // (potentially adjacent) fire.
+    case 'turing':     return 1
   }
 }

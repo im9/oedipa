@@ -21,22 +21,25 @@ function baseParams(overrides: Partial<HostParams> = {}): HostParams {
     channel: 1,
     triggerMode: 0,
     inputChannel: 0,
-    // ADR 005 Phase 3 — test-friendly defaults so existing tests stay
-    // unchanged. Production callers (the m4l patcher) pass real values.
     stepDirection: 'forward',
-    ticksPerStep: 1,
-    swing: 0.5,
-    humanizeVelocity: 0,
-    humanizeGate: 0,
-    humanizeTiming: 0,
-    humanizeDrift: 0,
     outputLevel: 1.0,
-    // ADR 006 Phase 7 defaults — legato + off preserve Phase A behavior.
     rhythm: 'legato',
     arp: 'off',
     length: 4,
+    turingLength: 8,
+    turingLock: 0.7,
+    turingSeed: 0,
     ...overrides,
   }
+}
+
+// Test-only constructor wrapper. Production hosts run at ticksPerStep=6 (16th
+// @ PPQN=24); tests default to 1 so every step(pos) increments to the next
+// subdivision boundary, keeping the historical "1 pos = 1 step" pos arithmetic
+// terse. Tests that need to exercise the production multiplier pass a second
+// arg explicitly.
+function makeHost(params: HostParams, opts: { ticksPerStep?: number } = {}): Host {
+  return new Host(params, { ticksPerStep: opts.ticksPerStep ?? 1 })
 }
 
 function pitchesOf(events: NoteEvent[], type: NoteEvent['type']): number[] {
@@ -45,7 +48,7 @@ function pitchesOf(events: NoteEvent[], type: NoteEvent['type']): number[] {
 
 describe('Host.step', () => {
   test('emits noteOns for the startChord on first step', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     const events = host.step(0)
 
     assert.equal(events.length, 3)
@@ -60,7 +63,7 @@ describe('Host.step', () => {
   })
 
   test('emits nothing when the chord is unchanged across steps', () => {
-    const host = new Host(baseParams({ stepsPerTransform: 4 }))
+    const host = makeHost(baseParams({ stepsPerTransform: 4 }))
     host.step(0)
     assert.deepEqual(host.step(1), [])
     assert.deepEqual(host.step(2), [])
@@ -72,7 +75,7 @@ describe('Host.step', () => {
     // gate*spt for the new chord. The legato note-off discipline (prior off
     // before new on) is checked within the delayPos=0 slot only — gate-end
     // offs at delayPos > 0 are unrelated.
-    const host = new Host(baseParams({ cells: cells('P') }))
+    const host = makeHost(baseParams({ cells: cells('P') }))
     host.step(0)
     const events = host.step(1)
     const slot0 = events.filter(e => (e.delayPos ?? 0) === 0)
@@ -89,7 +92,7 @@ describe('Host.step', () => {
   })
 
   test('re-calling step with the same pos emits nothing', () => {
-    const host = new Host(baseParams({ cells: cells('P') }))
+    const host = makeHost(baseParams({ cells: cells('P') }))
     assert.equal(host.step(0).length, 3)
     assert.deepEqual(host.step(0), [])
   })
@@ -97,7 +100,7 @@ describe('Host.step', () => {
   test('supports scrubbing: step(n) without prior calls emits the chord at n', () => {
     // ADR 005: scrubbing now also schedules a gate-end noteOff at delayPos > 0.
     // No legato handoff (held set empty on first call), so delayPos=0 offs = 0.
-    const host = new Host(baseParams({ cells: cells('P') }))
+    const host = makeHost(baseParams({ cells: cells('P') }))
     const events = host.step(5)
 
     const handoffOffs = events.filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) === 0)
@@ -108,13 +111,13 @@ describe('Host.step', () => {
   })
 
   test('applies spread voicing to emitted notes', () => {
-    const host = new Host(baseParams({ voicing: 'spread' }))
+    const host = makeHost(baseParams({ voicing: 'spread' }))
     const pitches = pitchesOf(host.step(0), 'noteOn')
     assert.deepEqual(pitches, [60, 76, 67])
   })
 
   test('emits a fourth note when seventh is enabled', () => {
-    const host = new Host(baseParams({ seventh: true }))
+    const host = makeHost(baseParams({ seventh: true }))
     const pitches = pitchesOf(host.step(0), 'noteOn')
     assert.deepEqual(pitches, [60, 64, 67, 71])
   })
@@ -133,7 +136,7 @@ describe('Host.step', () => {
       { ons: [[0, 5, 9]] },             // pos 5: cell[0]=P (cycle) → F major
     ]
     for (let pos = 0; pos < cases.length; pos++) {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       const events = host.step(pos)
       const ons = pitchesOf(events, 'noteOn')
       if (cases[pos]!.ons === null) {
@@ -151,7 +154,7 @@ describe('Host.step', () => {
     // cursor untouched, but the conceptual difference is "stay on this chord
     // intentionally" vs "skip a beat"). With a hold-only program there is no
     // chord-changing event after pos=0, so steps 1..N emit nothing.
-    const host = new Host(baseParams({ cells: cells('hold') }))
+    const host = makeHost(baseParams({ cells: cells('hold') }))
     host.step(0)
     for (const pos of [1, 2, 5, 17]) {
       const events = host.step(pos)
@@ -162,8 +165,8 @@ describe('Host.step', () => {
 
   test('jitter=0 walk is reproducible regardless of seed', () => {
     // Same params, different seeds — output identical when jitter=0.
-    const a = new Host(baseParams({ jitter: 0, seed: 1 }))
-    const b = new Host(baseParams({ jitter: 0, seed: 999 }))
+    const a = makeHost(baseParams({ jitter: 0, seed: 1 }))
+    const b = makeHost(baseParams({ jitter: 0, seed: 999 }))
     a.step(0); b.step(0)
     assert.deepEqual(a.currentTriad, b.currentTriad)
     a.step(1); b.step(1)
@@ -173,8 +176,8 @@ describe('Host.step', () => {
   })
 
   test('jitter > 0 with same seed reproduces between hosts', () => {
-    const a = new Host(baseParams({ jitter: 0.5, seed: 42 }))
-    const b = new Host(baseParams({ jitter: 0.5, seed: 42 }))
+    const a = makeHost(baseParams({ jitter: 0.5, seed: 42 }))
+    const b = makeHost(baseParams({ jitter: 0.5, seed: 42 }))
     for (const pos of [0, 1, 2, 3, 5, 13, 50]) {
       a.step(pos); b.step(pos)
       assert.deepEqual(a.currentTriad, b.currentTriad, `pos=${pos}`)
@@ -185,7 +188,7 @@ describe('Host.step', () => {
     // ADR 005: legato handoff offs (delayPos=0) target the previously voiced
     // notes; gate-end offs (delayPos > 0) target the new voicing — filter to
     // the handoff slot only for this assertion.
-    const host = new Host(baseParams({ voicing: 'spread', cells: cells('P') }))
+    const host = makeHost(baseParams({ voicing: 'spread', cells: cells('P') }))
     host.step(0)
     const events = host.step(1)
     const handoffOffs = events
@@ -208,7 +211,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
       // the gate slot carries the new chord's note-off. The post-2026-04
       // default is gate=1.0 (legato handoff, no scheduled gate-end), so this
       // test pins the gate < 1.0 path with an explicit per-cell override.
-      const host = new Host(baseParams({ cells: [makeCell('P', { gate: 0.9 })] }))
+      const host = makeHost(baseParams({ cells: [makeCell('P', { gate: 0.9 })] }))
       host.step(0)
       const events = host.step(1)
       const offsAtZero = events.filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) === 0)
@@ -222,7 +225,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
     test('gate offset scales with stepsPerTransform', () => {
       // gate=0.5, spt=4 → scheduled noteOff at delayPos = 0 + 0.5*4 = 2.
       const c = makeCell('P', { gate: 0.5 })
-      const host = new Host(baseParams({ cells: [c], stepsPerTransform: 4 }))
+      const host = makeHost(baseParams({ cells: [c], stepsPerTransform: 4 }))
       host.step(0)
       const events = host.step(4)
       const offsAtTwo = events.filter(e => e.type === 'noteOff' && e.delayPos === 2)
@@ -233,7 +236,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
       // gate=1.0 = "note-off coincident with next note-on" — no early off
       // scheduled; the next noteOn step carries the legato handoff.
       const c = makeCell('P', { gate: 1.0 })
-      const host = new Host(baseParams({ cells: [c, c] }))
+      const host = makeHost(baseParams({ cells: [c, c] }))
       host.step(0)
       const events1 = host.step(1)
       // Slot 0: 3 handoff offs (prior startChord) + 3 new noteOns. No gate-end offs.
@@ -252,7 +255,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
     test('cell.velocity multiplies source velocity (0.5 × 100 = 50)', () => {
       // 100 = default lastInputVelocity (no input wired); 0.5 = half scaling.
       const c = makeCell('P', { velocity: 0.5 })
-      const host = new Host(baseParams({ cells: [c] }))
+      const host = makeHost(baseParams({ cells: [c] }))
       host.step(0)
       const events = host.step(1)
       const vels = events.filter(e => e.type === 'noteOn').map(e => e.velocity)
@@ -261,7 +264,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
     })
 
     test('cell.velocity=1.0 default preserves source velocity (no scaling)', () => {
-      const host = new Host(baseParams({ cells: cells('P') }))
+      const host = makeHost(baseParams({ cells: cells('P') }))
       host.step(0)
       const events = host.step(1)
       const vels = events.filter(e => e.type === 'noteOn').map(e => e.velocity)
@@ -273,7 +276,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
       // a noteOff. Clamp the output to >=1 so a fully-attenuated cell still
       // produces audible (if quiet) noteOns.
       const c = makeCell('P', { velocity: 0 })
-      const host = new Host(baseParams({ cells: [c] }))
+      const host = makeHost(baseParams({ cells: [c] }))
       host.step(0)
       const events = host.step(1)
       const vels = events.filter(e => e.type === 'noteOn').map(e => e.velocity)
@@ -284,7 +287,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
       // lastInputVelocity tracks the most recent noteIn (ADR 004).
       // 80 × 0.5 = 40.
       const c = makeCell('P', { velocity: 0.5 })
-      const host = new Host(baseParams({ cells: [c] }))
+      const host = makeHost(baseParams({ cells: [c] }))
       host.step(0)
       host.noteIn(60, 80, 1)
       const events = host.step(1)
@@ -297,7 +300,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
     test('timing > 0 delays noteOn by timing * spt', () => {
       // timing=+0.25, spt=4 → delayPos = 1.0. Push (late) feel.
       const c = makeCell('P', { timing: 0.25 })
-      const host = new Host(baseParams({ cells: [c], stepsPerTransform: 4 }))
+      const host = makeHost(baseParams({ cells: [c], stepsPerTransform: 4 }))
       host.step(0)
       const events = host.step(4)
       const ons = events.filter(e => e.type === 'noteOn')
@@ -309,7 +312,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
       // ADR 003 note-off discipline: prior chord released before new noteOn.
       // With timing=0.25, both the handoff and the noteOn move to delayPos=1.0.
       const c = makeCell('P', { timing: 0.25 })
-      const host = new Host(baseParams({ cells: [c], stepsPerTransform: 4 }))
+      const host = makeHost(baseParams({ cells: [c], stepsPerTransform: 4 }))
       host.step(0)
       const events = host.step(4)
       const handoffOffs = events.filter(e => e.type === 'noteOff' && e.delayPos === 1.0)
@@ -320,7 +323,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
       // ADR 005 §"Playback start clamp": at transport start, a negative
       // timing offset on the first scheduled cell cannot fire before t=0.
       const c = makeCell('P', { timing: -0.5 })
-      const host = new Host(baseParams({ cells: [c, c] }))
+      const host = makeHost(baseParams({ cells: [c, c] }))
       host.step(0)
       const events = host.step(1)
       const ons = events.filter(e => e.type === 'noteOn')
@@ -333,7 +336,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
     test('probability=0 emits no events but still advances the chord cursor', () => {
       // ADR 005: P/L/R with prob fail = silent advance (cursor moves, no audio).
       const c = makeCell('P', { probability: 0 })
-      const host = new Host(baseParams({ cells: [c] }))
+      const host = makeHost(baseParams({ cells: [c] }))
       host.step(0)
       const events = host.step(1)
       assert.deepEqual(events, [])
@@ -346,7 +349,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
       // hold cursor untouched + prob fail = silent → entire step is a no-op
       // visible to the host.
       const c = makeCell('hold', { probability: 0 })
-      const host = new Host(baseParams({ cells: [c] }))
+      const host = makeHost(baseParams({ cells: [c] }))
       host.step(0)
       const events = host.step(1)
       assert.deepEqual(events, [])
@@ -356,8 +359,8 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
     test('determinism preserved across probability draws', () => {
       // Two hosts with identical seed must produce identical event streams.
       const c = makeCell('P', { probability: 0.5 })
-      const a = new Host(baseParams({ cells: [c], seed: 7 }))
-      const b = new Host(baseParams({ cells: [c], seed: 7 }))
+      const a = makeHost(baseParams({ cells: [c], seed: 7 }))
+      const b = makeHost(baseParams({ cells: [c], seed: 7 }))
       for (const pos of [0, 1, 2, 3, 4, 5, 10, 25]) {
         assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos}`)
       }
@@ -368,7 +371,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
     test('rest emits no events and leaves cursor unchanged', () => {
       // ADR 005: rest = silent hold; cursor unchanged.
       const c = makeCell('rest')
-      const host = new Host(baseParams({ cells: [c] }))
+      const host = makeHost(baseParams({ cells: [c] }))
       host.step(0)
       const events = host.step(1)
       assert.deepEqual(events, [])
@@ -381,7 +384,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
       // on the rest step itself.
       const cP = makeCell('P', { gate: 0.5 })
       const cRest = makeCell('rest')
-      const host = new Host(baseParams({ cells: [cP, cRest] }))
+      const host = makeHost(baseParams({ cells: [cP, cRest] }))
       host.step(0) // startChord
       host.step(1) // P fires; gate 0.5 schedules off at delayPos=0.5
       const events = host.step(2) // rest
@@ -395,7 +398,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
       // no new gate-end is scheduled. The previous chord's sustain (or its
       // already-scheduled gate-end) governs whether the listener still hears
       // the chord during the hold cell.
-      const host = new Host(baseParams({ cells: cells('hold') }))
+      const host = makeHost(baseParams({ cells: cells('hold') }))
       host.step(0)
       const events = host.step(1)
       const ons = events.filter(e => e.type === 'noteOn')
@@ -408,7 +411,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
 
 describe('Host.panic', () => {
   test('emits noteOff for every held note and clears state', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.step(0)
     const events = host.panic()
     assert.equal(events.length, 3)
@@ -418,7 +421,7 @@ describe('Host.panic', () => {
   })
 
   test('after panic, the next step fires fresh noteOns with no stray noteOffs', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.step(0)
     host.panic()
     const events = host.step(0)
@@ -431,7 +434,7 @@ describe('Host.setParams', () => {
   test('is silent on its own; the next chord change reflects the new params', () => {
     // ADR 005: count handoff offs (delayPos=0) only — gate-end offs are
     // scheduled per emission and unrelated to the prior-chord cleanup.
-    const host = new Host(baseParams({ stepsPerTransform: 2, cells: cells('P') }))
+    const host = makeHost(baseParams({ stepsPerTransform: 2, cells: cells('P') }))
     host.step(0)
     host.setParams({ voicing: 'spread' })
     assert.deepEqual(host.step(1), [])
@@ -444,7 +447,7 @@ describe('Host.setParams', () => {
 
 describe('Host.setCell', () => {
   test('mutates only the indexed cell', () => {
-    const host = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
+    const host = makeHost(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
     host.setCell(2, 'hold')
     host.step(0)
     // pos 3 was R → F minor, now hold → stays Ab major from pos 2.
@@ -457,7 +460,7 @@ describe('Host.setCell', () => {
   })
 
   test('out-of-range index is a no-op', () => {
-    const host = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
+    const host = makeHost(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
     host.setCell(-1, 'hold')
     host.setCell(99, 'hold')
     host.step(0)
@@ -476,7 +479,7 @@ describe('Host.setCellField', () => {
   test('velocity scales the source velocity for the next cell-driven noteOn', () => {
     // baseParams: spt=1, lastInputVelocity default 100. cell[0]=P at step(1)
     // → Cmin noteOns. cellVel=0.5 → 100 * 0.5 = 50, clamped 1..127.
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.setCellField(0, 'velocity', 0.5)
     host.step(0)
     const events = host.step(1)
@@ -490,7 +493,7 @@ describe('Host.setCellField', () => {
     // delayPos = timingOffset(0) + 0.5 * 1 = 0.5. Filter by delayPos to
     // separate gate-end offs from the legato handoff offs (which fire at
     // delayPos=0 alongside the new chord's noteOns).
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.setCellField(0, 'gate', 0.5)
     host.step(0)
     const events = host.step(1)
@@ -502,7 +505,7 @@ describe('Host.setCellField', () => {
 
   test('timing offsets the noteOn delayPos within the step', () => {
     // timing=0.25, transformTicks=1 → timingOffset = max(0, 0 + 0.25) = 0.25.
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.setCellField(0, 'timing', 0.25)
     host.step(0)
     const events = host.step(1)
@@ -514,7 +517,7 @@ describe('Host.setCellField', () => {
   test('probability=0 silences the step without stalling the cursor', () => {
     // rProb < 0 always false → played=false → silent advance. Cursor still
     // applies P (Cmaj → Cmin); no noteOns emitted at step(1).
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.setCellField(0, 'probability', 0)
     host.step(0)
     const events = host.step(1)
@@ -524,7 +527,7 @@ describe('Host.setCellField', () => {
   })
 
   test('out-of-range index is a no-op', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.setCellField(-1, 'velocity', 0.5)
     host.setCellField(99, 'velocity', 0.5)
     host.step(0)
@@ -537,7 +540,7 @@ describe('Host.setCellField', () => {
   test('preserves the cell op and other fields on a single-field update', () => {
     // setCellField touches one field; op (owned by live.tab) and the other
     // numeric fields keep their prior values.
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: [
         makeCell('R', { velocity: 0.7, gate: 0.6, probability: 0.8, timing: 0.1 }),
         makeCell('L'),
@@ -566,35 +569,35 @@ describe('Host.cellIdx — for active-cell LED', () => {
   // pos=0; after numTransforms = floor(pos / spt) transforms, the most-recent
   // cell consumed is index (numTransforms - 1) mod cells.length.
   test('returns -1 before the first transform fires', () => {
-    const host = new Host(baseParams({ stepsPerTransform: 4 }))
+    const host = makeHost(baseParams({ stepsPerTransform: 4 }))
     // pos < spt → numTransforms = 0 → no cell has fired
     assert.equal(host.cellIdx(0), -1)
     assert.equal(host.cellIdx(3), -1)
   })
 
   test('returns 0 once the first transform has fired', () => {
-    const host = new Host(baseParams({ stepsPerTransform: 4 }))
+    const host = makeHost(baseParams({ stepsPerTransform: 4 }))
     // pos in [spt, 2*spt) → numTransforms = 1 → cells[0] is the active cell
     assert.equal(host.cellIdx(4), 0)
     assert.equal(host.cellIdx(7), 0)
   })
 
   test('advances one cell per stepsPerTransform window', () => {
-    const host = new Host(baseParams({ stepsPerTransform: 4 })) // cells length 4
+    const host = makeHost(baseParams({ stepsPerTransform: 4 })) // cells length 4
     assert.equal(host.cellIdx(8), 1)  // cells[1] applied
     assert.equal(host.cellIdx(12), 2) // cells[2] applied
     assert.equal(host.cellIdx(16), 3) // cells[3] applied
   })
 
   test('wraps modulo cells.length', () => {
-    const host = new Host(baseParams({ stepsPerTransform: 4 })) // cells length 4
+    const host = makeHost(baseParams({ stepsPerTransform: 4 })) // cells length 4
     // numTransforms = 5, 6 → (5-1) % 4 = 0, (6-1) % 4 = 1
     assert.equal(host.cellIdx(20), 0)
     assert.equal(host.cellIdx(24), 1)
   })
 
   test('honours stepsPerTransform=1 with 2-cell array', () => {
-    const host = new Host(baseParams({ stepsPerTransform: 1, cells: cells('P', 'L') }))
+    const host = makeHost(baseParams({ stepsPerTransform: 1, cells: cells('P', 'L') }))
     assert.equal(host.cellIdx(0), -1) // no transform yet
     assert.equal(host.cellIdx(1), 0)  // cells[0]=P fired
     assert.equal(host.cellIdx(2), 1)  // cells[1]=L fired
@@ -602,7 +605,7 @@ describe('Host.cellIdx — for active-cell LED', () => {
   })
 
   test('reflects stepsPerTransform updates from setParams', () => {
-    const host = new Host(baseParams({ stepsPerTransform: 1 }))
+    const host = makeHost(baseParams({ stepsPerTransform: 1 }))
     assert.equal(host.cellIdx(2), 1) // 2 transforms with spt=1 → idx 1
     host.setParams({ stepsPerTransform: 4 })
     assert.equal(host.cellIdx(2), -1) // 0 transforms with spt=4
@@ -612,7 +615,7 @@ describe('Host.cellIdx — for active-cell LED', () => {
 
 describe('Host.noteIn (ADR 004 — input event model)', () => {
   test('triad input updates startChord and emits note-offs for sustained walker output', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.step(0) // emit Cmaj noteOns; this.held = {60,64,67}
     // Play Fmaj: F=65, A=69, C=72 — third note completes the triad
     host.noteIn(65, 100, 1)
@@ -626,7 +629,7 @@ describe('Host.noteIn (ADR 004 — input event model)', () => {
   })
 
   test('next step after input-driven chord change emits the new chord at effective pos 0', () => {
-    const host = new Host(baseParams({ cells: cells('P', 'L', 'R') }))
+    const host = makeHost(baseParams({ cells: cells('P', 'L', 'R') }))
     host.step(0); host.step(1); host.step(2) // walker has advanced
     host.noteIn(65, 100, 1); host.noteIn(69, 100, 1); host.noteIn(72, 100, 1) // Fmaj
     // Subsequent step at any pos: walker emits new startChord (Fmaj close) — cells not applied yet.
@@ -636,7 +639,7 @@ describe('Host.noteIn (ADR 004 — input event model)', () => {
   })
 
   test('lastInputVelocity updates on every note-on and is used for walker output', () => {
-    const host = new Host(baseParams({ cells: cells('P') }))
+    const host = makeHost(baseParams({ cells: cells('P') }))
     host.step(0) // emit Cmaj at default vel 100
     host.noteIn(60, 80, 1) // single note, no triad — startChord unchanged, lastInputVelocity = 80
     const events = host.step(1) // P → Cmin, emit noteOns at new vel 80
@@ -646,14 +649,14 @@ describe('Host.noteIn (ADR 004 — input event model)', () => {
   })
 
   test('default lastInputVelocity is 100 before any input', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     const events = host.step(0)
     const onVels = events.filter(e => e.type === 'noteOn').map(e => (e as { velocity: number }).velocity)
     for (const v of onVels) assert.equal(v, 100)
   })
 
   test('non-triad input does not update startChord', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     const initial = host.startChord
     host.noteIn(60, 100, 1) // C
     host.noteIn(62, 100, 1) // C-D
@@ -662,7 +665,7 @@ describe('Host.noteIn (ADR 004 — input event model)', () => {
   })
 
   test('partial input (1 or 2 notes) does not update startChord', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     const initial = host.startChord
     host.noteIn(60, 100, 1)
     assert.deepEqual(host.startChord, initial)
@@ -671,7 +674,7 @@ describe('Host.noteIn (ADR 004 — input event model)', () => {
   })
 
   test('inputChannel = 0 (omni) accepts notes on any channel', () => {
-    const host = new Host(baseParams({ inputChannel: 0 }))
+    const host = makeHost(baseParams({ inputChannel: 0 }))
     host.noteIn(60, 100, 5)
     host.noteIn(64, 100, 7)
     host.noteIn(67, 100, 11)
@@ -679,7 +682,7 @@ describe('Host.noteIn (ADR 004 — input event model)', () => {
   })
 
   test('inputChannel = N rejects notes on other channels', () => {
-    const host = new Host(baseParams({ inputChannel: 2 }))
+    const host = makeHost(baseParams({ inputChannel: 2 }))
     const initial = host.startChord
     host.noteIn(65, 100, 1) // wrong channel
     host.noteIn(69, 100, 1)
@@ -694,7 +697,7 @@ describe('Host.noteIn (ADR 004 — input event model)', () => {
 
 describe('Host.noteOff (ADR 004 — trigger model)', () => {
   test('hybrid: walker continues running after all notes released', () => {
-    const host = new Host(baseParams({ triggerMode: 0, cells: cells('P') }))
+    const host = makeHost(baseParams({ triggerMode: 0, cells: cells('P') }))
     host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
     host.step(0) // walker emits Cmaj
     host.noteOff(60, 1); host.noteOff(64, 1); host.noteOff(67, 1)
@@ -704,7 +707,7 @@ describe('Host.noteOff (ADR 004 — trigger model)', () => {
   })
 
   test('hybrid: removing one note can expose a different triad subset', () => {
-    const host = new Host(baseParams({ triggerMode: 0 }))
+    const host = makeHost(baseParams({ triggerMode: 0 }))
     // Hold Cmaj7 = C E G B → Cmaj wins (subset match, lowest root)
     host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1); host.noteIn(71, 100, 1)
     assert.deepEqual(host.startChord, [60, 64, 67])
@@ -714,7 +717,7 @@ describe('Host.noteOff (ADR 004 — trigger model)', () => {
   })
 
   test('hold-to-play: last note-off triggers panic and pauses the walker', () => {
-    const host = new Host(baseParams({ triggerMode: 1, cells: cells('P') }))
+    const host = makeHost(baseParams({ triggerMode: 1, cells: cells('P') }))
     host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
     host.step(0) // emit Cmaj
     host.noteOff(60, 1); host.noteOff(64, 1)
@@ -727,7 +730,7 @@ describe('Host.noteOff (ADR 004 — trigger model)', () => {
   })
 
   test('hold-to-play: note-on after release reactivates the walker and resets cells from cells[0]', () => {
-    const host = new Host(baseParams({ triggerMode: 1, cells: cells('P') }))
+    const host = makeHost(baseParams({ triggerMode: 1, cells: cells('P') }))
     host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
     host.step(0); host.step(1) // walker advances to P(Cmaj) = Cmin
     host.noteOff(60, 1); host.noteOff(64, 1); host.noteOff(67, 1)
@@ -740,7 +743,7 @@ describe('Host.noteOff (ADR 004 — trigger model)', () => {
   })
 
   test('hybrid: note-off does not trigger panic even with no notes held', () => {
-    const host = new Host(baseParams({ triggerMode: 0, cells: cells('P') }))
+    const host = makeHost(baseParams({ triggerMode: 0, cells: cells('P') }))
     host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
     host.step(0)
     const events = host.noteOff(60, 1) // not the last release; should also not panic
@@ -753,7 +756,7 @@ describe('Host.noteOff (ADR 004 — trigger model)', () => {
 
 describe('Host.transportStart (ADR 004 — pre-roll)', () => {
   test('with no held notes, walker uses the persisted lattice startChord', () => {
-    const host = new Host(baseParams({ startChord: [62, 65, 69] })) // Dm
+    const host = makeHost(baseParams({ startChord: [62, 65, 69] })) // Dm
     const events = host.transportStart()
     assert.deepEqual(events, [], 'no events emitted directly')
     assert.deepEqual(host.startChord, [62, 65, 69])
@@ -763,7 +766,7 @@ describe('Host.transportStart (ADR 004 — pre-roll)', () => {
   })
 
   test('with held notes, derives startChord from the snapshot', () => {
-    const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+    const host = makeHost(baseParams({ startChord: [60, 64, 67] }))
     // User pre-pressed Fmaj before transport — these noteIns may or may not have
     // triggered chord changes already (they did, since 3rd note completes triad);
     // transportStart re-runs the snapshot path idempotently.
@@ -775,13 +778,13 @@ describe('Host.transportStart (ADR 004 — pre-roll)', () => {
   })
 
   test('hold-to-play: transportStart with no held notes keeps walker paused', () => {
-    const host = new Host(baseParams({ triggerMode: 1 }))
+    const host = makeHost(baseParams({ triggerMode: 1 }))
     host.transportStart()
     assert.deepEqual(host.step(0), [], 'no walker emission without held notes')
   })
 
   test('hold-to-play: transportStart with held notes activates walker', () => {
-    const host = new Host(baseParams({ triggerMode: 1, startChord: [60, 64, 67] }))
+    const host = makeHost(baseParams({ triggerMode: 1, startChord: [60, 64, 67] }))
     host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
     host.transportStart()
     const events = host.step(0)
@@ -792,7 +795,7 @@ describe('Host.transportStart (ADR 004 — pre-roll)', () => {
 
 describe('Host pos reset on startChord change (ADR 004 Axis 5)', () => {
   test('lattice setParams startChord at non-zero pos: walker emits new startChord on next step', () => {
-    const host = new Host(baseParams({ cells: cells('P') }))
+    const host = makeHost(baseParams({ cells: cells('P') }))
     host.step(0); host.step(1); host.step(2)
     host.setParams({ startChord: [65, 69, 72] }) // Fmaj
     const events = host.step(3) // pendingPosReset → effectivePos = 0 → walker emits startChord
@@ -801,7 +804,7 @@ describe('Host pos reset on startChord change (ADR 004 Axis 5)', () => {
   })
 
   test('input-driven startChord change resets cell program', () => {
-    const host = new Host(baseParams({ cells: cells('P', 'L') }))
+    const host = makeHost(baseParams({ cells: cells('P', 'L') }))
     host.step(0); host.step(1); host.step(2)
     host.noteIn(65, 100, 1); host.noteIn(69, 100, 1); host.noteIn(72, 100, 1) // Fmaj
     const events = host.step(3)
@@ -814,7 +817,7 @@ describe('Host pos reset on startChord change (ADR 004 Axis 5)', () => {
   })
 
   test('setParams startChord with the same triad does not reset pos', () => {
-    const host = new Host(baseParams({ cells: cells('P') }))
+    const host = makeHost(baseParams({ cells: cells('P') }))
     host.step(0); host.step(1) // walker on Cmin (P applied)
     host.setParams({ startChord: [60, 64, 67] }) // same value re-asserted (e.g. dump cascade)
     const events = host.step(2) // walker should continue: P^2(Cmaj) = Cmaj
@@ -834,7 +837,7 @@ describe('Host pos reset on startChord change (ADR 004 Axis 5)', () => {
       ['step', 4], ['step', 5], ['step', 6],
     ]
     function run(): NoteEvent[] {
-      const h = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold'), jitter: 0.5, seed: 42 }))
+      const h = makeHost(baseParams({ cells: cells('P', 'L', 'R', 'hold'), jitter: 0.5, seed: 42 }))
       const out: NoteEvent[] = []
       for (const cmd of script) {
         if (cmd[0] === 'step') out.push(...h.step(cmd[1]))
@@ -853,18 +856,18 @@ describe('Host.currentTriad / centerPc — for lattice rendering', () => {
   // and which pc to center the lattice on (centerPc). Both are read after
   // step() emits chord-change events.
   test('currentTriad is null before any step', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     assert.equal(host.currentTriad, null)
   })
 
   test('currentTriad reflects the chord emitted by the last step', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.step(0)
     assert.deepEqual(host.currentTriad, [60, 64, 67])
   })
 
   test('currentTriad updates after a transform', () => {
-    const host = new Host(baseParams({ cells: cells('P') }))
+    const host = makeHost(baseParams({ cells: cells('P') }))
     host.step(0)
     host.step(1)
     // P(C major) = C minor at the same root midi note (60)
@@ -874,19 +877,19 @@ describe('Host.currentTriad / centerPc — for lattice rendering', () => {
   })
 
   test('currentTriad resets to null after panic', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.step(0)
     host.panic()
     assert.equal(host.currentTriad, null)
   })
 
   test('centerPc is the pc of startChord[0]', () => {
-    const host = new Host(baseParams({ startChord: [66, 70, 73] })) // F# major
+    const host = makeHost(baseParams({ startChord: [66, 70, 73] })) // F# major
     assert.equal(host.centerPc, 6)
   })
 
   test('centerPc updates when startChord changes via setParams', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     assert.equal(host.centerPc, 0) // C
     host.setParams({ startChord: [65, 69, 72] }) // F major
     assert.equal(host.centerPc, 5)
@@ -900,12 +903,12 @@ describe('Host.isWalkerActive — for marker / cellIdx UI gating', () => {
   // states leave currentTriad === null transiently, so currentTriad alone
   // cannot disambiguate; isWalkerActive is the dedicated signal.
   test('default is true', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     assert.equal(host.isWalkerActive, true)
   })
 
   test('hybrid: stays true across input + release', () => {
-    const host = new Host(baseParams({ triggerMode: 0 }))
+    const host = makeHost(baseParams({ triggerMode: 0 }))
     host.noteIn(60, 100, 1)
     host.noteIn(64, 100, 1)
     host.noteIn(67, 100, 1)
@@ -917,7 +920,7 @@ describe('Host.isWalkerActive — for marker / cellIdx UI gating', () => {
   })
 
   test('hold-to-play: false after last release, true again after next note-on', () => {
-    const host = new Host(baseParams({ triggerMode: 1 }))
+    const host = makeHost(baseParams({ triggerMode: 1 }))
     host.noteIn(60, 100, 1)
     host.noteIn(64, 100, 1)
     host.noteIn(67, 100, 1)
@@ -931,7 +934,7 @@ describe('Host.isWalkerActive — for marker / cellIdx UI gating', () => {
   })
 
   test('input-driven chord change leaves currentTriad null but isWalkerActive true', () => {
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.step(0) // populates currentTriad
     host.noteIn(65, 100, 1)
     host.noteIn(69, 100, 1)
@@ -947,7 +950,7 @@ describe('Host.step — stepDirection', () => {
   test('reverse direction consumes cells from cells.length-1 downward', () => {
     // cells = [P, L, R, hold]; reverse → pos 1 hits cells[3]=hold (silent-
     // advance, no noteOn). pos 2 plays cells[2]=R applied to current cursor.
-    const host = new Host(baseParams({ stepDirection: 'reverse' }))
+    const host = makeHost(baseParams({ stepDirection: 'reverse' }))
     host.step(0)
     const ev1 = host.step(1)
     const ons1 = pitchesOf(ev1, 'noteOn')
@@ -963,7 +966,7 @@ describe('Host.step — stepDirection', () => {
     // Verify chord cursor at pos 5 reflects cell[2]=R applied to the cell[3]=hold
     // result, not a re-application of cell[3]. Hold cell at pos=4 is silent-
     // advance (cursor unchanged, no noteOn).
-    const host = new Host(baseParams({ stepDirection: 'pingpong' }))
+    const host = makeHost(baseParams({ stepDirection: 'pingpong' }))
     host.step(0)
     // pos 1: P → C minor [0,3,7]
     // pos 2: L → Ab major [0,3,8]
@@ -996,8 +999,8 @@ describe('Host.step — stepDirection', () => {
     // happen to align. Easier structural check: count of distinct cellIdx
     // values reached over many steps is bounded by cells.length.
     const seed = 314
-    const a = new Host(baseParams({ stepDirection: 'random', seed, cells: cells('hold', 'hold', 'hold', 'hold') }))
-    const b = new Host(baseParams({ stepDirection: 'random', seed, cells: cells('hold', 'hold', 'hold', 'hold') }))
+    const a = makeHost(baseParams({ stepDirection: 'random', seed, cells: cells('hold', 'hold', 'hold', 'hold') }))
+    const b = makeHost(baseParams({ stepDirection: 'random', seed, cells: cells('hold', 'hold', 'hold', 'hold') }))
     a.step(0)
     b.step(0)
     // Two identical hosts → identical event streams (sanity).
@@ -1012,7 +1015,7 @@ describe('Host.step — stepDirection', () => {
     // The lattice marker (ADR 003 cellIdx outlet) reads cellIdx(pos) for the
     // active-cell highlight. Reverse direction must report the reverse cell
     // index, not the forward one.
-    const host = new Host(baseParams({ stepDirection: 'reverse' }))
+    const host = makeHost(baseParams({ stepDirection: 'reverse' }))
     host.step(0)
     host.step(1)
     // After pos=1 in reverse, the cell that JUST fired is cells.length-1 = 3.
@@ -1022,175 +1025,38 @@ describe('Host.step — stepDirection', () => {
   })
 })
 
-// ── ADR 005 Phase 3 — humanize ────────────────────────────────────────────
+// ── ADR 006 Phase 7 Step 4 — RHYTHM determinism (no humanize) ────────────
+// Step 4 rev 2026-05-01 dropped per-rhythm humanize/swing entirely (no
+// inboil basis). Every preset now produces a fully deterministic event
+// stream — no PRNG draws inside maybeFire. If a humanize axis ships later
+// it lands as a separate parameter, not folded into preset.
 
-describe('Host.step — humanize', () => {
-  test('humanizeVelocity=0 is deterministic across a cycle', () => {
-    // Baseline: cell vel=1 + lastInputVel=100 → MIDI velocity 100 every step.
-    const host = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold'), seed: 42 }))
+describe('Host.step — RHYTHM presets are deterministic (no humanize)', () => {
+  test("rhythm='legato' (default) emits constant velocity 100 across a cycle", () => {
+    // cell vel=1 × lastInputVel=100 × outputLevel=1 = 100, every cell head.
+    const host = makeHost(baseParams({ cells: cells('P', 'L', 'R', 'hold'), seed: 42 }))
     host.step(0)
-    for (let pos = 1; pos <= 8; pos++) {
-      const ev = host.step(pos)
-      const ons = ev.filter(e => e.type === 'noteOn')
-      for (const on of ons) {
-        if (on.type !== 'noteOn') continue
-        assert.equal(on.velocity, 100, `pos=${pos} velocity should be unperturbed`)
-      }
-    }
-  })
-
-  test('humanizeVelocity > 0 perturbs MIDI velocity off the baseline', () => {
-    // With humanize=0.5, raw uniform [0,1) produces signed noise in [-0.5,+0.5]
-    // applied to cell.velocity=1. Most steps should land below 1.0, so MIDI
-    // velocity should drift below 100. Across 8 steps, at least one must
-    // differ from 100 (the baseline observed in the previous test).
-    const host = new Host(baseParams({
-      cells: cells('P', 'L', 'R', 'hold'),
-      seed: 42,
-      humanizeVelocity: 0.5,
-    }))
-    host.step(0)
-    let observedNonBaseline = false
     for (let pos = 1; pos <= 8; pos++) {
       const ev = host.step(pos)
       for (const e of ev) {
-        if (e.type === 'noteOn' && e.velocity !== 100) {
-          observedNonBaseline = true
-        }
-        // MIDI velocity must always stay in [1, 127] (clampVelocity invariant).
         if (e.type === 'noteOn') {
-          assert.ok(e.velocity >= 1 && e.velocity <= 127, `velocity ${e.velocity} out of MIDI range`)
+          assert.equal(e.velocity, 100, `pos=${pos} velocity must be deterministic 100`)
         }
       }
     }
-    assert.ok(observedNonBaseline, 'humanizeVelocity=0.5 should perturb at least one step')
   })
 
-  test('humanizeTiming > 0 perturbs the noteOn delayPos', () => {
-    // cell.timing=0 baseline → delayPos=0 on every noteOn. Adding humanizeTiming
-    // shifts each step's delayPos by signed noise * spt. Negative offsets are
-    // clamped to 0 by Phase 2 boundary clamp; positive ones survive.
-    const host = new Host(baseParams({
-      cells: cells('P', 'L', 'R', 'hold'),
-      seed: 42,
-      humanizeTiming: 0.5,
-      stepsPerTransform: 4, // gives the timing offset units to vary in
-    }))
-    host.step(0)
-    let observedNonZero = false
-    for (let pos = 4; pos <= 32; pos += 4) {
-      const ev = host.step(pos)
-      for (const e of ev) {
-        if (e.type === 'noteOn' && (e.delayPos ?? 0) > 0) {
-          observedNonZero = true
-        }
+  test('every preset produces an identical event stream across two fresh hosts (seed-deterministic)', () => {
+    const presets = ['all', 'legato', 'onbeat', 'offbeat', 'syncopated'] as const
+    for (const rhythm of presets) {
+      const params = baseParams({ cells: cells('P', 'L', 'R', 'hold'), seed: 7, rhythm, stepsPerTransform: 4 })
+      const a = makeHost(params)
+      const b = makeHost(params)
+      a.step(0); b.step(0)
+      for (const pos of [4, 8, 12, 16]) {
+        assert.deepEqual(a.step(pos), b.step(pos), `${rhythm} pos=${pos} must replay`)
       }
     }
-    assert.ok(observedNonZero, 'humanizeTiming=0.5 must produce at least one positive delayPos noteOn')
-  })
-
-  test('humanizeGate > 0 perturbs the gate-end delayPos in at least one step', () => {
-    // cell.gate=0.9 baseline → gate-end delayPos = 0.9*spt. With small
-    // humanizeGate, the perturbed cellGate stays strictly < 1.0 (no clamp
-    // to legato) and the gate-end delayPos shifts off-baseline. We sweep
-    // multiple boundaries because any individual draw can happen to land
-    // very close to the baseline. Explicit gate=0.9 override because the
-    // post-2026-04 default is 1.0 (legato, no gate-end emission).
-    const cellsWithGate = (...ops: Op[]) => ops.map(op => makeCell(op, { gate: 0.9 }))
-    const stub = { cells: cellsWithGate('P', 'L', 'R', 'hold'), seed: 42, stepsPerTransform: 4 }
-    const baselineHost = new Host(baseParams(stub))
-    const humanizedHost = new Host(baseParams({ ...stub, humanizeGate: 0.1 }))
-    baselineHost.step(0); humanizedHost.step(0)
-    let observedShift = false
-    for (const pos of [4, 8, 12, 16, 20]) {
-      const evBase = baselineHost.step(pos).filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) > 0)
-      const evHum = humanizedHost.step(pos).filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) > 0)
-      if (evBase.length > 0 && evHum.length > 0 && evBase[0]!.delayPos !== evHum[0]!.delayPos) {
-        observedShift = true
-        break
-      }
-    }
-    assert.ok(observedShift, 'humanizeGate must perturb gate-end delayPos at least once across the sweep')
-  })
-
-  test('humanize-disabled host (all 3 amounts = 0) is bit-identical to a Phase-2-era step', () => {
-    // Regression guard: with all humanize amounts = 0 and ticksPerStep=1, the
-    // host must produce exactly the same event stream as before Phase 3 wiring.
-    // This is implicitly covered by Sub 1 / Sub 2 zero-amount tests, but the
-    // extra explicit equality check pins down the no-op contract.
-    const a = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold'), seed: 99, stepsPerTransform: 4 }))
-    const b = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold'), seed: 99, stepsPerTransform: 4 }))
-    a.step(0); b.step(0)
-    for (const pos of [4, 8, 12, 16, 20]) {
-      assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} match`)
-    }
-  })
-
-  test('humanize results are seed-deterministic across two fresh hosts', () => {
-    // Replay determinism with humanize: two fresh hosts, same seed, same
-    // humanize amounts → identical event streams.
-    const params = baseParams({
-      cells: cells('P', 'L', 'R', 'hold'),
-      seed: 7,
-      humanizeVelocity: 0.4,
-      humanizeGate: 0.3,
-      humanizeTiming: 0.2,
-      stepsPerTransform: 4,
-    })
-    const a = new Host(params)
-    const b = new Host(params)
-    a.step(0); b.step(0)
-    for (const pos of [4, 8, 12, 16]) {
-      assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} replay match`)
-    }
-  })
-
-  test('humanizeDrift=0 (default) is bit-identical to a host that never touches drift', () => {
-    // Phase 5 regression guard for time-correlated humanize. Drift defaults
-    // to 0 (identity EMA) so any combination of non-zero humanize amounts +
-    // drift=0 must produce exactly the same event stream as the same host
-    // without drift wiring.
-    const stub = {
-      cells: cells('P', 'L', 'R', 'hold'),
-      seed: 7,
-      stepsPerTransform: 4,
-      humanizeVelocity: 0.3,
-      humanizeGate: 0.2,
-      humanizeTiming: 0.1,
-    }
-    const a = new Host(baseParams(stub))
-    const b = new Host(baseParams({ ...stub, humanizeDrift: 0 }))
-    a.step(0); b.step(0)
-    for (const pos of [4, 8, 12, 16, 20, 24]) {
-      assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} match`)
-    }
-  })
-
-  test('humanizeDrift > 0 changes the event stream from independent humanize', () => {
-    // With same seed and same per-axis amounts, drift>0 must produce a
-    // DIFFERENT event stream from drift=0 (the smoothed values are different
-    // from raw uniforms in general). Confirms the drift parameter is wired.
-    const stub = {
-      cells: cells('P', 'L', 'R', 'hold'),
-      seed: 7,
-      stepsPerTransform: 4,
-      humanizeVelocity: 0.5,
-    }
-    const independent = new Host(baseParams(stub))
-    const smoothed = new Host(baseParams({ ...stub, humanizeDrift: 0.7 }))
-    independent.step(0); smoothed.step(0)
-    let observedDifference = false
-    for (let pos = 4; pos <= 64; pos += 4) {
-      const a = independent.step(pos)
-      const b = smoothed.step(pos)
-      const aOn = a.find(e => e.type === 'noteOn')
-      const bOn = b.find(e => e.type === 'noteOn')
-      if (aOn && bOn && aOn.type === 'noteOn' && bOn.type === 'noteOn' && aOn.velocity !== bOn.velocity) {
-        observedDifference = true
-        break
-      }
-    }
-    assert.ok(observedDifference, 'humanizeDrift=0.7 must perturb at least one MIDI velocity vs drift=0')
   })
 })
 
@@ -1204,8 +1070,8 @@ describe('Host.step — outputLevel', () => {
 
   test('outputLevel=1.0 (default) is bit-identical to a host that never touches it', () => {
     const stub = { cells: cells('P', 'L', 'R', 'hold'), seed: 42, stepsPerTransform: 4 }
-    const a = new Host(baseParams(stub))
-    const b = new Host(baseParams({ ...stub, outputLevel: 1.0 }))
+    const a = makeHost(baseParams(stub))
+    const b = makeHost(baseParams({ ...stub, outputLevel: 1.0 }))
     a.step(0); b.step(0)
     for (const pos of [4, 8, 12, 16, 20]) {
       assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} match`)
@@ -1215,7 +1081,7 @@ describe('Host.step — outputLevel', () => {
   test('outputLevel=0.5 halves MIDI velocity at startChord and at every cell emission', () => {
     // Source vel = 100 (default), cell.velocity = 1.0, humanize = 0 →
     // baseline MIDI velocity = 100. With outputLevel=0.5: 100 * 1.0 * 0.5 = 50.
-    const host = new Host(baseParams({ outputLevel: 0.5, cells: cells('P', 'L', 'R', 'hold') }))
+    const host = makeHost(baseParams({ outputLevel: 0.5, cells: cells('P', 'L', 'R', 'hold') }))
     const startEvents = host.step(0)
     for (const ev of startEvents) {
       if (ev.type === 'noteOn') {
@@ -1235,7 +1101,7 @@ describe('Host.step — outputLevel', () => {
   test('outputLevel=0 produces MIDI velocity 1 (clamped from 0)', () => {
     // 100 * 1 * 0 = 0 → clampVelocity floors to 1 (note-on with velocity 0
     // is conventionally a note-off, so we keep it audible-but-quiet).
-    const host = new Host(baseParams({ outputLevel: 0 }))
+    const host = makeHost(baseParams({ outputLevel: 0 }))
     const events = host.step(0)
     for (const ev of events) {
       if (ev.type === 'noteOn') {
@@ -1244,41 +1110,31 @@ describe('Host.step — outputLevel', () => {
     }
   })
 
-  test('outputLevel composes with humanizeVelocity', () => {
-    // humanize-driven cellVel ∈ [0.5, 1.0] (with humanizeVelocity=0.5,
-    // cell.vel=1.0). outputLevel=0.5 then halves output → MIDI velocity ∈
-    // [25, 50]. Confirm at least one emitted velocity falls in this range
-    // and none exceed 50.
-    const host = new Host(baseParams({
+  test("outputLevel composes with rhythm='all' (deterministic 50 every fire)", () => {
+    // After Phase 7 Step 4 rev: no humanize. cell.vel=1.0 × inputVel=100
+    // × outputLevel=0.5 = 50, deterministic on every fire. 'all' fires
+    // every 16th sub-step, so each cell head sees 50.
+    const host = makeHost(baseParams({
       cells: cells('P', 'L', 'R', 'hold'),
       seed: 42,
-      humanizeVelocity: 0.5,
+      rhythm: 'all',
       outputLevel: 0.5,
       stepsPerTransform: 1,
     }))
     host.step(0)
-    let observedAtCap = false
     for (let pos = 1; pos <= 8; pos++) {
-      const events = host.step(pos)
-      for (const ev of events) {
-        if (ev.type === 'noteOn') {
-          assert.ok(ev.velocity <= 50, `velocity ${ev.velocity} must not exceed cap 50`)
-          assert.ok(ev.velocity >= 1, `velocity ${ev.velocity} must be valid MIDI`)
-          if (ev.velocity === 50) observedAtCap = true
-        }
+      for (const ev of host.step(pos)) {
+        if (ev.type !== 'noteOn') continue
+        assert.equal(ev.velocity, 50, `pos=${pos} must be deterministic 50`)
       }
     }
-    // The humanizeVel uniform [0,1) hits 0.5+ frequently → cellVel hits 1.0
-    // (clamped from above), so we expect to see vel=50 (the cap) at least
-    // once across 8 boundaries.
-    assert.ok(observedAtCap, 'expected at least one note at the outputLevel cap (50)')
   })
 
   test('outputLevel respects MIDI input velocity (multiplies the source)', () => {
     // ADR 004 input passthrough: incoming MIDI vel becomes the source vel.
     // With input vel = 60, cell.vel = 1.0, outputLevel = 0.5 →
     // output velocity = 60 * 1.0 * 0.5 = 30.
-    const host = new Host(baseParams({ outputLevel: 0.5 }))
+    const host = makeHost(baseParams({ outputLevel: 0.5 }))
     host.noteIn(60, 60, 1) // input velocity 60, channel 1
     const events = host.step(0)
     for (const ev of events) {
@@ -1289,77 +1145,56 @@ describe('Host.step — outputLevel', () => {
   })
 })
 
-// ── ADR 005 Phase 3 — subdivision (ticksPerStep) ─────────────────────────
+// ── ADR 006 Phase 7 Step 4 rev 2 — ticksPerStep > 1 multiplier ──────────
+// Step 4 rev 2 (2026-05-01) switched the patcher metro to standard `16n`,
+// so production ticksPerStep is now 1 (1 metro tick = 1 sub-step). These
+// tests pin the engine's higher-tps math (e.g., PPQN=24 streams from a
+// hypothetical VST/AU port) — at tps=6 the engine fires at every 6th
+// raw tick, scaling timing offsets by the multiplier. With production =
+// tps=1 these are cross-target conformance tests, not "production"
+// scenarios, but kept for coverage of the multiplier math.
 
-describe('Host.step — subdivision (ticksPerStep)', () => {
-  test('cell boundary occurs every (ticksPerStep * stepsPerTransform) raw ticks', () => {
-    // ticksPerStep=6 (16th @ PPQN=24), stepsPerTransform=1 → cell every 6 ticks.
-    const host = new Host(baseParams({
-      cells: cells('P'),
-      ticksPerStep: 6,
-      stepsPerTransform: 1,
-    }))
-    host.step(0) // startChord at tick 0
+describe('Host.step — ticksPerStep=6 multiplier (cross-target)', () => {
+  test('cell boundary occurs every (6 * stepsPerTransform) raw ticks', () => {
+    // ticksPerStep=6, stepsPerTransform=1 → cell every 6 ticks. Sub-step ticks
+    // (1..5, 7..11) are silent; pos=6 fires cell[0]; pos=12 fires cell[1].
+    const host = makeHost(baseParams({ cells: cells('P'), stepsPerTransform: 1 }), { ticksPerStep: 6 })
+    host.step(0)
     for (const pos of [1, 2, 3, 4, 5]) {
       assert.deepEqual(host.step(pos), [], `pos=${pos} between subdivision-steps → no events`)
     }
-    // pos=6 is the first subdivision-step boundary AND a cell boundary
     const evCell = host.step(6)
-    const ons = evCell.filter(e => e.type === 'noteOn').map(e => e.pitch).sort((a, b) => a - b)
-    const pcs = ons.map(p => p % 12).sort((a, b) => a - b)
+    const pcs = evCell.filter(e => e.type === 'noteOn').map(e => e.pitch % 12).sort((a, b) => a - b)
     assert.deepEqual(pcs, [0, 3, 7], 'pos=6: cell[0]=P → C minor')
-    // pos=7..11 again silent
     for (const pos of [7, 8, 9, 10, 11]) {
       assert.deepEqual(host.step(pos), [], `pos=${pos} between → no events`)
     }
-    // pos=12 next cell boundary
     const ev2 = host.step(12)
     assert.ok(ev2.some(e => e.type === 'noteOn'), 'pos=12 fires next cell')
   })
 
-  test('cell timing/gate scale with ticksPerStep × stepsPerTransform (1 transform period)', () => {
-    // With ticksPerStep=6, spt=1: one transform period = 6 raw ticks.
-    // cell gate=0.9 → gate-end delayPos = 0.9 * 6 = 5.4. Explicit gate=0.9
-    // override because the post-2026-04 default is 1.0 (legato, no gate-end).
-    const host = new Host(baseParams({
-      cells: [makeCell('P', { gate: 0.9 })],
-      ticksPerStep: 6,
-      stepsPerTransform: 1,
-    }))
+  test('cell gate-end delayPos scales by ticksPerStep (transformTicks = 6 * spt)', () => {
+    // With ticksPerStep=6, spt=1: one transform period = 6 raw ticks. cell
+    // gate=0.9 → gate-end delayPos = 0.9 * 6 = 5.4. Explicit gate=0.9 because
+    // the default 1.0 emits no gate-end (legato handoff to next cell).
+    const host = makeHost(
+      baseParams({ cells: [makeCell('P', { gate: 0.9 })], stepsPerTransform: 1 }),
+      { ticksPerStep: 6 },
+    )
     host.step(0)
     const ev = host.step(6)
     const gateEnds = ev.filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) > 0)
     assert.ok(gateEnds.length > 0, 'gate-end noteOffs should be emitted')
-    for (const e of gateEnds) {
-      assert.equal(e.delayPos, 5.4, 'gate-end delayPos must scale by ticksPerStep')
-    }
-  })
-
-  test('subdivision tick multipliers (ADR 005 §Subdivision table)', () => {
-    // ADR table: 8th=12, 16th=6, 32nd=3, 8T=8, 16T=4 ticks/step at PPQN=24.
-    // For each, host with spt=1 fires the first cell at pos=ticksPerStep.
-    const cases: Array<[number, string]> = [
-      [12, '8th'], [6, '16th'], [3, '32nd'], [8, '8T'], [4, '16T'],
-    ]
-    for (const [tps, label] of cases) {
-      const host = new Host(baseParams({ cells: cells('P'), ticksPerStep: tps, stepsPerTransform: 1 }))
-      host.step(0)
-      // Just below boundary: nothing
-      assert.deepEqual(host.step(tps - 1), [], `${label}: pos ${tps - 1} → []`)
-      // At boundary: cell fires
-      const ev = host.step(tps)
-      assert.ok(ev.some(e => e.type === 'noteOn'), `${label}: pos ${tps} fires cell`)
-    }
+    for (const e of gateEnds) assert.equal(e.delayPos, 5.4, 'gate-end delayPos = 0.9 * 6')
   })
 
   test('cellIdx() reports the most-recent cell across mid-step ticks', () => {
     // ticksPerStep=6, spt=1: cell[0]=P fires at pos=6, cell[1]=L at pos=12.
     // Between, the marker should keep showing the most recently fired cell.
-    const host = new Host(baseParams({
-      cells: cells('P', 'L', 'R', 'hold'),
-      ticksPerStep: 6,
-      stepsPerTransform: 1,
-    }))
+    const host = makeHost(
+      baseParams({ cells: cells('P', 'L', 'R', 'hold'), stepsPerTransform: 1 }),
+      { ticksPerStep: 6 },
+    )
     host.step(0)
     assert.equal(host.cellIdx(0), -1, 'before first cell: -1')
     host.step(6)
@@ -1371,94 +1206,88 @@ describe('Host.step — subdivision (ticksPerStep)', () => {
       assert.equal(host.cellIdx(pos), 1, `pos=${pos}: on cell 1`)
     }
   })
+})
 
-  test('ticksPerStep=1 keeps full backward compatibility with Phase 2 pos contract', () => {
-    // Sanity: every existing host test passes baseParams with ticksPerStep=1,
-    // and that already implies "1 pos = 1 step". Reassert at the contract level
-    // that pos=1 is the first transform boundary when spt=1, ticksPerStep=1.
-    const host = new Host(baseParams({ cells: cells('P'), stepsPerTransform: 1 }))
+// ── ADR 006 Phase 7 Step 4 — RHYTHM gating, inboil-aligned ──────────────
+// 5 presets ported from inboil's TonnetzRhythm (resolveRhythm @
+// generative.ts:478): all / legato / onbeat / offbeat / syncopated.
+// Tests pin the host's gatingFires integration at production tps=6,
+// spt=4 (cell = 4 sub-steps within a quarter).
+
+describe("Host.step — rhythm='legato' fires only at cell head", () => {
+  test('only subStepIdx=0 fires (every spt sub-steps)', () => {
+    const host = makeHost(
+      baseParams({ cells: cells('P', 'L', 'R', 'hold'), stepsPerTransform: 4, rhythm: 'legato' }),
+      { ticksPerStep: 6 },
+    )
     host.step(0)
-    const ev = host.step(1)
-    assert.ok(ev.some(e => e.type === 'noteOn'), 'pos=1 with ticksPerStep=1 must fire')
+    assert.ok(host.step(6).every(e => e.type !== 'noteOn'), 'mid-cell idx=1 silent')
+    assert.ok(host.step(12).every(e => e.type !== 'noteOn'), 'mid-cell idx=2 silent')
+    assert.ok(host.step(18).every(e => e.type !== 'noteOn'), 'mid-cell idx=3 silent')
+    assert.ok(host.step(24).some(e => e.type === 'noteOn'), 'next cell head idx=0 fires')
   })
 })
 
-// ── ADR 005 Phase 3 — swing ──────────────────────────────────────────────
+describe("Host.step — rhythm='onbeat' fires every 4 sub-steps", () => {
+  test('quarter-note pulse (idx % 4 === 0)', () => {
+    const host = makeHost(
+      baseParams({ cells: cells('P', 'L', 'R', 'hold'), stepsPerTransform: 4, rhythm: 'onbeat' }),
+      { ticksPerStep: 6 },
+    )
+    host.step(0)
+    assert.ok(host.step(6).every(e => e.type !== 'noteOn'), 'idx=1 silent')
+    assert.ok(host.step(12).every(e => e.type !== 'noteOn'), 'idx=2 silent')
+    assert.ok(host.step(18).every(e => e.type !== 'noteOn'), 'idx=3 silent')
+    assert.ok(host.step(24).some(e => e.type === 'noteOn'), 'idx=0 (next cell head) fires')
+  })
+})
 
-describe('Host.step — swing', () => {
-  test('swing=0.5 (default) is a no-op vs an unswung baseline', () => {
-    // ticksPerStep=6, spt=1 → cells fire at every 16th. swing=0.5 should
-    // produce identical events to a host with swing untouched.
-    const stub = { cells: cells('P', 'L', 'R', 'hold'), seed: 0, ticksPerStep: 6, stepsPerTransform: 1 }
-    const a = new Host(baseParams(stub))
-    const b = new Host(baseParams({ ...stub, swing: 0.5 }))
-    a.step(0); b.step(0)
-    for (const pos of [6, 12, 18, 24, 30, 36]) {
-      assert.deepEqual(a.step(pos), b.step(pos), `pos=${pos} swing=0.5 must match unswung`)
+describe("Host.step — rhythm='offbeat' fires on the &-of-each-quarter", () => {
+  test('only subStepIdx % 4 === 2 fires (4 fires/bar, complementary to onbeat)', () => {
+    // spt=4: subStepIdx 0,1,2,3 → fire only at idx=2 (= the &-of-quarter).
+    // Standard musical off-beat semantic.
+    const host = makeHost(
+      baseParams({ cells: cells('P', 'L', 'R', 'hold'), stepsPerTransform: 4, rhythm: 'offbeat' }),
+      { ticksPerStep: 6 },
+    )
+    host.step(0)
+    assert.ok(host.step(6).every(e => e.type !== 'noteOn'), 'idx=1 silent')
+    assert.ok(host.step(12).some(e => e.type === 'noteOn'), 'idx=2 (&) fires')
+    assert.ok(host.step(18).every(e => e.type !== 'noteOn'), 'idx=3 silent')
+    assert.ok(host.step(24).every(e => e.type !== 'noteOn'), 'idx=0 (next cell head) silent')
+  })
+})
+
+describe("Host.step — rhythm='all' fires at every sub-step", () => {
+  test('every 16th fires (no humanize / no swing per Step 4 rev)', () => {
+    const host = makeHost(
+      baseParams({ cells: cells('P', 'L', 'R', 'hold'), stepsPerTransform: 4, rhythm: 'all' }),
+      { ticksPerStep: 6 },
+    )
+    host.step(0)
+    for (const pos of [6, 12, 18, 24]) {
+      assert.ok(host.step(pos).some(e => e.type === 'noteOn'), `pos=${pos} fires`)
     }
   })
+})
 
-  test('swing>0.5 shifts odd-indexed subdivision-steps later (no shift on even)', () => {
-    // swing=0.75, ticksPerStep=6 → odd subdivStepPos gets +3 raw-tick offset.
-    // spt=1: cells fire at subdivStepPos=1 (odd, swung), 2 (even, on grid),
-    // 3 (odd, swung), 4 (even, on grid).
-    // cell.timing=0 baseline, so noteOn delayPos == swing offset.
-    const host = new Host(baseParams({
-      cells: cells('P', 'L', 'R', 'hold'),
-      ticksPerStep: 6,
-      stepsPerTransform: 1,
-      swing: 0.75,
-    }))
+describe("Host.step — rhythm='syncopated' uses inboil 8-step pattern", () => {
+  test('pattern [T,F,T,F,F,T,F,T] over subStepIdx % 8', () => {
+    // spt=8 covers one full period of the 8-step pattern.
+    const host = makeHost(
+      baseParams({ cells: cells('P', 'L'), stepsPerTransform: 8, rhythm: 'syncopated' }),
+      { ticksPerStep: 6 },
+    )
     host.step(0)
-    // pos=6 → subdivStepPos=1 (odd) → +3 tick swing
-    const ev1 = host.step(6).filter(e => e.type === 'noteOn')
-    assert.ok(ev1.length > 0)
-    for (const e of ev1) assert.equal(e.delayPos, 3, 'swung odd subdivStep gets +3 ticks')
-    // pos=12 → subdivStepPos=2 (even) → no swing
-    const ev2 = host.step(12).filter(e => e.type === 'noteOn')
-    assert.ok(ev2.length > 0)
-    for (const e of ev2) assert.equal(e.delayPos ?? 0, 0, 'even subdivStep has no swing')
-    // pos=18 → subdivStepPos=3 (odd) → swung
-    const ev3 = host.step(18).filter(e => e.type === 'noteOn')
-    for (const e of ev3) assert.equal(e.delayPos, 3, 'pos=18 swung')
-  })
-
-  test('swing has no effect when cell boundaries land only on even subdivision-steps', () => {
-    // spt=2, ticksPerStep=6 → cells fire at subdivStepPos=2, 4, 6 (all even).
-    // Musically: a cell-rate of 2 sixteenths = an 8th-note pulse, which does
-    // not have 16th-swing applied to it.
-    const host = new Host(baseParams({
-      cells: cells('P', 'L', 'R', 'hold'),
-      ticksPerStep: 6,
-      stepsPerTransform: 2,
-      swing: 0.75,
-    }))
-    host.step(0)
-    for (const pos of [12, 24, 36, 48]) {
-      const ons = host.step(pos).filter(e => e.type === 'noteOn')
-      for (const e of ons) {
-        assert.equal(e.delayPos ?? 0, 0, `pos=${pos} (subdivStep=${pos / 6}) must not be swung`)
-      }
-    }
-  })
-
-  test('swing composes additively with cell.timing offset', () => {
-    // cell.timing=+0.25 transforms-period offset + swing on odd subdivStep.
-    // ticksPerStep=6, spt=1, transformTicks=6. cell.timing=+0.25 → +1.5 raw
-    // ticks. swing=0.75 odd → +3 ticks. Combined on subdivStepPos=1: +4.5.
-    const cellTiming = makeCell('P', { timing: 0.25 })
-    const host = new Host(baseParams({
-      cells: [cellTiming, makeCell('L'), makeCell('R'), makeCell('hold')],
-      ticksPerStep: 6,
-      stepsPerTransform: 1,
-      swing: 0.75,
-    }))
-    host.step(0)
-    const ev = host.step(6).filter(e => e.type === 'noteOn')
-    assert.ok(ev.length > 0)
-    for (const e of ev) {
-      assert.equal(e.delayPos, 4.5, 'cell.timing + swing additively compose')
-    }
+    // pattern fires on subStepIdx 0 (handled by init), 2, 5, 7.
+    // pos=6 → idx=1 silent
+    assert.ok(host.step(6).every(e => e.type !== 'noteOn'), 'idx=1 silent')
+    assert.ok(host.step(12).some(e => e.type === 'noteOn'), 'idx=2 fires')
+    assert.ok(host.step(18).every(e => e.type !== 'noteOn'), 'idx=3 silent')
+    assert.ok(host.step(24).every(e => e.type !== 'noteOn'), 'idx=4 silent')
+    assert.ok(host.step(30).some(e => e.type === 'noteOn'), 'idx=5 fires')
+    assert.ok(host.step(36).every(e => e.type !== 'noteOn'), 'idx=6 silent')
+    assert.ok(host.step(42).some(e => e.type === 'noteOn'), 'idx=7 fires')
   })
 })
 
@@ -1482,7 +1311,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
 
   describe('initial state', () => {
     test('activeSlot defaults to 0', () => {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       assert.equal(host.activeSlot, 0)
     })
 
@@ -1490,7 +1319,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
       // Initial Live-set load presents 4 identical slots matching the
       // patcher's persisted hidden params; switching to any slot is a
       // no-op until the user starts editing.
-      const host = new Host(baseParams({
+      const host = makeHost(baseParams({
         cells: cells('P', 'L', 'R', 'hold'),
         startChord: [60, 64, 67], // C major
         jitter: 0.25,
@@ -1507,13 +1336,13 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('getSlot returns null for out-of-range index', () => {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       assert.equal(host.getSlot(-1), null)
       assert.equal(host.getSlot(SLOT_COUNT), null)
     })
 
     test('getSlot returns a defensive copy', () => {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       const s = host.getSlot(0)!
       s.jitter = 0.99
       s.startChord.root = 11
@@ -1527,7 +1356,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
       // Bridge calls setSlot on device load to re-populate the in-memory
       // Slot[] from hidden live.* params. This is persistence rehydration,
       // NOT a load — params stay untouched until switchSlot is called.
-      const host = new Host(baseParams({ jitter: 0 }))
+      const host = makeHost(baseParams({ jitter: 0 }))
       const slot: Slot = makeSlot({ jitter: 0.7, seed: 99 })
       host.setSlot(1, slot)
       assert.deepEqual(host.getSlot(1), slot)
@@ -1537,7 +1366,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('setSlot to invalid index is a no-op', () => {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       host.setSlot(-1, makeSlot({ jitter: 0.5 }))
       host.setSlot(SLOT_COUNT, makeSlot({ jitter: 0.5 }))
       // No throw; slots unchanged at default.
@@ -1549,13 +1378,13 @@ describe('Host slots — ADR 006 Phase 2', () => {
 
   describe('switchSlot — load behavior', () => {
     test('updates activeSlot index', () => {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       host.switchSlot(2)
       assert.equal(host.activeSlot, 2)
     })
 
     test('out-of-range index is a no-op', () => {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       host.switchSlot(-1)
       assert.equal(host.activeSlot, 0)
       host.switchSlot(SLOT_COUNT)
@@ -1563,7 +1392,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('cells / jitter / seed apply unconditionally (no MIDI held)', () => {
-      const host = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
+      const host = makeHost(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
       host.setSlot(1, makeSlot({
         cells: '----', // 4 rests
         jitter: 0.5,
@@ -1583,7 +1412,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     test('cells / jitter / seed apply unconditionally (MIDI held)', () => {
       // Same as above but with a chord held — the held chord must NOT
       // suppress the cells/jitter/seed update.
-      const host = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
+      const host = makeHost(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
       host.noteIn(60, 100, 1); host.noteIn(64, 100, 1); host.noteIn(67, 100, 1)
       host.setSlot(1, makeSlot({ cells: '----', jitter: 0, seed: 0 }))
       host.switchSlot(1)
@@ -1606,7 +1435,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
         makeCell('R', { velocity: 0.5, gate: 0.3, probability: 0.8, timing: 0.1 }),
         makeCell('hold', { velocity: 0.5, gate: 0.3, probability: 0.8, timing: 0.1 }),
       ]
-      const host = new Host(baseParams({ cells: customCells }))
+      const host = makeHost(baseParams({ cells: customCells }))
       host.setSlot(1, makeSlot({ cells: 'RRRR' }))
       host.switchSlot(1)
       // After switch, cells[0..3].velocity etc. unchanged (only op flipped).
@@ -1621,7 +1450,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('startChord applies immediately when no MIDI held', () => {
-      const host = new Host(baseParams({ startChord: [60, 64, 67] })) // C major
+      const host = makeHost(baseParams({ startChord: [60, 64, 67] })) // C major
       host.setSlot(1, makeSlot({ startChord: { root: 5, quality: 'min' } })) // F minor
       host.switchSlot(1)
       // F minor: F=5, Ab=8, C=0
@@ -1629,7 +1458,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('startChord defers when MIDI is held; pending stored', () => {
-      const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+      const host = makeHost(baseParams({ startChord: [60, 64, 67] }))
       // Hold E minor (E=64, G=67, B=71)
       host.noteIn(64, 100, 1); host.noteIn(67, 100, 1); host.noteIn(71, 100, 1)
       assert.deepEqual(pcSet(host.startChord), [4, 7, 11], 'E minor took over')
@@ -1641,7 +1470,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('pending startChord applies on last note-off (hybrid mode)', () => {
-      const host = new Host(baseParams({ startChord: [60, 64, 67], triggerMode: 0 }))
+      const host = makeHost(baseParams({ startChord: [60, 64, 67], triggerMode: 0 }))
       host.noteIn(64, 100, 1); host.noteIn(67, 100, 1); host.noteIn(71, 100, 1) // E minor
       host.setSlot(1, makeSlot({ startChord: { root: 5, quality: 'maj' } })) // F major
       host.switchSlot(1)
@@ -1658,7 +1487,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
       // Hold-to-play: last note-off panics + walker off; next note-on
       // recomputes startChord from the new MIDI input. Pending becomes
       // moot — clear it so a stale pending can't override later input.
-      const host = new Host(baseParams({ startChord: [60, 64, 67], triggerMode: 1 }))
+      const host = makeHost(baseParams({ startChord: [60, 64, 67], triggerMode: 1 }))
       host.noteIn(64, 100, 1); host.noteIn(67, 100, 1); host.noteIn(71, 100, 1)
       host.setSlot(1, makeSlot({ startChord: { root: 5, quality: 'maj' } }))
       host.switchSlot(1)
@@ -1672,7 +1501,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     test('switchSlot when slot startChord matches current keeps walker continuity', () => {
       // No pendingPosReset / no audible glitch when the loaded chord is
       // identical to params.startChord — only the cell pattern changes.
-      const host = new Host(baseParams({
+      const host = makeHost(baseParams({
         startChord: [60, 64, 67],
         cells: cells('P', 'L', 'R', 'hold'),
       }))
@@ -1688,7 +1517,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('switchSlot triggers chord change at next step when startChord differs', () => {
-      const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+      const host = makeHost(baseParams({ startChord: [60, 64, 67] }))
       host.step(0) // C major emitted
       host.setSlot(1, makeSlot({ startChord: { root: 5, quality: 'min' } })) // F minor
       host.switchSlot(1)
@@ -1709,7 +1538,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     // does NOT auto-save (the slot keeps its anchor across performance).
 
     test('setParams({jitter}) syncs jitter to active slot', () => {
-      const host = new Host(baseParams({ jitter: 0 }))
+      const host = makeHost(baseParams({ jitter: 0 }))
       host.switchSlot(3)
       host.setParams({ jitter: 0.9 })
       assert.equal(host.getSlot(3)!.jitter, 0.9, 'active slot updated')
@@ -1720,21 +1549,21 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('setParams({seed}) syncs seed', () => {
-      const host = new Host(baseParams({ seed: 0 }))
+      const host = makeHost(baseParams({ seed: 0 }))
       host.switchSlot(2)
       host.setParams({ seed: 12345 })
       assert.equal(host.getSlot(2)!.seed, 12345)
     })
 
     test('setParams({startChord}) syncs startChord (lattice click path)', () => {
-      const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+      const host = makeHost(baseParams({ startChord: [60, 64, 67] }))
       host.switchSlot(1)
       host.setParams({ startChord: [65, 68, 72] }) // F minor
       assert.deepEqual(host.getSlot(1)!.startChord, { root: 5, quality: 'min' })
     })
 
     test('setCell syncs cells to active slot', () => {
-      const host = new Host(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
+      const host = makeHost(baseParams({ cells: cells('P', 'L', 'R', 'hold') }))
       host.switchSlot(2)
       host.setCell(0, 'rest')
       host.setCell(1, 'rest')
@@ -1744,7 +1573,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('setCellField does NOT auto-save (per-cell numeric fields are device-shared)', () => {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       host.switchSlot(2)
       const before = host.getSlot(2)
       host.setCellField(0, 'velocity', 0.5)
@@ -1761,7 +1590,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
       // intentionally bypasses auto-save: the slot keeps its anchor chord;
       // MIDI input is what the player is playing right now, not what they
       // want to commit to the slot.
-      const host = new Host(baseParams({ startChord: [60, 64, 67] })) // C maj
+      const host = makeHost(baseParams({ startChord: [60, 64, 67] })) // C maj
       host.switchSlot(2)
       const before = host.getSlot(2)
       // Player presses an F major triad: should update params but NOT slot.
@@ -1772,7 +1601,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('roundtrip: switch / edit / switch away / switch back preserves edits', () => {
-      const host = new Host(baseParams({
+      const host = makeHost(baseParams({
         startChord: [60, 64, 67],
         cells: cells('P', 'L', 'R', 'hold'),
         jitter: 0,
@@ -1797,37 +1626,28 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('setParams with non-slot fields (voicing, etc.) does NOT auto-save', () => {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       host.switchSlot(1)
       const before = host.getSlot(1)
       host.setParams({ voicing: 'spread' })
-      host.setParams({ swing: 0.6 })
-      host.setParams({ humanizeVelocity: 0.3 })
+      host.setParams({ rhythm: 'syncopated' })
+      host.setParams({ arp: 'up' })
       host.setParams({ outputLevel: 0.5 })
       // None of these are slot-stored fields — slot stays untouched.
       assert.deepEqual(host.getSlot(1), before)
     })
 
-    test('auto-save does NOT touch timing params (ticksPerStep, stepsPerTransform)', () => {
+    test('auto-save does NOT touch stepsPerTransform', () => {
       // Regression guard: the user reported step interval became "abnormally
       // fast" after the auto-save changes. Verify that setCell / setParams
       // for slot fields (cells / jitter / seed / startChord) do not
-      // accidentally mutate or reset ticksPerStep or stepsPerTransform.
-      const host = new Host(baseParams({
-        ticksPerStep: 6,        // 16th-note subdivision
-        stepsPerTransform: 4,
-      }))
-      // Sequence of mutations like the hostReady widget cascade would
-      // produce (cells/jit/seed/chord all setting via the user-output
-      // path → bridge → host).
+      // accidentally mutate or reset stepsPerTransform. (ticksPerStep was
+      // revoked in Phase 7 Step 4 and is now an internal Host constant.)
+      const host = makeHost(baseParams({ stepsPerTransform: 4 }))
       host.setCell(0, 'L')
       host.setParams({ jitter: 0.5 })
       host.setParams({ seed: 99 })
       host.setParams({ startChord: [62, 65, 69] }) // D minor
-      // Timing params must remain at the values set by the device-shared
-      // widget cascade (subdivision, steps).
-      assert.equal((host as any).params.ticksPerStep, 6,
-        'ticksPerStep preserved through slot-field auto-save')
       assert.equal((host as any).params.stepsPerTransform, 4,
         'stepsPerTransform preserved through slot-field auto-save')
     })
@@ -1856,7 +1676,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('loads preset into the active slot', () => {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       host.switchSlot(2)
       const ok = host.loadFactoryPreset(0) // "Steady" — PPPP|s=0|j=0|c=C
       assert.equal(ok, true)
@@ -1870,7 +1690,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     test('applies preset to running params (cells / jitter / seed)', () => {
       // Loading a preset must affect what the next step() emits, not just
       // the stored Slot. Verifies the setSlot + switchSlot composition.
-      const host = new Host(baseParams({ jitter: 0, seed: 0 }))
+      const host = makeHost(baseParams({ jitter: 0, seed: 0 }))
       // Pick "Jitter Web" — all-hold cells + j=0.6 + c=C. Seed = 42.
       const idx = FACTORY_PRESETS.findIndex(p => p.name === 'Jitter Web')
       assert.ok(idx >= 0, 'Jitter Web preset present')
@@ -1883,7 +1703,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('out-of-range index returns false and does not mutate state', () => {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       const before = host.getSlot(0)
       assert.equal(host.loadFactoryPreset(-1), false)
       assert.equal(host.loadFactoryPreset(FACTORY_PRESETS.length), false)
@@ -1893,7 +1713,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
 
   describe('randomizeActiveSlot — ADR 006 Phase 5', () => {
     test('writes to the active slot', () => {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       host.switchSlot(2)
       const before = host.getSlot(2)
       host.randomizeActiveSlot(mulberry32(1))
@@ -1901,7 +1721,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('writes only to the active slot', () => {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       const before = [0, 1, 2, 3].map(i => host.getSlot(i)!)
       host.switchSlot(2)
       host.randomizeActiveSlot(mulberry32(99))
@@ -1912,7 +1732,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('cells string length matches the host cells.length', () => {
-      const host = new Host(baseParams()) // 4 cells
+      const host = makeHost(baseParams()) // 4 cells
       host.randomizeActiveSlot(mulberry32(0))
       assert.equal(host.getSlot(0)!.cells.length, 4)
     })
@@ -1922,7 +1742,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
       // motion and aren't useful output; re-roll until ≥1 of P/L/R appears.
       // Sweep many seeds — each result must contain at least one motion op.
       for (let s = 0; s < 200; s++) {
-        const host = new Host(baseParams())
+        const host = makeHost(baseParams())
         host.randomizeActiveSlot(mulberry32(s))
         const cells = host.getSlot(0)!.cells
         assert.match(cells, /[PLR]/, `seed ${s} produced cells "${cells}" without motion op`)
@@ -1941,7 +1761,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
       ]
       let i = 0
       const rng = () => draws[i++]!
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       host.randomizeActiveSlot(rng)
       assert.equal(host.getSlot(0)!.cells, 'PPP_')
     })
@@ -1950,7 +1770,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
       // ADR 006 §"Axis 4": jitter 0..0.6; seed uint; root 0..11; quality
       // maj|min. Sweep 200 seeds — every generated slot must satisfy these.
       for (let s = 0; s < 200; s++) {
-        const host = new Host(baseParams())
+        const host = makeHost(baseParams())
         host.randomizeActiveSlot(mulberry32(s))
         const slot = host.getSlot(0)!
         assert.ok(slot.jitter >= 0 && slot.jitter <= 0.6,
@@ -1965,8 +1785,8 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('same RNG sequence is deterministic across two fresh hosts', () => {
-      const host1 = new Host(baseParams())
-      const host2 = new Host(baseParams())
+      const host1 = makeHost(baseParams())
+      const host2 = makeHost(baseParams())
       host1.randomizeActiveSlot(mulberry32(42))
       host2.randomizeActiveSlot(mulberry32(42))
       assert.deepEqual(host1.getSlot(0), host2.getSlot(0))
@@ -1976,7 +1796,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
       // Verifies the setSlot + switchSlot composition — same contract as
       // loadFactoryPreset. With no MIDI held, the slot's startChord must
       // become params.startChord (subject to the bass-note octave anchor).
-      const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+      const host = makeHost(baseParams({ startChord: [60, 64, 67] }))
       host.randomizeActiveSlot(mulberry32(7))
       const slot = host.getSlot(host.activeSlot)!
       const r = slot.startChord.root
@@ -1986,7 +1806,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
     })
 
     test('startChord defers when MIDI is held (same priority rule as switchSlot)', () => {
-      const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+      const host = makeHost(baseParams({ startChord: [60, 64, 67] }))
       host.noteIn(64, 100, 1); host.noteIn(67, 100, 1); host.noteIn(71, 100, 1) // E minor
       assert.deepEqual(pcSet(host.startChord), [4, 7, 11])
       host.randomizeActiveSlot(mulberry32(13))
@@ -1998,7 +1818,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
   describe('program string copy/paste — ADR 006 Phase 6', () => {
     describe('getActiveProgramString', () => {
       test('returns the serialized form of the active slot', () => {
-        const host = new Host(baseParams({
+        const host = makeHost(baseParams({
           startChord: [60, 64, 67],
           cells: cells('P', 'L', 'R', 'hold'),
           jitter: 0.25,
@@ -2009,7 +1829,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
       })
 
       test('reflects active-slot change on switchSlot', () => {
-        const host = new Host(baseParams())
+        const host = makeHost(baseParams())
         const slot1 = makeSlot({ cells: 'PPP_', jitter: 0.4, seed: 99 })
         host.setSlot(1, slot1)
         host.switchSlot(1)
@@ -2017,7 +1837,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
       })
 
       test('reflects auto-saved edits in the active slot', () => {
-        const host = new Host(baseParams({ jitter: 0 }))
+        const host = makeHost(baseParams({ jitter: 0 }))
         host.switchSlot(2)
         host.setParams({ jitter: 0.5 })
         const parsed = parseSlot(host.getActiveProgramString())!
@@ -2025,14 +1845,14 @@ describe('Host slots — ADR 006 Phase 2', () => {
       })
 
       test('reflects randomizeActiveSlot output', () => {
-        const host = new Host(baseParams())
+        const host = makeHost(baseParams())
         host.randomizeActiveSlot(mulberry32(3))
         const generated = host.getSlot(host.activeSlot)!
         assert.equal(host.getActiveProgramString(), serializeSlot(generated))
       })
 
       test('reflects loadFactoryPreset', () => {
-        const host = new Host(baseParams())
+        const host = makeHost(baseParams())
         host.loadFactoryPreset(0)
         assert.equal(host.getActiveProgramString(), FACTORY_PRESETS[0]!.program)
       })
@@ -2041,7 +1861,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
         // Per ADR 006 §"Axis 1" amendment (2026-04-30): user-driven
         // setParams(jitter) auto-saves into the active slot, so the
         // program string updates immediately.
-        const host = new Host(baseParams({ jitter: 0 }))
+        const host = makeHost(baseParams({ jitter: 0 }))
         host.setParams({ jitter: 0.7 })
         assert.ok(host.getActiveProgramString().includes('|j=0.7|'),
           `expected updated jitter in program string, got ${host.getActiveProgramString()}`)
@@ -2050,7 +1870,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
 
     describe('loadFromProgramString', () => {
       test('parses + loads valid program into the active slot', () => {
-        const host = new Host(baseParams())
+        const host = makeHost(baseParams())
         host.switchSlot(2)
         const ok = host.loadFromProgramString('PPP_|s=42|j=0.3|c=Em')
         assert.equal(ok, true)
@@ -2065,14 +1885,14 @@ describe('Host slots — ADR 006 Phase 2', () => {
         // Same setSlot + switchSlot composition as loadFactoryPreset —
         // the loaded program must drive the next step output, not just
         // sit in the slot.
-        const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+        const host = makeHost(baseParams({ startChord: [60, 64, 67] }))
         host.loadFromProgramString('PLR_|s=0|j=0|c=F#m')
         // F# minor: F#=6, A=9, C#=1
         assert.deepEqual(pcSet(host.startChord), [1, 6, 9])
       })
 
       test('malformed string returns false and does not mutate state', () => {
-        const host = new Host(baseParams())
+        const host = makeHost(baseParams())
         const before = host.getSlot(0)
         assert.equal(host.loadFromProgramString('not-a-program'), false)
         assert.equal(host.loadFromProgramString(''), false)
@@ -2085,7 +1905,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
         // Auto-save model: constructor seeds slot 0 from initial params
         // (no explicit saveCurrent needed). Reading the program string
         // and loading it into a fresh host should reproduce slot 0.
-        const host1 = new Host(baseParams({
+        const host1 = makeHost(baseParams({
           startChord: [65, 68, 72], // F minor
           cells: cells('P', 'hold', 'rest', 'L'),
           jitter: 0.4,
@@ -2093,13 +1913,13 @@ describe('Host slots — ADR 006 Phase 2', () => {
         }))
         const program = host1.getActiveProgramString()
 
-        const host2 = new Host(baseParams())
+        const host2 = makeHost(baseParams())
         host2.loadFromProgramString(program)
         assert.deepEqual(host2.getSlot(0), host1.getSlot(0))
       })
 
       test('writes only to the active slot', () => {
-        const host = new Host(baseParams())
+        const host = makeHost(baseParams())
         const before = [0, 1, 2, 3].map(i => host.getSlot(i)!)
         host.switchSlot(2)
         host.loadFromProgramString('PPP_|s=1|j=0.1|c=A')
@@ -2110,7 +1930,7 @@ describe('Host slots — ADR 006 Phase 2', () => {
       })
 
       test('startChord defers when MIDI is held (same priority rule as switchSlot)', () => {
-        const host = new Host(baseParams({ startChord: [60, 64, 67] }))
+        const host = makeHost(baseParams({ startChord: [60, 64, 67] }))
         host.noteIn(64, 100, 1); host.noteIn(67, 100, 1); host.noteIn(71, 100, 1) // E minor
         assert.deepEqual(pcSet(host.startChord), [4, 7, 11])
         host.loadFromProgramString('PLR_|s=0|j=0|c=F') // F major
@@ -2131,10 +1951,10 @@ describe('Host.step — RHYTHM gating (Phase 7)', () => {
   test("rhythm='chord' fires the held chord at every sub-step within a cell", () => {
     // spt=4, ticksPerStep=1 → cell = 4 sub-steps. cells=[hold] keeps chord
     // at startChord across the cell so each refire is the same triad.
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('hold'),
       stepsPerTransform: 4,
-      rhythm: 'chord',
+      rhythm: 'all',
     }))
     assert.equal(pitchesOf(host.step(0), 'noteOn').length, 3, 'pos=0 init fires startChord')
     for (const p of [1, 2, 3]) {
@@ -2144,10 +1964,10 @@ describe('Host.step — RHYTHM gating (Phase 7)', () => {
 
   test("rhythm='straight' fires only on the quarter (idx % 4 === 0)", () => {
     // spt=8, ticksPerStep=1 → 8 sub-steps per cell. onbeat fires at idx=0,4.
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('hold'),
       stepsPerTransform: 8,
-      rhythm: 'straight',
+      rhythm: 'onbeat',
     }))
     assert.equal(pitchesOf(host.step(0), 'noteOn').length, 3, 'pos=0 onbeat fires')
     for (const p of [1, 2, 3]) {
@@ -2159,25 +1979,27 @@ describe('Host.step — RHYTHM gating (Phase 7)', () => {
     }
   })
 
-  test("rhythm='offbeat' fires only at idx % 4 === 2", () => {
-    const host = new Host(baseParams({
+  test("rhythm='offbeat' fires on `&-of-each-quarter` (idx % 4 === 2)", () => {
+    // Standard musical off-beat: 4 fires/bar at &-positions, complementary
+    // to onbeat. spt=8 covers 2 quarters → fires at idx 2 and 6 only.
+    const host = makeHost(baseParams({
       cells: cells('hold'),
       stepsPerTransform: 8,
       rhythm: 'offbeat',
     }))
-    assert.equal(pitchesOf(host.step(0), 'noteOn').length, 0, 'pos=0 offbeat skips downbeat')
-    assert.equal(pitchesOf(host.step(1), 'noteOn').length, 0)
-    assert.equal(pitchesOf(host.step(2), 'noteOn').length, 3, 'pos=2 offbeat fires')
-    for (const p of [3, 4, 5]) {
-      assert.equal(pitchesOf(host.step(p), 'noteOn').length, 0, `pos=${p} silent`)
-    }
-    assert.equal(pitchesOf(host.step(6), 'noteOn').length, 3, 'pos=6 offbeat fires')
-    assert.equal(pitchesOf(host.step(7), 'noteOn').length, 0)
+    assert.equal(pitchesOf(host.step(0), 'noteOn').length, 0, 'pos=0 (idx=0, on-beat) silent')
+    assert.equal(pitchesOf(host.step(1), 'noteOn').length, 0, 'pos=1 (e) silent')
+    assert.equal(pitchesOf(host.step(2), 'noteOn').length, 3, 'pos=2 (&) fires')
+    assert.equal(pitchesOf(host.step(3), 'noteOn').length, 0, 'pos=3 (a) silent')
+    assert.equal(pitchesOf(host.step(4), 'noteOn').length, 0, 'pos=4 (next on-beat) silent')
+    assert.equal(pitchesOf(host.step(5), 'noteOn').length, 0, 'pos=5 (e) silent')
+    assert.equal(pitchesOf(host.step(6), 'noteOn').length, 3, 'pos=6 (&) fires')
+    assert.equal(pitchesOf(host.step(7), 'noteOn').length, 0, 'pos=7 (a) silent')
   })
 
   test("rhythm='legato' (default) preserves single-fire-per-cell behavior", () => {
     // Regression check: head-only gating fires only at the cell head.
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('hold'),
       stepsPerTransform: 4,
     }))
@@ -2190,10 +2012,10 @@ describe('Host.step — RHYTHM gating (Phase 7)', () => {
   test('within-cell refires use the same cell chord across sub-steps', () => {
     // cells=[P], spt=4: cell 0 boundary at pos=4 applies P → C major flips
     // to C minor. Sub-steps 5..7 should refire the SAME minor chord.
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('P'),
       stepsPerTransform: 4,
-      rhythm: 'chord',
+      rhythm: 'all',
     }))
     host.step(0); host.step(1); host.step(2); host.step(3)
     const ev4 = host.step(4)
@@ -2218,12 +2040,12 @@ describe('Host.step — ARP (Phase 7)', () => {
     // cell; fireIdx resets to 0 at the boundary. The fact that pos=4 lands
     // on ARP[0]=60 distinguishes reset (would yield 60) from no-reset (would
     // yield ARP[4%3]=ARP[1]=63).
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('P'),
       stepsPerTransform: 4,
       length: 1,
       voicing: 'close',
-      rhythm: 'chord',
+      rhythm: 'all',
       arp: 'up',
     }))
     // C major voiced = [60, 64, 67]
@@ -2239,12 +2061,12 @@ describe('Host.step — ARP (Phase 7)', () => {
   test("arp='down' rotates from highest voiced index to lowest", () => {
     // Init period (pos 0..7) holds C major; arpIndex(down, 3, fireIdx) =
     // 2,1,0,2,...
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('P'),
       stepsPerTransform: 8,
       length: 1,
       voicing: 'close',
-      rhythm: 'chord',
+      rhythm: 'all',
       arp: 'down',
     }))
     assert.deepEqual(pitchesOf(host.step(0), 'noteOn'), [67], 'down[0]=2')
@@ -2256,12 +2078,12 @@ describe('Host.step — ARP (Phase 7)', () => {
   test("arp='off' (default) emits the full voiced chord", () => {
     // Regression check: with arp='off', a multi-fire RHYTHM still emits the
     // full voiced chord on each fire.
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('P'),
       stepsPerTransform: 4,
       length: 1,
       voicing: 'close',
-      rhythm: 'chord',
+      rhythm: 'all',
     }))
     assert.deepEqual(pitchesOf(host.step(0), 'noteOn').sort((a, b) => a - b), [60, 64, 67])
     assert.deepEqual(pitchesOf(host.step(1), 'noteOn').sort((a, b) => a - b), [60, 64, 67])
@@ -2269,12 +2091,12 @@ describe('Host.step — ARP (Phase 7)', () => {
 
   test("arp='updown' bounces through voiced indices without replaying endpoints", () => {
     // chord size 3 → period = 2*(3-1) = 4 → indices 0,1,2,1,0,1,2,1,...
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('P'),
       stepsPerTransform: 8,
       length: 1,
       voicing: 'close',
-      rhythm: 'chord',
+      rhythm: 'all',
       arp: 'updown',
     }))
     assert.deepEqual(pitchesOf(host.step(0), 'noteOn'), [60], 'updown[0]=0')
@@ -2293,12 +2115,12 @@ describe('Host.step — ARP (Phase 7)', () => {
       stepsPerTransform: 8,
       length: 1,
       voicing: 'close',
-      rhythm: 'chord',
+      rhythm: 'all',
       arp: 'random',
       seed: 12345,
     })
-    const a = new Host(params)
-    const b = new Host(params)
+    const a = makeHost(params)
+    const b = makeHost(params)
     for (let p = 0; p < 8; p++) {
       const evA = pitchesOf(a.step(p), 'noteOn')
       const evB = pitchesOf(b.step(p), 'noteOn')
@@ -2325,8 +2147,8 @@ describe('Host.params — length (Phase 7)', () => {
       stepsPerTransform: 1,
       length: 1,
     })
-    const host4 = new Host(longParams)
-    const host1 = new Host(shortParams)
+    const host4 = makeHost(longParams)
+    const host1 = makeHost(shortParams)
     host4.step(0); host1.step(0)
     // pos=1: both fire cell 0 (P) → C minor
     assert.equal(pitchesOf(host4.step(1), 'noteOn').length, 3, 'length=4 pos=1 fires P')
@@ -2345,7 +2167,7 @@ describe('Host.params — length (Phase 7)', () => {
     // the new cell silently never plays — observed bug 2026-05-01. Pad
     // new cells with 'hold' (musically inert) so the user can grow the
     // program audibly; they then set the new cell's op via the popup.
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('P', 'L', 'R', 'hold'),
       length: 4,
     }))
@@ -2358,7 +2180,7 @@ describe('Host.params — length (Phase 7)', () => {
   test('setParams({ length: N }) does not shrink cells when N < cells.length', () => {
     // Shrinking via [-] keeps cells past the new length so growing back
     // does not lose user edits. Engine clamps via activeCells().
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('P', 'L', 'R', 'hold'),
       length: 4,
     }))
@@ -2371,7 +2193,7 @@ describe('Host.params — length (Phase 7)', () => {
 
   test('length is clamped at cells.length (no out-of-bounds reads)', () => {
     // cells.length=2, length=8 → effective active = 2; engine sees cells[0..1].
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('P', 'L'),
       stepsPerTransform: 1,
       length: 8,
@@ -2399,7 +2221,7 @@ describe('Host.params — length (Phase 7)', () => {
 describe('Host slots — variable cell length (Phase 7 slice b)', () => {
   test('captureSlot serializes only the active region (length < cells.length)', () => {
     // cells=[P,L,L,R] but length=2 → slot.cells should be "PL", not "PLLR".
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('P', 'L', 'L', 'R'),
       length: 2,
     }))
@@ -2410,7 +2232,7 @@ describe('Host slots — variable cell length (Phase 7 slice b)', () => {
   test('captureSlot at length=cells.length matches pre-Phase-7 behavior', () => {
     // Regression: when length === cells.length, slot serialization is
     // identical to the legacy form. Guards against breaking saved Live sets.
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('P', 'L', 'R', 'hold'),
       length: 4,
     }))
@@ -2423,7 +2245,7 @@ describe('Host slots — variable cell length (Phase 7 slice b)', () => {
     // length so the engine fires through all 8. Force a fresh captureSlot
     // by changing seed (auto-saves into slots[1]) so the round-trip reflects
     // the active params, not the stored input.
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.setSlot(1, {
       cells: 'PLRPLR_-',
       startChord: { root: 0, quality: 'maj' },
@@ -2441,7 +2263,7 @@ describe('Host slots — variable cell length (Phase 7 slice b)', () => {
     // Start with an 8-cell slot, switch to a 4-cell slot, then auto-save.
     // captureSlot reflects only the new 4-cell active region; cells beyond
     // remain in the pool (untouched) but are inert per the length cap.
-    const host = new Host(baseParams())
+    const host = makeHost(baseParams())
     host.setSlot(1, {
       cells: 'PLRPLR_-',
       startChord: { root: 0, quality: 'maj' },
@@ -2466,7 +2288,7 @@ describe('Host slots — variable cell length (Phase 7 slice b)', () => {
     // the input. Tests the full applySlotCells → captureSlot path against
     // the active params (not just the stored slot reference).
     for (const cellsStr of ['P', 'PLLR', 'PLRPLR_-']) {
-      const host = new Host(baseParams())
+      const host = makeHost(baseParams())
       host.setSlot(1, {
         cells: cellsStr,
         startChord: { root: 0, quality: 'maj' },
@@ -2490,12 +2312,12 @@ describe('Host slots — variable cell length (Phase 7 slice b)', () => {
       counter++
       return v
     }
-    const host2 = new Host(baseParams({ length: 2 }))
+    const host2 = makeHost(baseParams({ length: 2 }))
     host2.randomizeActiveSlot(fakeRng)
     assert.equal(host2.getSlot(host2.activeSlot)!.cells.length, 2, 'length=2 → 2 cells generated')
 
     counter = 0
-    const host8 = new Host(baseParams({
+    const host8 = makeHost(baseParams({
       cells: [...cells('P', 'L', 'L', 'R', 'hold', 'hold', 'hold', 'hold')],
       length: 8,
     }))
@@ -2507,7 +2329,7 @@ describe('Host slots — variable cell length (Phase 7 slice b)', () => {
     // Reason: length is part of the slot's persistent identity (via cells
     // string length). Changing it must mirror into slots[active] like other
     // slot fields, so the patcher's slot-store stays in sync.
-    const host = new Host(baseParams({
+    const host = makeHost(baseParams({
       cells: cells('P', 'L', 'L', 'R'),
       length: 4,
     }))

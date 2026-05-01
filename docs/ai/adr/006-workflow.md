@@ -318,44 +318,78 @@ flows.
 
 ### Phase 7 — Feel-preset RHYTHM, variable cells, chord rendering
 
-The largest reshaping of Oedipa since Phase A: ports VOICE / ARP from
-inboil's Tonnetz UI, introduces an Oedipa-specific RHYTHM feel-preset,
-expands cell sequence length from fixed-4 to variable 1–8, and revokes
-under-used surface from ADR 005 (swing + four humanize dials) plus the
-long-redundant subdivision selector. inboil's ADR 126 v2 is the reference
-for VOICE and ARP semantics; RHYTHM intentionally diverges from inboil's
-pure gating type — playable feel matters more than clean abstraction.
+The largest reshaping of Oedipa since Phase A: ports VOICE / RHYTHM / ARP
+from inboil's Tonnetz UI (inboil's ADR 126 v2 + `src/lib/types.ts`
+`TonnetzRhythm` + `generative.ts` `resolveRhythm`), expands cell sequence
+length from fixed-4 to variable 1–8, and revokes under-used surface from
+ADR 005 (swing + four humanize dials) plus the long-redundant subdivision
+selector.
 
 **Voicing dropdown.** `voicing ∈ {close, spread, drop2}` moves from the
 122-px `live.tab` to a `live.menu`. Pure UI compaction; `applyVoicing` is
 already in the engine.
 
-**RHYTHM as feel preset.** Each preset bundles a gating pattern with
-implicit swing + humanize side effects, driving the ADR 005 engine code
-internally. Default `rhythm='legato'` matches Phase A's gate=1.0
+**RHYTHM as preset.** Step 4 rev (2026-05-01) — palette ported verbatim
+from inboil's `TonnetzRhythm` UI dropdown subset (inboil
+`src/lib/components/TonnetzSheet.svelte:546`, semantics in
+`generative.ts:478-496`'s `resolveRhythm`). Each preset is a pure
+within-cell gating predicate; swing / humanize have **no inboil basis**
+and were dropped (inboil keeps swing project-global at `Song.swing`, has
+no humanize concept). Default `rhythm='legato'` matches Phase A's gate=1.0
 head-attack-and-sustain feel — adding the dropdown does not change
-perceived behavior at zero. Within-cell ticks evaluate against
-`subdivision = 16th` (hardcoded — see "Removed surface" below). ARP and
-rhythm index both reset at every cell boundary.
+perceived behavior at zero. Within-cell ticks evaluate on the 16th-note
+sub-grid (matches inboil's per-step grid). ARP fire index resets at every
+cell boundary.
 
-| Preset     | Gating       | Swing | Humanize | Use                              |
-| ---------- | ------------ | ----- | -------- | -------------------------------- |
-| `legato`   | head-only    | 0     | 0        | Pad style (Phase A default-eq)   |
-| `chord`    | every tick   | 0     | 0        | Tight 16th chord stab            |
-| `straight` | onbeat       | 0     | 0        | Quarter-note pulse               |
-| `offbeat`  | offbeat      | 0     | 0        | 8th-note off-beat                |
-| `shuffle`  | offbeat      | 0.6   | 0        | Built-in swung 8ths              |
-| `loose`    | every tick   | 0     | mid      | Human feel, vel/gate/time wiggle |
+| Preset       | inboil source                        | Gate predicate                          | Use                                    |
+| ------------ | ------------------------------------ | --------------------------------------- | -------------------------------------- |
+| `all`        | `generative.ts:483`                  | `true` (every 16th)                     | Per-step retrigger on the held chord   |
+| `legato`     | `generative.ts:598` (special-cased)  | `subStepIdx === 0` (cell head)          | Pad style (Phase A default-eq)         |
+| `onbeat`     | `generative.ts:489` `i % 4 === 0`    | `subStepIdx % 4 === 0`                  | Quarter-note pulse                     |
+| `offbeat`    | `generative.ts:488` (spec, see note) | `subStepIdx % 4 === 2`                  | &-of-each-quarter (4 fires/bar)        |
+| `syncopated` | `generative.ts:490-493` 8-step pat   | `[T,F,T,F,F,T,F,T][idx % 8]`            | Inboil's syncopated comp pattern       |
+| `turing`     | `generative.ts:498-513`              | stateful shift-register, fires on `frac >= 0.5` | Stochastic comp evolving over time     |
 
-`syncopated`, `euclidean`, `turing` deferred — additive later without
-breaking compatibility.
+`turing` is parameterized by `{ length, lock, seed }` (inboil
+`types.ts:204`). Live params: `OedipaTuringLength` (2..32, default 8),
+`OedipaTuringLock` (0..1, default 0.7), `OedipaTuringSeed`
+(0..0xffff, default 0). Register state is host-owned, reseeded on
+transport-start and on any of the 3 turing params changing — same
+discipline as the ARP `random` PRNG.
+
+**Future presets (deferred):** `euclidean` (`{ hits }` Bjorklund —
+inboil `generative.ts:457-475`, present in inboil's type but NOT in its
+UI dropdown so no user-facing parity required); explicit `boolean[]`
+patterns (no clean Live-param shape for arrays).
+
+**Implementation note — `offbeat` semantic divergence (rev 2026-05-01).**
+inboil-準拠 = match the musical SPEC, not the literal code. inboil's
+`offbeat` is implemented as `i % 2 === 1` (every odd 16th = 8 fires/bar,
+including the e/a positions of each beat). Audibly that reads as an
+8th-note tremolo, not an off-beat. The standard musical "off-beat"
+semantic = the &-of-each-quarter (4 fires/bar at idx 2/6/10/14),
+complementary to `onbeat` and partitioning the 8th-note grid. Oedipa
+uses the spec semantic (`% 4 === 2`); inboil's literal predicate is
+treated as an inboil-side bug rather than a contract to mirror. Test
+vectors and tests assert the spec semantic; cross-target ports also
+follow the spec, not the literal predicate.
+
+**Implementation note (2026-05-01).** An earlier iteration of Phase 7
+shipped Oedipa-only presets `chord` (= every-tick = inboil's `all` renamed
+without the inboil source link), `shuffle` (offbeat + Oedipa-internal
+SHUFFLE_SWING), and `loose` (every-tick + Oedipa-internal humanize across
+3 axes). All three were removed in the Step 4 rev when manual smoke
+revealed the 16th-tremolo behavior without grounding in inboil's actual
+dropdown. If a humanize axis is reintroduced, it ships as a separate
+parameter (matching inboil's project-global swing pattern), not folded
+into a rhythm preset.
 
 **ARP.** Each active rhythm tick plays one chord note instead of the full
 voiced chord; advances per active tick, resets at cell boundary. Modes:
 `off` (default), `up`, `down`, `updown`, `random` (seed shared with cells
 RNG). ARP only "spreads" a chord when RHYTHM fires more than once per cell
-(`chord` / `offbeat` / `shuffle` / `loose`); with `legato`, ARP plays one
-note at the cell head, with `straight`, one per quarter.
+(`all` / `onbeat` / `offbeat` / `syncopated`); with `legato`, ARP plays one
+note at the cell head.
 
 **Variable cell length (1–8).** The four fixed `live.tab` widgets at
 `[626/750, 62/92]` are replaced by a single `jsui` cell strip rendering the
@@ -516,21 +550,101 @@ first (largest test-fixture churn — see "Migration" + ADR 005 cancel
 note), then the patcher edits + bake. Test-vector authoring closes the
 session.
 
-- [ ] Engine surface revoke: `ticksPerStep` hardcoded to 6 in host
-  (= 16th @ PPQN24); `subdivision` / `swing` / `humanizeVelocity` /
-  `humanizeGate` / `humanizeTiming` / `humanizeDrift` removed from
-  `setParams` surface and from `HostParams`. Engine swing/humanize
-  values sourced from `mapRhythmPreset` only. (Was Step 2.)
-- [ ] RHYTHM as `live.menu` (palette above).
-- [ ] ARP as `live.menu`.
-- [ ] `obj-stepdir` `live.tab` → `live.menu`.
-- [ ] Remove `obj-subdivision`, `obj-swing`, `obj-humvel`, `obj-humgate`,
-  `obj-humtime`, `obj-humdrift` widgets and wiring.
-- [ ] VOICE / RHYTHM / ARP / StepDir menu widths unified.
-- [ ] Bake.
-- [ ] New cases in `tonnetz-test-vectors.json` for RHYTHM gating × ARP
-  mode combinations (per ADR 001) — describe end-to-end behavior now
-  that the host's feel sourcing is final. (Was Step 1.)
+- [x] Engine surface revoke: `ticksPerStep` hardcoded to 6 in host
+  (= 16th @ PPQN24, internal constant w/ test-only constructor opt);
+  `swing` / `humanizeVelocity` / `humanizeGate` / `humanizeTiming` /
+  `humanizeDrift` removed from `setParams` surface and from `HostParams`.
+  Engine swing/humanize values sourced from `mapRhythmPreset` only.
+  `humanizeDrift` dropped from `WalkState` + `walkStepEvent` EMA logic
+  entirely. Bridge `applyCellLength` reads the hardcoded `TICKS_PER_STEP=6`
+  constant; `setParams('ticksPerStep')` branch removed. Test churn
+  absorbed via `makeHost` / `makeBridge` helpers defaulting to
+  `ticksPerStep=1` (pos arithmetic stays terse). (Was Step 2.)
+- [x] **RHYTHM rewrite (rev 2026-05-01) — palette ported verbatim from
+  inboil's `TonnetzRhythm` UI dropdown subset.** First-pass had
+  Oedipa-only `chord/shuffle/loose` without inboil source links;
+  manual smoke flagged the 16th-tremolo behavior of `chord` and the
+  inboil-divergent `offbeat` semantic (`% 4 === 2` vs inboil's
+  `% 2 === 1`). Rev rewrites palette to 5 presets matching inboil:
+  `all / legato / onbeat / offbeat / syncopated`. Engine surface
+  collapsed: `GatingMode` / `RhythmFeel` / `mapRhythmPreset` /
+  `SHUFFLE_SWING` / `LOOSE_HUMANIZE_AMOUNT` removed; `gatingFires`
+  takes `RhythmPreset` directly. Host `maybeFire` no longer reads
+  swing/humanize — every preset is a pure deterministic gating
+  predicate. `clamp01` / `clampSigned05` removed (no humanize math
+  reaches them anymore). Default `rhythm='legato'`.
+- [x] RHYTHM as `live.menu` — `obj-rhythm` (5 entries: All, Legato,
+  Onbeat, Offbeat, Syncopated; default index 1 = Legato) at
+  presentation_rect `[916, 24, 100, 18]`.
+- [x] ARP as `live.menu` — `obj-arp` (5 entries: Off, Up, Down, UpDown,
+  Random) at `[916, 64, 100, 18]`. New widget.
+- [x] `obj-stepdir` `live.tab` → `live.menu`, relocated to
+  `[916, 104, 100, 18]`; enum strings expanded to full words (Forward
+  / Reverse / Pingpong / Random).
+- [x] Removed `obj-subdivision` (+ `obj-sel-subdivision` + 5
+  `obj-msg-subdiv-*`), `obj-swing` (+ `obj-prep-swing`), `obj-humvel`,
+  `obj-humgate`, `obj-humtime`, `obj-humdrift` (+ each `obj-prep-*`).
+  All associated patchlines pruned.
+- [x] VOICE / RHYTHM / ARP / StepDir menus all 100×18; VOICE shrunk
+  from 122→100. Labels above each (`obj-lbl-feel-rhythm` / `arp` /
+  `stepdir` at presentation y=8/48/88).
+- [x] Bake.
+- [x] `tonnetz-test-vectors.json` v4 — `gating_fires` section ported to
+  the inboil-aligned 5 presets with cases covering each modulo predicate
+  + the 8-step syncopated pattern; `arp_index` table for deterministic
+  modes (random is engine-TS-unit-tested with mulberry32 seeds);
+  rhythm_presets section dropped (no `RhythmFeel` to test — every preset
+  is a single boolean predicate now). Engine `tonnetz.test.ts` iterates
+  vectors and adds direct unit tests citing inboil source lines.
+- [x] **Cell-length unit + default fix (rev 2 — 2026-05-01).** Phase 4's
+  cycle redesign (445050a) had `cellLength` in BARS with default 1,
+  producing a 4-bar cycle that diverged 4× from inboil's default
+  Tonnetz feel (1 chord/quarter = 1-bar cycle for a 4-cell pattern,
+  per `sceneActions.ts:269` `stepsPerTransform: 4`). Every multi-fire
+  RHYTHM preset sounded dense/tremolo at this default (chord held for
+  16 sub-steps → `all` = 16 retriggers, `onbeat` = 4 same-chord
+  retriggers, etc.). The bars unit also conflicted with the original
+  ADR 005 §Subdivision spec ("1 transform period = 1 quarter at default
+  subdivision"). Fix: align with inboil verbatim — `rate` (the
+  user-facing param, label "RATE" matching inboil
+  `TonnetzSheet.svelte:617`) is the chord-hold in 16th-note steps,
+  range 1..64, **default 4** (= 1 quarter = inboil default). Bridge
+  maps identity to `stepsPerTransform`. Patcher widget `obj-celllength`:
+  `parameter_longname` was `OedipaCellLength`, renamed to
+  `OedipaRateV2` (the V2 suffix forces a clean reset of any saved
+  values from the rev1 OedipaRate=16 attempt — see Migration);
+  `parameter_shortname` `CellLen`→`Rate`; `parameter_mmin: 1`,
+  `parameter_mmax: 64`, `parameter_initial: 4`. Bridge `setParams`
+  key `cellLength`→`rate`; field `cellLengthBars`→`cellLengthSteps`.
+  Tests rewritten.
+- [x] **Metro syntax fix (rev 2 — 2026-05-01).** Patcher metro was
+  `metro 96n @quantize 96n` (intended PPQN=24); `96n` is non-standard
+  Max syntax (Max's documented note values are powers of 2: `4n`, `8n`,
+  `16n`, ...). User-reported "BPM not aligned" symptom traced to this:
+  Max may have parsed `96n` as a fixed 96-millisecond interval rather
+  than transport-relative ticks. Switched to `metro 16n @quantize 16n`
+  (Max-standard, definitively transport-synced). Each metro tick is now
+  1 sixteenth-note → host `DEFAULT_TICKS_PER_STEP = 1` (was 6 for the
+  old PPQN=24 stream). Cell duration math unchanged: cell = `rate × 1`
+  raw ticks = `rate` sixteenths, identical to before. Test suite's
+  cross-target ticksPerStep>1 multiplier coverage retained for VST/AU
+  port use (renamed describe to reflect this is no longer the m4l
+  production path).
+
+**Rate-vs-rhythm disconnect (inboil property, accepted).** Changing
+`rate` (chord-hold in 16ths) only shifts chord-change boundaries; the
+fires-per-bar count for any given non-`legato` rhythm preset is constant
+regardless of rate (because the rhythm patterns are absolute on the 16th
+grid, not relative to chord-hold). At default rate=4, `all` produces 4
+fires/chord (= 4 chord-changes/bar × 4 = 16 fires/bar); at rate=16, `all`
+produces 16 fires/chord (= 1 chord-change/bar × 16 = 16 fires/bar). This
+matches inboil verbatim — inboil also has this property (rhythm fires
+per absolute 16th grid regardless of `stepsPerTransform`). Long rate +
+multi-fire preset = dense retriggering of a held chord; the inboil-style
+musical workflow uses small rate (≤ 8) for multi-fire presets and
+`legato` for slow chord progressions. Oedipa inherits this constraint
+(no auto-scaling, no internal subdivision-rate concept — neither exists
+in inboil). Documented here so future-me doesn't re-litigate.
 
 **Step 5 — Manual smoke (Live)**
 
@@ -548,6 +662,16 @@ swing / humanize values via Live's own param-restore mechanism; engine
 ignores them. No automatic mapping from old swing/humanize values to a
 RHYTHM preset guess — first device load post-Phase 7 → `rhythm='legato'`.
 Old 4-cell programs load unchanged; `length` defaults to 4.
+
+**Saved-set break (rev 2 — 2026-05-01).** The cell-length unit fix
+renamed the Live param `OedipaCellLength`→`OedipaRate`, so saved sets
+from Phase 7 rev 1 (or earlier) lose their cell-length value on reload —
+the new param re-inits to its default (4 = 1 quarter). Pre-rev1 saved
+sets had `cellLength=1` (= 1 bar = 16 sixteenths); under the rev 2 unit,
+that same numeric value would mean 1 sixteenth, which is musically
+wrong. Renaming the longname forces the clean reset rather than a silent
+16x rate misinterpretation. Phase 7 is in beta — saved-set break is the
+correct trade vs. a wrong-rate playback footgun.
 
 ## Per-target notes
 

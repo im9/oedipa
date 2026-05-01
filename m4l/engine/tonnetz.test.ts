@@ -10,13 +10,12 @@ import {
   walk,
   walkStepEvent,
   makeCell,
+  makeTuringState,
   mulberry32,
   findTriadInHeldNotes,
-  mapRhythmPreset,
   gatingFires,
   arpIndex,
-  RHYTHM_PRESETS,
-  ARP_MODES,
+  turingFires,
   type Triad,
   type Transform,
   type Op,
@@ -26,7 +25,6 @@ import {
   type WalkState,
   type RhythmPreset,
   type ArpMode,
-  type GatingMode,
 } from './tonnetz.ts'
 
 interface IdentifyCase {
@@ -114,6 +112,26 @@ interface StepEventCase {
   null_positions?: number[]
 }
 
+interface GatingFiresCase {
+  preset: RhythmPreset
+  subStepIdx: number
+  fires: boolean
+}
+
+interface ArpIndexCase {
+  mode: ArpMode
+  chordSize: number
+  fireIdx: number
+  expected: number | null
+}
+
+interface TuringRhythmCase {
+  length: number
+  lock: number
+  seed: number
+  stream: number[]
+}
+
 interface Vectors {
   identify_triad: IdentifyCase[]
   apply_transform: TransformCase[]
@@ -123,6 +141,9 @@ interface Vectors {
   walk_deterministic: WalkCase[]
   walk_step_events: { description: string; cases: StepEventCase[] }
   find_triad_in_held_notes: { description: string; cases: FindTriadCase[] }
+  gating_fires: { description: string; cases: GatingFiresCase[] }
+  arp_index: { description: string; cases: ArpIndexCase[] }
+  turing_rhythm: { description: string; cases: TuringRhythmCase[] }
 }
 
 const vectorsPath = path.join(import.meta.dirname, '..', '..', 'docs', 'ai', 'tonnetz-test-vectors.json')
@@ -249,6 +270,26 @@ test('findTriadInHeldNotes', async (t) => {
       } else {
         assert.deepEqual(result, tc.expected)
       }
+    })
+  }
+})
+
+test('gatingFires (Phase 7 Step 4 within-cell predicate, inboil-aligned)', async (t) => {
+  for (const tc of vectors.gating_fires.cases) {
+    await t.test(`${tc.preset} idx=${tc.subStepIdx} → ${tc.fires}`, () => {
+      assert.equal(gatingFires(tc.preset, tc.subStepIdx), tc.fires)
+    })
+  }
+})
+
+test('arpIndex (Phase 7 Step 4 deterministic modes)', async (t) => {
+  // Cross-target conformance for off / up / down / updown. Random consumes
+  // a PRNG draw and is verified separately (engine TS unit tests pin the
+  // mulberry32-seeded draw stream).
+  const rng = (): number => { throw new Error('rng must not be called for deterministic arp modes') }
+  for (const tc of vectors.arp_index.cases) {
+    await t.test(`${tc.mode} chordSize=${tc.chordSize} fireIdx=${tc.fireIdx} → ${tc.expected}`, () => {
+      assert.equal(arpIndex(tc.mode, tc.chordSize, tc.fireIdx, rng), tc.expected)
     })
   }
 })
@@ -558,99 +599,6 @@ test('walkStepEvent: humanize draws unaffected by probability values (downstream
   }
 })
 
-test('walkStepEvent: humanizeDrift=0 (default) is identity (raw draws unchanged)', () => {
-  // Drift defaults to 0 → EMA factor (1-α) = 1 → smoothed = raw. With this
-  // contract, all Phase 1–5 cross-target reproducibility holds bit-identically.
-  const cells = [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')]
-  const without: WalkState = { ...baseState, cells, seed: 42 }
-  const withZero: WalkState = { ...baseState, cells, seed: 42, humanizeDrift: 0 }
-  for (const pos of [1, 2, 3, 4, 5, 7, 11, 17]) {
-    const a = walkStepEvent(without, pos)!
-    const b = walkStepEvent(withZero, pos)!
-    assert.equal(a.humanizeVel, b.humanizeVel, `pos=${pos} vel must match`)
-    assert.equal(a.humanizeGate, b.humanizeGate, `pos=${pos} gate must match`)
-    assert.equal(a.humanizeTiming, b.humanizeTiming, `pos=${pos} timing must match`)
-  }
-})
-
-test('walkStepEvent: humanizeDrift > 0 produces EMA-smoothed humanize values', () => {
-  // EMA contract: v_t = drift * v_{t-1} + (1-drift) * u_t, prev_init = 0.5.
-  // For drift=0.5 we can re-simulate the smoothing by hand using the raw draws
-  // (which are deterministic from mulberry32(seed)).
-  const drift = 0.5
-  const state: WalkState = {
-    ...baseState,
-    cells: [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')],
-    seed: 42,
-    humanizeDrift: drift,
-  }
-  // Re-simulate raw draws and EMA. PRNG draw order: probability, vel, gate,
-  // timing (4 draws per step, with no jitter, no random direction).
-  const rng = mulberry32(42)
-  let prevVel = 0.5, prevGate = 0.5, prevTim = 0.5
-  for (let step = 1; step <= 6; step++) {
-    rng() // probability
-    const rawVel = rng()
-    const rawGate = rng()
-    const rawTim = rng()
-    const expVel = drift * prevVel + (1 - drift) * rawVel
-    const expGate = drift * prevGate + (1 - drift) * rawGate
-    const expTim = drift * prevTim + (1 - drift) * rawTim
-    prevVel = expVel; prevGate = expGate; prevTim = expTim
-    const ev = walkStepEvent(state, step)!
-    assert.ok(Math.abs(ev.humanizeVel - expVel) < 1e-12, `pos=${step} vel ${ev.humanizeVel} vs ${expVel}`)
-    assert.ok(Math.abs(ev.humanizeGate - expGate) < 1e-12, `pos=${step} gate ${ev.humanizeGate} vs ${expGate}`)
-    assert.ok(Math.abs(ev.humanizeTiming - expTim) < 1e-12, `pos=${step} timing`)
-  }
-})
-
-test('walkStepEvent: humanizeDrift smoothed values stay within [0, 1)', () => {
-  // EMA of [0,1) draws starting from prev=0.5 stays in [0, 1) because
-  // α*v + (1-α)*u with v,u ∈ [0,1) lies in [0, α + (1-α)) = [0, 1).
-  // Host's clamp01 math depends on the smoothed values being in the same
-  // domain as raw uniforms — this test pins that domain invariant.
-  for (const drift of [0.1, 0.5, 0.9, 0.99]) {
-    const state: WalkState = {
-      ...baseState,
-      cells: [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')],
-      seed: 7,
-      humanizeDrift: drift,
-    }
-    for (let pos = 1; pos <= 64; pos++) {
-      const ev = walkStepEvent(state, pos)!
-      for (const [name, v] of [['vel', ev.humanizeVel], ['gate', ev.humanizeGate], ['timing', ev.humanizeTiming]] as const) {
-        assert.ok(v >= 0 && v < 1, `drift=${drift} pos=${pos} ${name}=${v} must be in [0, 1)`)
-      }
-    }
-  }
-})
-
-test('walkStepEvent: humanizeDrift produces autocorrelation (adjacent values are similar)', () => {
-  // The whole point of drift: independent draws have ~0 autocorrelation,
-  // smoothed walks have high autocorrelation. Compare mean |Δv| between
-  // adjacent steps for drift=0 (independent) vs drift=0.9 (heavy smoothing).
-  // Smoothed must produce smaller adjacent gaps on average.
-  const cells = [makeCell('P'), makeCell('L'), makeCell('R'), makeCell('hold')]
-  const independent: WalkState = { ...baseState, cells, seed: 13, humanizeDrift: 0 }
-  const smoothed: WalkState = { ...baseState, cells, seed: 13, humanizeDrift: 0.9 }
-  let independentSum = 0, smoothedSum = 0
-  let pairs = 0
-  let prevIndep: number | null = null, prevSmooth: number | null = null
-  for (let pos = 1; pos <= 200; pos++) {
-    const ind = walkStepEvent(independent, pos)!.humanizeVel
-    const sm = walkStepEvent(smoothed, pos)!.humanizeVel
-    if (prevIndep !== null) {
-      independentSum += Math.abs(ind - prevIndep)
-      smoothedSum += Math.abs(sm - prevSmooth!)
-      pairs++
-    }
-    prevIndep = ind; prevSmooth = sm
-  }
-  const meanIndep = independentSum / pairs
-  const meanSmooth = smoothedSum / pairs
-  assert.ok(meanSmooth < meanIndep * 0.5, `drift=0.9 mean adjacent Δ (${meanSmooth.toFixed(4)}) must be << drift=0 (${meanIndep.toFixed(4)})`)
-})
-
 test('walkStepEvent: PRNG draw order pins humanize draws at fixed indices', () => {
   // Cross-target reproducibility contract: the per-step PRNG sequence is
   // (1) probability, (2) humanizeVel, (3) humanizeGate, (4) humanizeTiming.
@@ -676,144 +624,63 @@ test('walkStepEvent: PRNG draw order pins humanize draws at fixed indices', () =
   assert.equal(ev.humanizeTiming, expTiming, 'humanizeTiming is the 4th draw')
 })
 
-// --- ADR 006 Phase 7: RHYTHM feel preset & ARP mode ---
+// --- ADR 006 Phase 7 Step 4 (rev 2026-05-01): RHYTHM preset, inboil-exact ---
 //
-// The mapper RhythmPreset → RhythmFeel is the central abstraction for
-// Phase 7: the swing/humanize engine code from ADR 005 stays intact and is
-// driven internally by the preset. UI exposes only the preset choice.
-// Spec: docs/ai/adr/006-workflow.md §"Phase 7" → RHYTHM table.
+// gatingFires(preset, subStepIdx) — within-cell tick gating, mirrors
+// inboil's resolveRhythm (src/lib/generative.ts:478). subStepIdx is a
+// 16th-note step index within the cell (head=0). 'all' fires every
+// sub-step, 'legato' only at the cell head, 'onbeat'/'offbeat' use
+// inboil's modulo predicates verbatim, 'syncopated' uses inboil's 8-step
+// pattern. Spec: docs/ai/adr/006-workflow.md §"Phase 7" RHYTHM table.
 
-test('RHYTHM_PRESETS: 6 entries in canonical order', () => {
-  // Order matches the ADR 006 §Phase 7 RHYTHM table — UI dropdown reads
-  // from this array, so order is the spec.
-  assert.deepStrictEqual(
-    [...RHYTHM_PRESETS],
-    ['legato', 'chord', 'straight', 'offbeat', 'shuffle', 'loose'],
-  )
-})
-
-test('ARP_MODES: 5 entries in canonical order', () => {
-  // Order matches inboil's ADR 126 v2 (off / up / down / updown / random),
-  // referenced by ADR 006 §Phase 7 "ARP" — UI dropdown reads from this.
-  assert.deepStrictEqual(
-    [...ARP_MODES],
-    ['off', 'up', 'down', 'updown', 'random'],
-  )
-})
-
-test('mapRhythmPreset: legato → head-only, no swing/humanize', () => {
-  // Phase A's gate=1.0 head-attack-and-sustain baseline; the default
-  // preset must not change perceived behavior at zero (ADR 006 §Phase 7).
-  const f = mapRhythmPreset('legato')
-  assert.strictEqual(f.gating, 'head-only')
-  assert.strictEqual(f.swing, 0.5)            // engine convention: 0.5 = no swing
-  assert.strictEqual(f.humanizeVelocity, 0)
-  assert.strictEqual(f.humanizeGate, 0)
-  assert.strictEqual(f.humanizeTiming, 0)
-})
-
-test('mapRhythmPreset: chord → every-tick, no swing/humanize', () => {
-  const f = mapRhythmPreset('chord')
-  assert.strictEqual(f.gating, 'every-tick')
-  assert.strictEqual(f.swing, 0.5)
-  assert.strictEqual(f.humanizeVelocity, 0)
-})
-
-test('mapRhythmPreset: straight → onbeat, no swing/humanize', () => {
-  const f = mapRhythmPreset('straight')
-  assert.strictEqual(f.gating, 'onbeat')
-  assert.strictEqual(f.swing, 0.5)
-  assert.strictEqual(f.humanizeVelocity, 0)
-})
-
-test('mapRhythmPreset: offbeat → offbeat, no swing/humanize', () => {
-  const f = mapRhythmPreset('offbeat')
-  assert.strictEqual(f.gating, 'offbeat')
-  assert.strictEqual(f.swing, 0.5)
-  assert.strictEqual(f.humanizeVelocity, 0)
-})
-
-test('mapRhythmPreset: shuffle → offbeat with swing > 0.5 (audible shuffle)', () => {
-  // ADR 006 table lists "Swing 0.6" for shuffle — translated to engine
-  // convention (0.5 = none, 0.75 = max), 0.6 lands at moderate-to-heavy
-  // shuffled 8ths, well below the pure-triplet 0.667 cap.
-  const f = mapRhythmPreset('shuffle')
-  assert.strictEqual(f.gating, 'offbeat')
-  assert.ok(f.swing > 0.5, 'shuffle has audible swing')
-  assert.ok(f.swing < 0.75, 'shuffle stays below max-swing 0.75')
-  assert.strictEqual(f.humanizeVelocity, 0)
-})
-
-test('mapRhythmPreset: loose → every-tick with humanize on all 3 axes', () => {
-  // "Mid" in the ADR table = nonzero, sub-chaos, uniform across the three
-  // axes. Exact value lives in tonnetz.ts; this test locks the contract
-  // (audible + bounded + uniform) without coupling to a specific number.
-  const f = mapRhythmPreset('loose')
-  assert.strictEqual(f.gating, 'every-tick')
-  assert.strictEqual(f.swing, 0.5)
-  assert.ok(f.humanizeVelocity > 0, 'loose has audible vel humanize')
-  assert.ok(f.humanizeVelocity < 1, 'loose stops short of full chaos')
-  assert.strictEqual(f.humanizeVelocity, f.humanizeGate, 'axes uniform')
-  assert.strictEqual(f.humanizeVelocity, f.humanizeTiming, 'axes uniform')
-})
-
-// gatingFires(mode, subStepIdx) — within-cell tick gating. subStepIdx is a
-// 16th-note step index within the cell (head=0). The 16th grid is
-// hardcoded by Phase 7 (subdivision is no longer a surface param). 4
-// 16ths per quarter, so onbeat = idx%4===0, offbeat = idx%4===2.
-//
-// Spec: ADR 006 §"Phase 7" RHYTHM table.
-
-test('gatingFires: head-only fires at idx=0 only', () => {
-  // Phase A's "one event at the cell head" semantic — head-only is the
-  // legato/default baseline; the rest of the cell is a sustain tail.
-  assert.strictEqual(gatingFires('head-only', 0), true)
-  for (let i = 1; i < 16; i++) {
-    assert.strictEqual(gatingFires('head-only', i), false, `idx=${i}`)
+test('gatingFires: all fires at every sub-step (inboil resolveRhythm `all`)', () => {
+  for (let i = 0; i < 32; i++) {
+    assert.strictEqual(gatingFires('all', i), true, `idx=${i}`)
   }
 })
 
-test('gatingFires: every-tick fires at every sub-step', () => {
-  // "Tight 16th chord stab" / "Loose human feel" — both rely on a 16th
-  // event at every sub-step (humanize differs, gating is the same).
-  for (let i = 0; i < 16; i++) {
-    assert.strictEqual(gatingFires('every-tick', i), true, `idx=${i}`)
+test('gatingFires: legato fires at idx=0 only (cell-head only)', () => {
+  // inboil's tonnetzGenerate (generative.ts:598) treats legato as
+  // "active only at chord boundary" — Oedipa cell boundary is idx=0.
+  assert.strictEqual(gatingFires('legato', 0), true)
+  for (let i = 1; i < 32; i++) {
+    assert.strictEqual(gatingFires('legato', i), false, `idx=${i}`)
   }
 })
 
-test('gatingFires: onbeat fires every 4 sub-steps (quarter-note pulse)', () => {
-  // "Quarter-note pulse" → 4 16ths per quarter, fire on the 1st of each.
-  // Expected: idx 0, 4, 8, 12 fire; the other 12 sub-steps don't.
-  for (let i = 0; i < 16; i++) {
-    const expected = i % 4 === 0
-    assert.strictEqual(gatingFires('onbeat', i), expected, `idx=${i}`)
+test('gatingFires: onbeat fires on idx % 4 === 0 (inboil `onbeat`)', () => {
+  // inboil generative.ts:489 — `i % 4 === 0`. 16th grid: fires on quarter
+  // pulse (idx 0, 4, 8, 12, ...).
+  for (let i = 0; i < 32; i++) {
+    assert.strictEqual(gatingFires('onbeat', i), i % 4 === 0, `idx=${i}`)
   }
 })
 
-test('gatingFires: offbeat fires on 8th-note off-beats (idx % 4 === 2)', () => {
-  // "8th-note off-beat" — the AND of each quarter. In 16ths that's idx
-  // 2, 6, 10, 14 (= idx % 4 === 2). Distinct from onbeat: zero overlap.
-  for (let i = 0; i < 16; i++) {
-    const expected = i % 4 === 2
-    assert.strictEqual(gatingFires('offbeat', i), expected, `idx=${i}`)
+test('gatingFires: offbeat fires on `&-of-each-quarter` (idx % 4 === 2)', () => {
+  // Standard musical "off-beat" semantic: 4 fires/bar at the &-positions
+  // (16th idx 2, 6, 10, 14), complementary to onbeat (idx 0, 4, 8, 12).
+  // INTENTIONAL DIVERGENCE from inboil's literal `i % 2 === 1` (every odd
+  // 16th = 8 fires/bar including e/a positions), which audibly reads as
+  // 8th-note tremolo rather than off-beats. We match inboil's spec
+  // (off-beats), not its literal predicate. ADR 006 §"Implementation note".
+  for (let i = 0; i < 32; i++) {
+    assert.strictEqual(gatingFires('offbeat', i), i % 4 === 2, `idx=${i}`)
   }
 })
 
-test('gatingFires: onbeat ∩ offbeat = ∅ (no sub-step fires under both)', () => {
-  // Sanity: onbeat and offbeat partition the quarter-note grid into
-  // disjoint sets. Important for shuffle (offbeat + swing) — swing
-  // displaces only the off-beats, never the on-beats.
-  for (let i = 0; i < 64; i++) {
-    assert.ok(!(gatingFires('onbeat', i) && gatingFires('offbeat', i)),
-      `idx=${i} fires under both gates`)
+test('gatingFires: syncopated follows inboil 8-step pattern [T,F,T,F,F,T,F,T]', () => {
+  // inboil generative.ts:490–493 — `[true,false,true,false,false,true,false,true]`
+  // repeated. Fires at idx % 8 ∈ {0, 2, 5, 7}.
+  const pat = [true, false, true, false, false, true, false, true]
+  for (let i = 0; i < 32; i++) {
+    assert.strictEqual(gatingFires('syncopated', i), pat[i % 8], `idx=${i}`)
   }
 })
 
 // arpIndex(mode, chordSize, fireIdx, rng) — pure ARP note picker. Returns
 // the index into the voiced chord array to play (or null for 'off' /
 // degenerate empty chord). Caller manages fireIdx (0 at cell head,
-// post-incremented per ARP-active fire); cell-boundary reset = caller
-// resets fireIdx to 0. Spec: ADR 006 §"Phase 7" ARP.
+// post-incremented per ARP-active fire). Spec: ADR 006 §"Phase 7" ARP.
 
 test('arpIndex: off returns null regardless of inputs', () => {
   const rng = mulberry32(1)
@@ -826,7 +693,6 @@ test('arpIndex: off returns null regardless of inputs', () => {
 
 test('arpIndex: up cycles 0..chordSize-1 (low-to-high, wraps)', () => {
   const rng = mulberry32(0)
-  // chordSize=3 → 0,1,2,0,1,2,0,1,2 across 9 fires.
   for (let i = 0; i < 9; i++) {
     assert.strictEqual(arpIndex('up', 3, i, rng), i % 3)
   }
@@ -834,7 +700,6 @@ test('arpIndex: up cycles 0..chordSize-1 (low-to-high, wraps)', () => {
 
 test('arpIndex: down cycles chordSize-1..0 (high-to-low, wraps)', () => {
   const rng = mulberry32(0)
-  // chordSize=3 → expected: 2,1,0,2,1,0
   const expected = [2, 1, 0, 2, 1, 0]
   for (let i = 0; i < expected.length; i++) {
     assert.strictEqual(arpIndex('down', 3, i, rng), expected[i])
@@ -842,7 +707,6 @@ test('arpIndex: down cycles chordSize-1..0 (high-to-low, wraps)', () => {
 })
 
 test('arpIndex: updown traverses 0..top..1 without endpoint repeat', () => {
-  // chordSize=4 → period 2*(4-1)=6, sequence: 0,1,2,3,2,1, 0,1,2,3,2,1, ...
   const rng = mulberry32(0)
   const expected = [0, 1, 2, 3, 2, 1, 0, 1, 2, 3, 2, 1, 0]
   for (let i = 0; i < expected.length; i++) {
@@ -851,9 +715,6 @@ test('arpIndex: updown traverses 0..top..1 without endpoint repeat', () => {
 })
 
 test('arpIndex: random returns int in [0, chordSize) and consumes 1 rng draw', () => {
-  // Determinism: arpIndex consumes exactly 1 draw from the seeded rng.
-  // Verified by drawing the same value from a fresh rng with the same
-  // seed and checking the post-call streams stay aligned.
   const rng = mulberry32(42)
   const fresh = mulberry32(42)
   const got = arpIndex('random', 3, 0, rng)!
@@ -863,10 +724,7 @@ test('arpIndex: random returns int in [0, chordSize) and consumes 1 rng draw', (
   assert.strictEqual(rng(), fresh(), 'arpIndex consumed exactly 1 draw')
 })
 
-test('arpIndex: chordSize=1 always returns 0 for non-off modes (no-movement degenerate)', () => {
-  // Single-note voicing edge — ARP collapses to repeat-the-only-note.
-  // Implementation early-exits before any rng draw (random consumes 0
-  // draws here, by design — see source comment).
+test('arpIndex: chordSize=1 always returns 0 for non-off modes', () => {
   const rng = mulberry32(0)
   for (const mode of ['up', 'down', 'updown', 'random'] as const) {
     for (let i = 0; i < 4; i++) {
@@ -875,25 +733,99 @@ test('arpIndex: chordSize=1 always returns 0 for non-off modes (no-movement dege
   }
 })
 
-test('arpIndex: chordSize=0 returns null for every mode (degenerate empty chord)', () => {
-  // Defensive — empty chord shouldn't crash if reached during a transient
-  // host state (e.g. between note-off and slot reload).
+test('turingFires (Phase 7 Step 4 rev 2 — cross-target stream)', async (t) => {
+  for (const tc of vectors.turing_rhythm.cases) {
+    await t.test(`length=${tc.length} lock=${tc.lock} seed=${tc.seed}`, () => {
+      const state = makeTuringState(tc.length, tc.seed)
+      const got: number[] = []
+      for (let i = 0; i < tc.stream.length; i++) {
+        got.push(turingFires(state, tc.lock) ? 1 : 0)
+      }
+      assert.deepStrictEqual(got, tc.stream)
+    })
+  }
+})
+
+test('arpIndex: chordSize=0 returns null for every mode', () => {
   const rng = mulberry32(0)
-  for (const mode of ARP_MODES) {
+  const modes: ArpMode[] = ['off', 'up', 'down', 'updown', 'random']
+  for (const mode of modes) {
     assert.strictEqual(arpIndex(mode, 0, 0, rng), null, `mode=${mode}`)
   }
 })
 
-test('mapRhythmPreset: every preset returns a valid RhythmFeel (exhaustive)', () => {
-  // Bounds: swing in engine convention [0.5, 0.75]; humanize amounts in
-  // [0, 1] per ADR 005 §"humanize amount" semantics.
-  const validGatings: GatingMode[] = ['head-only', 'every-tick', 'onbeat', 'offbeat']
-  for (const p of RHYTHM_PRESETS) {
-    const f = mapRhythmPreset(p)
-    assert.ok(validGatings.includes(f.gating), `${p}: gating in palette`)
-    assert.ok(f.swing >= 0.5 && f.swing <= 0.75, `${p}: swing in [0.5, 0.75]`)
-    for (const axis of ['humanizeVelocity', 'humanizeGate', 'humanizeTiming'] as const) {
-      assert.ok(f[axis] >= 0 && f[axis] <= 1, `${p}: ${axis} in [0, 1]`)
-    }
+// ── ADR 006 Phase 7 Step 4 rev 2 — Turing rhythm (inboil generative.ts:498-513) ──
+//
+// Reference port of inboil's turingRhythm(length, lock, steps, seed) — used as
+// a ground-truth oracle so any engine drift from inboil's algorithm trips a
+// test. The implementation must match inboil verbatim including PRNG
+// (mulberry32) and register-shift order.
+
+function inboilTuringRhythm(length: number, lock: number, steps: number, seed: number): boolean[] {
+  const rng = mulberry32(seed >>> 0)
+  const register: number[] = []
+  for (let i = 0; i < length; i++) register.push(rng() < 0.5 ? 1 : 0)
+  const result: boolean[] = []
+  for (let i = 0; i < steps; i++) {
+    let sum = 0
+    for (let j = 0; j < length; j++) sum += register[j]! * (1 << j)
+    const max = (1 << length) - 1 || 1
+    result.push(sum / max >= 0.5)
+    const flipProb = 1 - lock
+    const lastBit = register[length - 1]!
+    for (let j = length - 1; j > 0; j--) register[j] = register[j - 1]!
+    register[0] = rng() < flipProb ? (1 - lastBit) : lastBit
   }
+  return result
+}
+
+test('turingFires: matches inboil turingRhythm output verbatim (cross-target ground truth)', () => {
+  // Sweep multiple (length, lock, seed) combos to lock the algorithm to
+  // inboil's exact behavior — same PRNG draw order, register shift,
+  // fraction-threshold predicate.
+  const cases: Array<[number, number, number, number]> = [
+    [4, 0.7, 1, 32],   // small length, default lock
+    [8, 0.7, 0, 32],   // inboil UI default (length=8, lock=0.7)
+    [8, 1.0, 7, 32],   // lock=1 (frozen)
+    [8, 0.0, 7, 32],   // lock=0 (max chaos)
+    [16, 0.5, 42, 64], // larger length, mid lock
+    [2, 0.7, 99, 16],  // minimum length
+  ]
+  for (const [length, lock, seed, steps] of cases) {
+    const expected = inboilTuringRhythm(length, lock, steps, seed)
+    const state = makeTuringState(length, seed)
+    const got: boolean[] = []
+    for (let i = 0; i < steps; i++) got.push(turingFires(state, lock))
+    assert.deepStrictEqual(got, expected, `length=${length} lock=${lock} seed=${seed}`)
+  }
+})
+
+test('turingFires: same seed → same stream across two fresh states (determinism)', () => {
+  const a = makeTuringState(8, 42)
+  const b = makeTuringState(8, 42)
+  for (let i = 0; i < 64; i++) {
+    assert.strictEqual(turingFires(a, 0.7), turingFires(b, 0.7), `step ${i} must match`)
+  }
+})
+
+test('turingFires: lock=1.0 produces a periodic loop (register frozen)', () => {
+  // With lock=1, lastBit always carries over → register cycles every `length`
+  // shifts and produces an exactly-periodic output.
+  const length = 6
+  const state = makeTuringState(length, 13)
+  const stream: boolean[] = []
+  for (let i = 0; i < length * 4; i++) stream.push(turingFires(state, 1.0))
+  // The output should have period `length` exactly: stream[i] === stream[i + length].
+  for (let i = 0; i < length * 3; i++) {
+    assert.strictEqual(stream[i], stream[i + length], `period mismatch at i=${i}`)
+  }
+})
+
+test('turingFires: makeTuringState clamps length to [2, 32]', () => {
+  // Defensive: out-of-range length defaults must not throw or produce a
+  // zero-length register (which would crash the bit-sum loop).
+  const tooSmall = makeTuringState(1, 0)
+  assert.strictEqual(tooSmall.register.length, 2, 'length=1 clamps up to 2')
+  const tooBig = makeTuringState(100, 0)
+  assert.strictEqual(tooBig.register.length, 32, 'length=100 clamps down to 32')
 })

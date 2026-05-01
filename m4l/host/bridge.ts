@@ -36,6 +36,10 @@ export interface BridgeDeps {
 export interface BridgeOptions {
   initialParams?: Partial<HostParams>
   slotsAlreadyRehydrated?: boolean
+  // Test-only: forwarded to the underlying Host so suites can run with
+  // "1 pos = 1 step" semantics. Production omits this — Host hardcodes
+  // ticksPerStep to 6 (ADR 006 Phase 7 Step 4).
+  ticksPerStep?: number
 }
 
 const DEFAULT_PARAMS: HostParams = {
@@ -60,19 +64,10 @@ const DEFAULT_PARAMS: HostParams = {
   channel: 1,
   triggerMode: 0,
   inputChannel: 0,
-  // ADR 005 Phase 3 defaults: forward direction, "1 pos = 1 step" placeholder
-  // (the patcher's setParams cascade overrides ticksPerStep with the
-  // subdivision-derived multiplier — see ADR 005 §Subdivision table — before
-  // any transport-driven step() arrives), straight feel (no swing), no
-  // humanize. The placeholder also keeps "raw" Bridge tests on the Phase 2
-  // pos contract.
+  // ADR 005 Phase 3 — forward direction. Phase 7 Step 4 (rev 2026-05-01)
+  // dropped per-rhythm swing/humanize; rhythm='legato' below = single fire
+  // at cell head, audibly identical to Phase A baseline.
   stepDirection: 'forward',
-  ticksPerStep: 1,
-  swing: 0.5,
-  humanizeVelocity: 0,
-  humanizeGate: 0,
-  humanizeTiming: 0,
-  humanizeDrift: 0,
   outputLevel: 1.0,
   // ADR 006 Phase 7 — RHYTHM/ARP/length defaults. legato preserves Phase A
   // single-fire-per-cell behavior; off emits the full chord. length=4
@@ -80,14 +75,23 @@ const DEFAULT_PARAMS: HostParams = {
   rhythm: 'legato',
   arp: 'off',
   length: 4,
+  // ADR 006 Phase 7 Step 4 rev 2 — Turing-rhythm defaults match inboil's
+  // TonnetzSheet UI initial values (length=8, lock=0.7, seed=0). Apply
+  // only when rhythm='turing'; sit dormant otherwise.
+  turingLength: 8,
+  turingLock: 0.7,
+  turingSeed: 0,
 }
 
-// User-facing cell duration is expressed in BARS. Internally the engine
-// consumes cells via stepsPerTransform (subdivision-steps per cell); the
-// bridge derives spt = cellLength * TICKS_PER_BAR / ticksPerStep so that
-// changing the subdivision (a feel axis) does NOT alter the audible cell
-// rate. PPQN=24 × 4 quarters = 96 ticks per bar at 4/4 (ADR 005 §Subdivision).
-const TICKS_PER_BAR = 96
+// User-facing chord-hold duration. Phase 7 Step 4 rev 2 (2026-05-01) — port
+// inboil's `stepsPerTransform`: chord-hold expressed in 16th-note steps,
+// 1..64, default 4 (= 1/4 bar = 1 quarter note, matching inboil's
+// sceneActions.ts:269 default and TonnetzSheet.svelte:617 RATE slider). The
+// previous "bars" unit (Phase 4 cycle redesign 445050a) made every multi-fire
+// preset audibly dense at the default — chord held 1 bar × 16 sub-steps =
+// 16-fire tremolo under `all`. With steps as the unit, cellLengthSteps maps
+// directly to engine `stepsPerTransform`; ticksPerStep stays internal at 6
+// for the raw-ticks → engine-pos translation.
 
 export class Bridge {
   private host: Host
@@ -96,13 +100,20 @@ export class Bridge {
   private lastStepPos: number | null = null
   private msPerPos = 0
   private lastCellIdx = -1
-  // Cell duration in bars. Default 1 bar = 4-cell pattern of 4 bars (8 sec
-  // at 120 BPM), which sits in chord-progression territory rather than the
-  // arpeggio-rate quarter-note default the prior model defaulted into.
-  private cellLengthBars = 1
+  // Chord-hold duration in 16th-note steps. Default 4 = 1 quarter note,
+  // matching inboil's stepsPerTransform default (sceneActions.ts:269)
+  // and the original ADR 005 §Subdivision spec ("1 transform period = 1
+  // quarter at default subdivision"). Phase 4 cycle redesign (445050a)
+  // had drifted to 1-bar-per-chord which produced a 4-bar cycle that
+  // diverged 4× from inboil and made every multi-fire rhythm preset
+  // sound dense/tremolo at default; rev2 (2026-05-01) restores the
+  // inboil-aligned 1-quarter chord-hold. Range 1..64 matches inboil's
+  // RATE slider (TonnetzSheet.svelte:617).
+  private cellLengthSteps = 4
 
   constructor(deps: BridgeDeps, options: BridgeOptions = {}) {
-    this.host = new Host({ ...DEFAULT_PARAMS, ...options.initialParams })
+    const hostOpts = options.ticksPerStep !== undefined ? { ticksPerStep: options.ticksPerStep } : {}
+    this.host = new Host({ ...DEFAULT_PARAMS, ...options.initialParams }, hostOpts)
     this.deps = deps
     if (options.slotsAlreadyRehydrated) this.slotsRehydrated = true
   }
@@ -212,18 +223,11 @@ export class Bridge {
       || key === 'startChord' || key === 'length'
   }
 
-  setParams(key: keyof HostParams | 'cellLength', value: unknown): void {
-    if (key === 'cellLength') {
-      const bars = Number(value)
-      if (!Number.isFinite(bars) || bars < 1) return
-      this.cellLengthBars = bars
-      this.applyCellLength()
-      return
-    }
-    if (key === 'ticksPerStep') {
-      const tps = Number(value)
-      if (!Number.isFinite(tps) || tps < 1) return
-      this.host.setParams({ ticksPerStep: tps })
+  setParams(key: keyof HostParams | 'rate', value: unknown): void {
+    if (key === 'rate') {
+      const steps = Number(value)
+      if (!Number.isInteger(steps) || steps < 1 || steps > 64) return
+      this.cellLengthSteps = steps
       this.applyCellLength()
       return
     }
@@ -231,14 +235,11 @@ export class Bridge {
     if (this.isSlotField(key)) this.emitSlotStore(this.host.activeSlot)
   }
 
-  // Translate the user-facing (cellLengthBars, ticksPerStep) pair into the
-  // engine's stepsPerTransform. Called whenever either input changes.
+  // Translate the user-facing rate (chord-hold in 16th-note steps) into the
+  // engine's stepsPerTransform. With ticksPerStep hardcoded to 6 (Phase 7
+  // Step 4), 1 step = 1 sixteenth = 1 spt unit, so the mapping is identity.
   private applyCellLength(): void {
-    const tps = (this.host as unknown as { params: HostParams }).params.ticksPerStep
-    if (tps <= 0) return
-    const spt = (this.cellLengthBars * TICKS_PER_BAR) / tps
-    if (!Number.isInteger(spt) || spt < 1) return
-    this.host.setParams({ stepsPerTransform: spt })
+    this.host.setParams({ stepsPerTransform: this.cellLengthSteps })
   }
 
   setStartChord(p1: number, p2: number, p3: number): void {
