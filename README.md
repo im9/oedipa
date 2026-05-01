@@ -13,19 +13,22 @@ On each host step, Oedipa walks a Tonnetz lattice by applying one of three
 neo-Riemannian transforms (P, L, R) to the current triad and emits the
 result as MIDI. The user specifies:
 
-- a **start chord** — set by clicking a triangle on the lattice
-- a **cell program** — a short cyclic array of 4 ops, each `P` / `L` / `R` /
-  `hold`. The walker consumes one op per transform tick.
+- a **start chord** — set by clicking a triangle on the lattice or by
+  playing notes into the device
+- a **cell program** — a short cyclic array (1–8 cells) of ops, each
+  `P` / `L` / `R` / `hold` / `rest`, with per-cell expression
+  (velocity / gate / probability / timing)
 - a **jitter** amount and a **seed** — `jitter` is the per-step probability
-  of substituting the current op with a uniform-random one; the
-  substitution is reproducible from the seed.
-- a **rate** (steps per transform)
+  of substituting the op with a uniform-random one; the substitution is
+  reproducible from the seed
+- a **rate** (cell length in bars) and a **rhythm** mode that frames how
+  the cells fire against the grid
 - **voicing** (close / spread / drop2) and an optional 7th extension
 
 The Tonnetz handles harmony; the cell program shapes motion; jitter steers
-how strict the loop stays. For a fixed `(startChord, cells, jitter, seed)`
-the walk is deterministic, so scrubbing the transport or resuming playback
-from any position produces the same output.
+how strict the loop stays. For a fixed configuration the walk is
+deterministic, so scrubbing the transport or resuming playback from any
+position produces the same output.
 
 Full musical model: [`docs/ai/concept.md`](docs/ai/concept.md).
 
@@ -54,8 +57,8 @@ musical concept but differ in UI and integration.
 
 | Target | Status | Notes |
 |---|---|---|
-| [`m4l/`](m4l/) | In progress | Max for Live device. Current primary target. |
-| [`vst/`](vst/) | Scaffold | VST3 / AU plugin (C++17 / JUCE). |
+| [`m4l/`](m4l/) | Released | Max for Live device. Current primary target. |
+| [`vst/`](vst/) | Not implemented | VST3 / AU plugin (C++17 / JUCE). Source skeleton + JUCE wiring only — no Tonnetz logic, no MIDI processing yet. |
 | `app/` | Planned | iOS app (AUv3 + standalone, JUCE). Touch-based exploration. |
 
 Musical logic is shared as a specification, not as code. Each target is a
@@ -80,20 +83,30 @@ Per-target build commands:
 | `m4l/` (workspace) | `cd m4l && pnpm install` | `pnpm -r build` | `pnpm -r test` |
 | `vst/` | `git submodule update --init --recursive` | `make build` | `make test` |
 
+`vst/` currently builds a JUCE plugin shell with no Tonnetz logic — see
+[Targets](#targets).
+
 Per-target dev docs:
 - [`m4l/engine/README.md`](m4l/engine/README.md)
 
+### Release (m4l)
+
+`make release` from the repo root builds the engine + host packages and
+bakes a dev `m4l/Oedipa.amxd`. To produce the distributable file, open
+that `.amxd` in Max → click the **snowflake (Freeze)** button in the
+patcher toolbar → *File → Save As* `dist/Oedipa.amxd`. The frozen
+`.amxd` inlines every referenced JS file and runs on any Live install.
+
+Freeze is a manual step in Max — there is no CLI equivalent. See
+[ADR 007](docs/ai/adr/archive/007-m4l-distribution.md) for the full
+distribution path conventions and the freeze rationale.
+
 ## Design docs
 
-Architectural decisions live under [`docs/ai/adr/`](docs/ai/adr/). Start
-with [`docs/ai/adr/INDEX.md`](docs/ai/adr/INDEX.md); read individual ADRs
+The shared musical model lives at [`docs/ai/concept.md`](docs/ai/concept.md).
+Architectural decisions live under [`docs/ai/adr/`](docs/ai/adr/) — start
+with [`docs/ai/adr/INDEX.md`](docs/ai/adr/INDEX.md) and read individual ADRs
 only when the relevant area is being touched.
-
-Key docs:
-- [`docs/ai/concept.md`](docs/ai/concept.md) — shared musical model
-- [`docs/ai/adr/archive/001-tonnetz-engine-interface.md`](docs/ai/adr/archive/001-tonnetz-engine-interface.md) — engine contract, cross-target semantics (Implemented)
-- [`docs/ai/adr/archive/002-m4l-device-architecture.md`](docs/ai/adr/archive/002-m4l-device-architecture.md) — M4L device layering (Implemented)
-- [`docs/ai/adr/archive/003-m4l-parameters-state.md`](docs/ai/adr/archive/003-m4l-parameters-state.md) — lattice UI + cell sequencer (Implemented)
 
 ## License
 

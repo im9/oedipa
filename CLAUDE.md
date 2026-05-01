@@ -43,7 +43,7 @@ m4l/                 — Max for Live device
   engine/            — Tonnetz engine (TypeScript)
     tonnetz.ts       — pure logic, ES module
     tonnetz.test.ts  — node:test suite
-    dist/tonnetz.js  — compiled CJS output (loaded by jsui)
+    dist/tonnetz.js  — compiled ESM output (consumed by the host bundle)
     tsconfig.json, package.json
 vst/                 — VST3/AU plugin (C++17/JUCE)
   Source/            — Plugin source
@@ -75,7 +75,7 @@ Per-package (e.g. just engine):
 ```bash
 cd m4l/engine
 pnpm test            # run tests against TS source
-pnpm build           # compile dist/tonnetz.js for jsui
+pnpm build           # compile dist/tonnetz.js (consumed by host bundle)
 ```
 
 Open `.amxd` in Max for Live to use the device. The device loads the bundled
@@ -162,10 +162,13 @@ reads model state and is not unit-tested.
   public JUCE API (`mouseDown` / `mouseDrag` / `mouseUp` / `keyPressed`), and
   assert against parameter values and internal state. Expose minimal
   `getXxxForTest()` inspection methods only when state is otherwise private.
-- **m4l/ (jsui)**: Keep logic functions as pure exported TypeScript runnable
-  in Node (hit testing, coordinate math, state transitions). Compile to
-  `dist/tonnetz.js` for jsui consumption. The jsui-specific drawing and event
-  callbacks live in a thin wrapper that calls into the pure logic.
+- **m4l/ (jsui)**: Keep pure logic in TypeScript runnable in Node (hit
+  testing, coordinate math, state transitions) under `m4l/engine/` or
+  `m4l/host/`. The jsui renderers in `m4l/*-renderer.js` are plain ES5
+  mirrors of that same math (Max's classic JS engine doesn't support ES
+  modules) — drawing and event callbacks live in the renderer and call
+  into the mirrored formulas. Keep renderer constants in sync with the TS
+  source.
 - Do not snapshot-test pixel output. Font rendering and environment differences
   make image hashing brittle.
 
