@@ -31,20 +31,21 @@ Full musical model: [`docs/ai/concept.md`](docs/ai/concept.md).
 
 ## Status
 
-In development. The `m4l/` target is musically usable but does not yet
-respond to incoming MIDI — `startChord` is currently set by lattice click
-only. See [`docs/ai/adr/INDEX.md`](docs/ai/adr/INDEX.md) for the roadmap;
-ADR 004 (MIDI input), ADR 005 (rhythmic feel), and ADR 006 (workflow /
-presets) are the path to v1 release.
+`m4l/` is feature-complete for v1 and packaged for distribution. The
+frozen `Oedipa.amxd` ships via [GitHub Releases](../../releases) and
+runs on any Live 12 install with Max for Live.
+
+`vst/` and `app/` targets are scaffold / planned — see
+[Targets](#targets).
 
 ## Use (Max for Live)
 
-Open Ableton Live 12 with Max for Live, drag [`m4l/Oedipa.amxd`](m4l/Oedipa.amxd)
-onto a MIDI track, and put an instrument after it. Click a triangle on
-the lattice to set the starting chord; press play.
+Download `Oedipa.amxd` from the latest [release](../../releases), drag
+it onto a MIDI track in Ableton Live, and put an instrument after it.
+Click a triangle on the lattice to set the starting chord; press play.
 
-Building from source is only needed if you want to modify the device — see
-the `Build` section below.
+Building from source is only needed if you want to modify the device —
+see [Build](#build) below.
 
 ## Targets
 

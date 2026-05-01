@@ -11,14 +11,14 @@ only when relevant to the current task.
 
 ## File Organization
 
-- **Top-level** (`docs/ai/adr/`): Proposed and Accepted ADRs — active design decisions.
+- **Top-level** (`docs/ai/adr/`): Proposed ADRs — active design decisions.
 - **Archive** (`docs/ai/adr/archive/`): Implemented and Superseded ADRs — historical record.
 
 ## Conventions
 
 - File name: `NNN-kebab-case-title.md` (3-digit zero-padded)
 - Header: `# ADR NNN: Title`
-- Status line: `## Status: Proposed | Accepted | Implemented | Superseded`
+- Status line: `## Status: Proposed | Implemented | Superseded`
 - Created date: `**Created**: YYYY-MM-DD`
 - Sections: Context → Decision → (optional) Scope / Implementation notes
 

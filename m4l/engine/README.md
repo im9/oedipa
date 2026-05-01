@@ -17,7 +17,7 @@ runtime.
 
 Walk-engine semantics — current walk shape (cells / jitter / seed) is
 specified in [`../../docs/ai/concept.md`](../../docs/ai/concept.md) "Traversal"
-and [`../../docs/ai/adr/003-m4l-parameters-state.md`](../../docs/ai/adr/003-m4l-parameters-state.md).
+and [`../../docs/ai/adr/archive/003-m4l-parameters-state.md`](../../docs/ai/adr/archive/003-m4l-parameters-state.md).
 The triad math, P/L/R semantics, voicing layer, and shared-test-vectors
 contract that the engine still satisfies are documented in
 [`../../docs/ai/adr/archive/001-tonnetz-engine-interface.md`](../../docs/ai/adr/archive/001-tonnetz-engine-interface.md)
@@ -77,5 +77,5 @@ The host (running in Max's `[node.script]`) emits MIDI from the triad;
 scheduling and note-off discipline live on the Max side. See
 [`../../docs/ai/adr/archive/002-m4l-device-architecture.md`](../../docs/ai/adr/archive/002-m4l-device-architecture.md)
 for the full device architecture and
-[`../../docs/ai/adr/003-m4l-parameters-state.md`](../../docs/ai/adr/003-m4l-parameters-state.md)
+[`../../docs/ai/adr/archive/003-m4l-parameters-state.md`](../../docs/ai/adr/archive/003-m4l-parameters-state.md)
 for the cell sequencer + jitter design.

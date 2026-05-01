@@ -58,11 +58,9 @@ one ADR is fine).
 
 ### Check 4 — Read relevant feedback memory
 
-Read the project memory index
-(`/Users/tn/.claude/projects/-Users-tn-src-vst-oedipa/memory/MEMORY.md`)
-and any feedback memories that apply (especially
-`feedback_musical_first.md`, `feedback_dont_split_adrs.md`). Apply
-their guidance during design, not after.
+Read the project memory index and any feedback memories that apply
+(especially `feedback_musical_first.md`, `feedback_dont_split_adrs.md`).
+Apply their guidance during design, not after.
 
 ## Drafting the ADR
 
