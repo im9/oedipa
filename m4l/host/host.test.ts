@@ -2089,6 +2089,65 @@ describe('Host.step — ARP (Phase 7)', () => {
     assert.deepEqual(pitchesOf(host.step(1), 'noteOn').sort((a, b) => a - b), [60, 64, 67])
   })
 
+  test("rhythm='legato' + arp='off' emits the full voiced chord at each cell", () => {
+    const host = makeHost(baseParams({
+      cells: cells('P', 'L', 'R', 'hold'),
+      stepsPerTransform: 4,
+      voicing: 'close',
+      rhythm: 'legato',
+      arp: 'off',
+    }))
+    const ev = pitchesOf(host.step(0), 'noteOn').sort((a, b) => a - b)
+    assert.deepEqual(ev, [60, 64, 67], 'legato + arp=off plays full chord (pad)')
+  })
+
+  test("rhythm='legato' + arp='up' arpeggiates voiced notes within each chord (sub-step rate)", () => {
+    // Under legato + arp != off, the head-only gating is overridden so the
+    // arp fires every sub-step within the held chord. Each cell boundary
+    // changes the chord and resets the arp to voiced[0]. cells=['P'],
+    // length=1: chord alternates C major ↔ C minor every cell.
+    //   cell 0 (init, C major [60,64,67]): pos 0,1,2,3 → 60, 64, 67, 60
+    //   cell 1 (P → C minor [60,63,67]):  pos 4,5,6,7 → 60, 63, 67, 60
+    //   cell 2 (P → C major):              pos 8..11 → 60, 64, 67, 60
+    const host = makeHost(baseParams({
+      cells: cells('P'),
+      stepsPerTransform: 4,
+      length: 1,
+      voicing: 'close',
+      rhythm: 'legato',
+      arp: 'up',
+    }))
+    // C major arpeggio (init period)
+    assert.deepEqual(pitchesOf(host.step(0), 'noteOn'), [60], 'pos=0: voiced[0]')
+    assert.deepEqual(pitchesOf(host.step(1), 'noteOn'), [64], 'pos=1: voiced[1]')
+    assert.deepEqual(pitchesOf(host.step(2), 'noteOn'), [67], 'pos=2: voiced[2]')
+    assert.deepEqual(pitchesOf(host.step(3), 'noteOn'), [60], 'pos=3: voiced[0] wraps')
+    // Cell boundary at pos=4: P → C minor, arp resets to voiced[0]
+    assert.deepEqual(pitchesOf(host.step(4), 'noteOn'), [60], 'pos=4: C minor voiced[0]')
+    assert.deepEqual(pitchesOf(host.step(5), 'noteOn'), [63], 'pos=5: voiced[1]')
+    assert.deepEqual(pitchesOf(host.step(6), 'noteOn'), [67], 'pos=6: voiced[2]')
+    assert.deepEqual(pitchesOf(host.step(7), 'noteOn'), [60], 'pos=7: voiced[0] wraps')
+    // pos=8: P(C minor) = C major again, arp resets
+    assert.deepEqual(pitchesOf(host.step(8), 'noteOn'), [60], 'pos=8: C major voiced[0]')
+  })
+
+  test("rhythm='legato' + arp='off' still emits the held chord (pad behavior preserved)", () => {
+    const host = makeHost(baseParams({
+      cells: cells('P', 'L', 'R', 'hold'),
+      stepsPerTransform: 4,
+      voicing: 'close',
+      rhythm: 'legato',
+      arp: 'off',
+    }))
+    // pos=0 init: full C major chord
+    const ev = pitchesOf(host.step(0), 'noteOn').sort((a, b) => a - b)
+    assert.deepEqual(ev, [60, 64, 67], 'legato + arp=off: full chord')
+    // pos 1, 2, 3: silent (head-only gating since arp=off)
+    for (const p of [1, 2, 3]) {
+      assert.deepEqual(pitchesOf(host.step(p), 'noteOn'), [], `pos=${p} silent`)
+    }
+  })
+
   test("arp='updown' bounces through voiced indices without replaying endpoints", () => {
     // chord size 3 → period = 2*(3-1) = 4 → indices 0,1,2,1,0,1,2,1,...
     const host = makeHost(baseParams({

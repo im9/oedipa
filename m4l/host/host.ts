@@ -516,13 +516,25 @@ export class Host {
   private maybeFire(subStepIdxInCell: number, _subdivStepPos: number): NoteEvent[] {
     const { rhythm, arp, voicing, seventh, channel, outputLevel, stepsPerTransform: spt } = this.params
 
-    // Turing branches off gatingFires: the register evolves on every
-    // sub-step boundary regardless of whether the step fires, matching
-    // inboil's turingRhythm loop (generative.ts:503-510). Static presets
-    // route through the pure gatingFires predicate.
-    const fires = rhythm === 'turing'
-      ? turingFires(this.turingState, this.params.turingLock)
-      : gatingFires(rhythm, subStepIdxInCell)
+    // Gating decision:
+    //   - rhythm='turing': stateful register advances every sub-step
+    //     (matches inboil's turingRhythm loop, generative.ts:503-510).
+    //   - rhythm='legato' + arp != 'off': override the head-only gating
+    //     to fire every sub-step. Legato by itself = 1 fire per cell
+    //     (held chord). With arp on, the user wants the held chord
+    //     audibly arpeggiated — the standard synth-ARP behavior. So we
+    //     fire at every sub-step, the arp picker walks voiced notes,
+    //     fireIdxThisCell resets at each cell boundary so each new
+    //     chord restarts the arp at index 0.
+    //   - all other cases: the static gatingFires predicate.
+    let fires: boolean
+    if (rhythm === 'turing') {
+      fires = turingFires(this.turingState, this.params.turingLock)
+    } else if (rhythm === 'legato' && arp !== 'off') {
+      fires = true
+    } else {
+      fires = gatingFires(rhythm, subStepIdxInCell)
+    }
 
     if (!fires) {
       if (this.currentCellEvent) this.lastTriad = this.currentCellEvent.chord
@@ -546,7 +558,10 @@ export class Host {
 
     // Sub-steps between fires for this preset. Drives gate-end scheduling
     // so gate=1.0 always means "until the next fire" regardless of preset.
-    const fireIntervalTicks = fireIntervalSubsteps(rhythm, spt) * this.ticksPerStep
+    // Under legato + arp the gating is overridden to fire every sub-step,
+    // so the interval is 1 (matches the 'all' preset).
+    const intervalRhythm: RhythmPreset = (rhythm === 'legato' && arp !== 'off') ? 'all' : rhythm
+    const fireIntervalTicks = fireIntervalSubsteps(intervalRhythm, spt) * this.ticksPerStep
 
     // cell.timing offset applies only at the cell head — subsequent fires
     // within the cell sit on the sub-step grid.
@@ -558,9 +573,16 @@ export class Host {
     let voiced = applyVoicing(ev.chord, voicing)
     if (seventh) voiced = addSeventh(voiced, ev.chord)
 
-    // ARP picking: 'off' fires the full voiced chord; other modes pick a
-    // single index per fire and rotate via fireIdxThisCell (reset at cell
-    // boundary).
+    // ARP picking.
+    //   - arp='off': full voiced chord (every rhythm).
+    //   - arp != 'off': one voiced index per fire, picked via fireIdxThisCell.
+    //     Under multi-fire rhythms the cycle happens within a cell (reset at
+    //     cell boundary in step()); under legato (1 fire/cell) the cycle
+    //     spans cells (step() does NOT reset fireIdxThisCell when legato +
+    //     arp, so consecutive cells see fireIdxThisCell = 0, 1, 2, ...).
+    //     This makes arp audibly progress under legato as well — required
+    //     for UX consistency (the arp dropdown should always have effect
+    //     when not 'off').
     const arpIdx = arpIndex(arp, voiced.length, this.fireIdxThisCell, this.arpRng)
     const playPitches = arpIdx === null ? voiced : [voiced[arpIdx]!]
 

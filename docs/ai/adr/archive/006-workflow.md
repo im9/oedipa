@@ -1,8 +1,9 @@
 # ADR 006: Workflow — Snapshot Slots, Program Strings, Factory Presets
 
-## Status: Proposed
+## Status: Implemented
 
 **Created**: 2026-04-29
+**Implemented**: 2026-05-01 (Phases 1–7 complete: slots, program strings, factory presets, randomize, cell-strip jsui, RHYTHM/ARP/Turing palette inboil-aligned, rate unit fix, BPM-synced metro; manual Live smoke verified)
 
 ## Context
 
@@ -310,7 +311,7 @@ flows.
 - [x] `Host.getActiveProgramString()` — serializeSlot of `slots[active]`.
 - [x] `Host.loadFromProgramString(s)` — parseSlot + setSlot + switchSlot,
   symmetric with `loadFactoryPreset`. Returns false on malformed input.
-- [ ] ~~Visible `textedit` field~~ **dropped** (out of scope).
+- [x] ~~Visible `textedit` field~~ **dropped** (out of scope).
 - [x] On user paste + Enter → `loadFromProgramString` (Phase 3b).
 - [x] Field updates whenever active slot changes via the `slot-program`
   outlet emitted by `emitSlotRehydrate` and `emitProgramString` after
@@ -361,6 +362,23 @@ discipline as the ARP `random` PRNG.
 inboil `generative.ts:457-475`, present in inboil's type but NOT in its
 UI dropdown so no user-facing parity required); explicit `boolean[]`
 patterns (no clean Live-param shape for arrays).
+
+**Implementation note — `legato + arp` divergence (rev 2026-05-01).**
+inboil's `tonnetzGenerate` legato branch (`generative.ts:598-605`) emits
+the full voiced chord regardless of `arp`, so audibly the arp dropdown
+has no effect under legato. Oedipa diverges: under `rhythm='legato'`
+with `arp != 'off'`, the head-only gating is **overridden to fire every
+sub-step**, and the arp picker walks voiced indices for each fire — the
+held chord is rendered as a sub-step-rate arpeggio. `fireIdxThisCell`
+resets at each cell boundary so the new chord restarts arp at index 0
+(matches the standard synth-ARP "arp on" behavior). With `arp='off'`
+the legato pad behavior is preserved (single full-chord fire per cell
+head). Rationale: the arp dropdown must always be audibly meaningful
+for UX consistency; "legato + arp = no effect" or "legato + arp = single
+note per cell" both failed manual smoke. Implementation: gating override
+in `Host.maybeFire` when `rhythm === 'legato' && arp !== 'off'`;
+`fireIntervalSubsteps` likewise treats this combination as `'all'` (1
+sub-step gate-end interval).
 
 **Implementation note — `offbeat` semantic divergence (rev 2026-05-01).**
 inboil-準拠 = match the musical SPEC, not the literal code. inboil's
@@ -648,14 +666,17 @@ in inboil). Documented here so future-me doesn't re-litigate.
 
 **Step 5 — Manual smoke (Live)**
 
-- [ ] Each RHYTHM preset audible & musically correct vs. its row
-  description.
-- [ ] ARP modes sound correct; reset at cell boundary.
-- [ ] Variable cell length: 1, 4, 8 all play the right number of cells
-  per loop.
-- [ ] Pre-Phase-7 Live set loads with `rhythm='legato'` (no
-  swing/humanize bleed-through from hidden values).
-- [ ] Old 4-cell program string loads & plays unchanged.
+- [x] Metro follows Live BPM (rev2 `16n` fix) — tempo change scales
+  cycle accordingly.
+- [x] Each RHYTHM preset audibly distinct & musically correct.
+- [x] ARP modes audibly cycle (including `legato + arp != off` →
+  sub-step arpeggio of the held chord, arp resets at each cell
+  boundary, rev2 fix).
+- [x] Variable cell length 1 / 4 / 8 each play correctly.
+- [x] Voicing / Direction / Level / Slot switch / Randomize / Factory
+  preset / program-string copy-paste all sane.
+- [x] Saved sets: pre-rev2 / pre-Phase-7 load cleanly (rate re-inits
+  to 4 via OedipaRateV2 longname rename; rhythm to 'legato').
 
 **Migration.** Live sets saved before Phase 7 retain hidden subdivision /
 swing / humanize values via Live's own param-restore mechanism; engine
