@@ -37,7 +37,7 @@ only when relevant to the current task.
 | 004 | [MIDI Input & Note Discipline](archive/004-midi-input.md) | Implemented | Held-chord 3-subset search → startChord; triggerMode (hybrid/hold-to-play); velocity passthrough; inputChannel (omni default); clean note-off transitions; pos reset on every startChord change. |
 | 005 | [Rhythmic Feel](archive/005-rhythmic-feel.md) | Implemented | Per-cell expression (op/velocity/gate/probability/timing, incl. `rest`) + global layer (swing, subdivision, stepDirection, humanize × 3, drift, outputLevel). Supersedes ADR 003 cell-schema. |
 | 006 | [Workflow — Slots, Strings, Presets](archive/006-workflow.md) | Implemented | 4 slots w/ MIDI-priority load; compact program string `PLR-\|s=42\|j=0.3\|c=Em`; factory presets via live.menu; randomize w/ motion≥1; cell-strip jsui (variable 1–8); RHYTHM/ARP/Turing palette inboil-aligned. |
-| 007 | [M4L Distribution — Path Conventions & Freeze Workflow](007-m4l-distribution.md) | Proposed | Replace 6 abs `/Users/...` paths in `Oedipa.maxpat` with bare/relative refs; codify `pnpm bake` → manual Max Freeze → distributable `.amxd`; guard test rejecting abs paths in patcher. |
+| 007 | [M4L Distribution — Path Conventions & Freeze Workflow](archive/007-m4l-distribution.md) | Implemented | Bare-sibling `.maxpat` refs (no `/Users/...`); `make release` + bundled `.mjs` host (esbuild) + manual Max Freeze → distributable `dist/Oedipa.amxd`; guard tests for abs-path scrub and bundle externals. |
 
 ## VST
 

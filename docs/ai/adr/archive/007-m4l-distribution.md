@@ -1,9 +1,10 @@
 # ADR 007: M4L Distribution — Path Conventions and Freeze Workflow
 
-## Status: Proposed
+## Status: Implemented
 
 **Created**: 2026-05-01
 **Revised**: 2026-05-01 — node.script entry script moved to `.amxd` sibling level (`m4l/oedipa-host.mjs` after Phase 5; originally `oedipa-host.js`) after observing that subdirectory-relative paths (`host/index.js`) fail to resolve at runtime under Max for Live; only bare-sibling resolution is reliable for `[node.script]`. jsui's bare-sibling resolution was unaffected. Phase 5 also switched the bundle's extension from `.js` to `.mjs` so freeze-extracted scripts parse as ESM in the sandbox tempdir where there is no sibling `package.json` (see Phase 5).
+**Implemented**: 2026-05-01 — `make release` → Max Freeze → `dist/Oedipa.amxd` distribution flow verified on a fresh Live track; node.script loads, hostReady cascade rehydrates user-saved program, MIDI plays.
 
 ## Context
 
