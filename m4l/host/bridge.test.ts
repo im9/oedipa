@@ -71,13 +71,13 @@ class Harness {
 }
 
 // Tests below the cellLength block predate the Phase A musical-defaults
-// change (gate 0.9 → 1.0, cells P-L-R-hold → R-L-L-R, voicing close →
-// spread, stepsPerTransform default decoupled into cellLength). They were
-// written against concrete numerical expectations under the old baseline
-// (gate=0.9 → audible gate-end offs at delayPos = 0.9 * spt; spt=4 → cells
-// fire at pos=4; voicing=close → tight pitch sets). To keep those tests
-// grounded in the timing math they were written for — without overwriting
-// production defaults — pass this baseline via `initialParams`.
+// change (gate 0.9 → 1.0, voicing close → spread, stepsPerTransform
+// default decoupled into cellLength). They were written against concrete
+// numerical expectations under the old baseline (gate=0.9 → audible
+// gate-end offs at delayPos = 0.9 * spt; spt=4 → cells fire at pos=4;
+// voicing=close → tight pitch sets). To keep those tests grounded in the
+// timing math they were written for — without overwriting production
+// defaults — pass this baseline via `initialParams`.
 const LEGACY_TEST_BASELINE = {
   stepsPerTransform: 4,
   voicing: 'close' as const,
@@ -468,9 +468,8 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
     test('slot-cell-op carries (index, opCode) pairs as ints', () => {
       // Op codes 0=P 1=L 2=R 3=hold 4=rest match host.ts RANDOM_OPS so the
       // patcher can route via [route 0 1 2 3] + [prepend set] directly.
-      // The default DEFAULT_PARAMS cells changed in Phase A (2026-04-30) to
-      // R-L-L-R; this test stays grounded in the original P-L-R-hold encoding
-      // by passing initialParams.cells explicitly.
+      // LEGACY_TEST_BASELINE pins the cells deterministically; production
+      // default also produces P-L-R-hold here.
       const h = new Harness()
       const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
       h.outlets.length = 0
@@ -760,7 +759,7 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
     test('out-of-range slot index is a silent no-op', () => {
       const h = new Harness()
       // LEGACY baseline so the assertion can pin "default slot 0 cells = PLR_"
-      // without depending on the production default cells (now R-L-L-R).
+      // without depending on the production default cells.
       const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
       h.outlets.length = 0
       setFields4(b, -1, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -913,10 +912,10 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
 
       // 5. The restored slot's program string must match the saved program.
       const prog2 = byChannel(slotOutlets(h2), 'slot-program')[0]!.args[0] as string
-      // Default program is "RLLR" with the user's edits applied:
-      //   length=5 + grow → cells = [R, L, L, R, hold] (auto-pad).
-      //   then setCell(4, 'P') → cells = [R, L, L, R, P]. Program "RLLRP".
-      assert.equal(prog2, 'RLLRP|s=0|j=0|c=C', 'program string round-trips')
+      // Default program is "PLR_" with the user's edits applied:
+      //   length=5 + grow → cells = [P, L, R, hold, hold] (auto-pad).
+      //   then setCell(4, 'P') → cells = [P, L, R, hold, P]. Program "PLR_P".
+      assert.equal(prog2, 'PLR_P|s=0|j=0|c=C', 'program string round-trips')
 
       // 6. host.params.length must match.
       const hostParams = (b2 as unknown as { host: { params: { length: number; cells: Array<{ op: string }> } } }).host.params

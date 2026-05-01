@@ -45,14 +45,18 @@ export interface BridgeOptions {
 const DEFAULT_PARAMS: HostParams = {
   startChord: [60, 64, 67],
   cells: [
-    // Default sequence R-L-L-R produces a cyclical Tonnetz progression that
-    // returns to the start every 4 cells (C → Am → F → Am → C). Borrowed
-    // from inboil's Tonnetz scene default — a more musically grounded
-    // starting point than the prior P-L-R-hold which never returned home.
-    { op: 'R', velocity: 1.0, gate: 1.0, probability: 1.0, timing: 0 },
+    // Default sequence P-L-R-hold walks the three neo-Riemannian transforms
+    // in canonical order, with a hold cell so the cycle breathes. From C
+    // major: C → Cm → Ab → Fm (cells 0..3, Fm sustained through hold), then
+    // Fm → F → Am → C (next loop) — an 8-cell cycle that returns home
+    // through chromatic mediants and mode mixture, the territory NR
+    // transforms make easy. inboil's Tonnetz scene default is ['P', 'L',
+    // 'R'] (sceneActions.ts:268); Oedipa pads to a fixed 4-cell length
+    // with a trailing hold.
+    { op: 'P', velocity: 1.0, gate: 1.0, probability: 1.0, timing: 0 },
     { op: 'L', velocity: 1.0, gate: 1.0, probability: 1.0, timing: 0 },
-    { op: 'L', velocity: 1.0, gate: 1.0, probability: 1.0, timing: 0 },
     { op: 'R', velocity: 1.0, gate: 1.0, probability: 1.0, timing: 0 },
+    { op: 'hold', velocity: 1.0, gate: 1.0, probability: 1.0, timing: 0 },
   ],
   stepsPerTransform: 4,
   // Spread voicing octave-distributes the triad — fuller sound that lets
@@ -205,8 +209,8 @@ export class Bridge {
   // value round-trips correctly only when it happens to equal bridge's
   // compile-time default. Fields that differ silently revert to default
   // on save+reload. (Found 2026-05-01 against length: bridge default
-  // cells [R,L,L,R] matched the user's saved cells, masking c0..c3
-  // corruption; length default 4 ≠ saved 5 surfaced the loop first.)
+  // cells matched the user's saved cells, masking c0..c3 corruption;
+  // length default 4 ≠ saved 5 surfaced the loop first.)
   //
   // Tests pre-flip via the `slotsAlreadyRehydrated` BridgeOption to
   // avoid simulating the cascade in every emitSlotStore test.

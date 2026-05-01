@@ -119,31 +119,38 @@ it, or animates one cell field via host automation to evolve the walk over
 time. This is the design's replacement for both inboil's variable-length
 sequence editor and the discarded attractor model.
 
-**Rate**: `cellLength` controls how long one cell holds, in **bars** (default
-`1` bar; range 1..32 integer). A 4-cell pattern at `cellLength = 1` is a
-4-bar progression — chord-rendering territory. Larger values give long-form
-pad / drift behaviour. The user-facing parameter is in bars deliberately,
-matching how Ableton (the reference DAW) frames chord progressions and how
-inboil's groovebox Tonnetz scene paces its "pad style" default; the
-historical "rate = subdivision-steps × stepsPerTransform" formulation
-exposed two knobs for one musical decision and defaulted to arpeggio-rate
-quarter-note cells, which broke the instrument's chord-progression intent.
+**Rate**: `cellLength` controls how long one cell holds, in **16th-note
+steps** (default `4` = 1 quarter note; range 1..64 integer). A 4-cell
+pattern at `cellLength = 4` plays one chord per quarter — a 1-bar
+progression at default. Larger values give long-form pad / drift;
+smaller values cross into arpeggio territory. The unit matches inboil's
+`stepsPerTransform` (`sceneActions.ts:269` default 4,
+`TonnetzSheet.svelte:617` RATE slider 1..64), so multi-fire RHYTHM
+presets sit at audibly comparable densities between the two. A briefly-
+shipped "bars" framing (Phase 4 cycle redesign, 2026-04-30 → 2026-05-01)
+made every multi-fire preset 4× denser at default and was reverted.
 
-**Default cells** are `[R, L, L, R]` (borrowed from inboil's Tonnetz scene
-default), producing a cyclical Tonnetz progression that returns to the
-start every four cells: `C → Am → F → Am → C`. The previous default
-`[P, L, R, hold]` never returned home, which read as drift rather than
-progression. **Default per-cell `gate = 1.0`** (legato handoff) — combined
-with hold-as-silent-advance this makes hold cells true sustain and removes
-the audible 10% gap between cells that read as "chord stab" rather than
-"chord rendering". **Default `voicing = spread`** distributes the triad
-across octaves for a fuller harmonic body that survives sustain.
+**Default cells** are `[P, L, R, hold]` — the three neo-Riemannian
+transforms in canonical order with a hold cell so the cycle breathes.
+From C major this walks `C → Cm → Ab → Fm` (cells 0..3, with Fm sustained
+through the hold), then `Fm → F → Am → C` over the next loop — an 8-cell
+cycle that returns home through chromatic mediants and mode mixture, the
+territory NR transforms make easy and conventional chord sequencers
+don't. inboil's Tonnetz scene default is `['P', 'L', 'R']`
+(`sceneActions.ts:268`); Oedipa's fixed 4-cell length pads with a
+trailing hold. **Default per-cell `gate = 1.0`** (legato handoff) —
+combined with hold-as-silent-advance this makes hold cells true sustain
+and removes the audible 10% gap between cells that read as "chord stab"
+rather than "chord rendering". **Default `voicing = spread`** distributes
+the triad across octaves for a fuller harmonic body that survives
+sustain.
 
-Internally the engine still consumes one cell per `stepsPerTransform`
-subdivision-steps; the bridge layer derives `stepsPerTransform = cellLength
-× 96 / ticksPerStep` (PPQN=24 → 96 ticks/bar) so the engine math is
-unchanged. Subdivision (see §Rhythm) is a feel axis only — changing it does
-not alter cell rate, only the swing / timing-offset grid.
+The user-facing `cellLength` value passes through directly to the
+engine's `stepsPerTransform` (1:1, no derivation); the bridge translates
+raw host ticks to engine-pos units via a fixed `ticksPerStep`
+corresponding to one 16th-note at PPQN=24. Subdivision (see §Rhythm) is
+a feel axis only — changing it affects the swing / timing-offset grid,
+not cell rate.
 
 ## Output model
 

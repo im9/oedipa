@@ -453,6 +453,19 @@ by this revocation.
 **device-shared**; slot store keeps `cells` / `jitter` / `seed` /
 `startChord` per Axis 1.
 
+> **Post-implementation note (2026-05-01).** The `cells=[R, L, L, R]`
+> default specified above never made it into the shipping artifact —
+> only the engine `DEFAULT_PARAMS` was changed; the maxpat slot
+> `live.numbox` baked initials kept the pre-Phase-A `[P, L, R, hold]`
+> values, which is what users actually see on first device load. After
+> revisiting the musical rationale (P-L-R demonstrates the three NR
+> transforms in canonical order; chromatic mediants/mode mixture in the
+> 8-cell cycle showcase the device identity better than a diatonic
+> I-vi-IV-vi loop), the engine `DEFAULT_PARAMS.cells` was reverted to
+> `[P, L, R, hold]` to match the shipping artifact and re-align with
+> inboil's `['P', 'L', 'R']` factory default. concept.md updated
+> accordingly.
+
 **Implementation checklist.** Ordered by the 5-step plan; voicing warm-up
 ships first as a zero-risk patcher edit before engine work.
 
