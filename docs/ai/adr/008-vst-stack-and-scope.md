@@ -403,7 +403,7 @@ Each phase ends with `make test` green.
     `applyVoicing`, `addSeventh`)
   - Test reads `docs/ai/tonnetz-test-vectors.json` and asserts conformance
   - `make test` green; plugin not yet expected to load anywhere
-- [ ] **Phase 2 — Plugin scaffold + APVTS + state I/O + Live host workaround**
+- [x] **Phase 2 — Plugin scaffold + APVTS + state I/O + Live host workaround** (625ec90, 2026-05-03 — Live load confirmed; save/reopen round-trip covered by Catch2 state test, host-side smoke pending)
   - APVTS param tree mirroring m4l `HostParams` (numeric / enum params)
   - Non-APVTS state (cells, slots, anchors, startChord) serialized into the
     APVTS ValueTree under a child node with `version=1`
