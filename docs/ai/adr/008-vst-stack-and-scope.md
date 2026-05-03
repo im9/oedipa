@@ -299,7 +299,7 @@ review-blocker. The point of drawing the boundary now is so it doesn't drift.
 Phases gated per CLAUDE.md TDD workflow (tests first, then impl, then build).
 Each phase ends with `make test` green.
 
-- [ ] **Phase 1 — Bootstrap & engine port**
+- [x] **Phase 1 — Bootstrap & engine port** (c9ff5ae, 2026-05-03)
   - Catch2 + nlohmann/json wired into CMakeLists via FetchContent
   - `Source/Engine/` directory created with no-JUCE-in-headers rule documented
   - C++ engine ported (`identifyTriad`, `buildTriad`, `applyTransform`,
