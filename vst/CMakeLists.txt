@@ -33,6 +33,7 @@ FetchContent_MakeAvailable(Catch2 nlohmann_json)
 add_library(oedipa_engine STATIC
     Source/Engine/Tonnetz.cpp
     Source/Engine/Tonnetz.h
+    Source/Engine/State.h
 )
 target_include_directories(oedipa_engine PUBLIC Source)
 target_compile_features(oedipa_engine PUBLIC cxx_std_17)
@@ -49,14 +50,29 @@ juce_add_plugin(Oedipa
     PLUGIN_CODE "Oedp"
     FORMATS VST3 AU Standalone
     PRODUCT_NAME "Oedipa"
+    # ADR 008 §"DAW integration": Live's MIDI Effects rack is closed to
+    # third-party plugins, so the VST3 ships in the Instrument slot via
+    # 2-track routing. "Instrument" subcategory lands Oedipa in Live's
+    # Instrument browser bucket. JUCE's default ("Fx") would put it in
+    # the Audio FX bucket, which is positionally wrong for a MIDI
+    # generator. AU classification is unaffected (IS_MIDI_EFFECT TRUE
+    # → kAudioUnitType_MIDIProcessor for Logic's MIDI FX slot).
+    VST3_CATEGORIES "Instrument"
+    # On every build, JUCE copies the VST3/AU bundles to the user's
+    # Audio Plug-Ins folders (Standalone is skipped). Removes the
+    # per-build manual copy/symlink step for Live + Logic dev loops.
+    COPY_PLUGIN_AFTER_BUILD TRUE
 )
 
 target_sources(Oedipa PRIVATE
-    Source/PluginProcessor.cpp
-    Source/PluginProcessor.h
-    Source/PluginEditor.cpp
-    Source/PluginEditor.h
+    Source/Plugin/PluginProcessor.cpp
+    Source/Plugin/PluginProcessor.h
+    Source/Plugin/Parameters.cpp
+    Source/Plugin/Parameters.h
+    Source/Editor/PluginEditor.cpp
+    Source/Editor/PluginEditor.h
 )
+target_include_directories(Oedipa PRIVATE Source)
 
 target_link_libraries(Oedipa PRIVATE
     oedipa_engine
@@ -70,17 +86,46 @@ target_link_libraries(Oedipa PRIVATE
 
 target_compile_definitions(Oedipa PRIVATE
     JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0
 )
 
-juce_generate_juce_header(Oedipa)
+# --- Plugin core static library (state I/O surface used by tests) -------------
+# AudioProcessor + APVTS + state serialization, separated from the JUCE plugin
+# bundle so the test binary can link it without pulling in juce_audio_plugin_client
+# (which provides the AU/VST3 wrappers and is plugin-only).
+add_library(oedipa_plugin_core STATIC
+    Source/Plugin/PluginProcessor.cpp
+    Source/Plugin/Parameters.cpp
+    Source/Editor/PluginEditor.cpp
+)
+target_include_directories(oedipa_plugin_core PUBLIC Source)
+target_link_libraries(oedipa_plugin_core PUBLIC
+    oedipa_engine
+    juce::juce_audio_basics
+    juce::juce_audio_processors
+    juce::juce_audio_utils
+    juce::juce_gui_basics
+    juce::juce_gui_extra
+)
+target_compile_definitions(oedipa_plugin_core PUBLIC
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0
+    JUCE_STANDALONE_APPLICATION=0
+)
 
 # --- Tests --------------------------------------------------------------------
+# Custom main (tests/main.cpp) owns JUCE init/shutdown so it stays scoped
+# inside main(). Catch2 (no `WithMain`) exposes the session API only.
 add_executable(oedipa_tests
+    tests/main.cpp
     tests/test_Tonnetz.cpp
+    tests/test_Plugin.cpp
 )
 target_link_libraries(oedipa_tests PRIVATE
     oedipa_engine
-    Catch2::Catch2WithMain
+    oedipa_plugin_core
+    Catch2::Catch2
     nlohmann_json::nlohmann_json
 )
 target_compile_features(oedipa_tests PRIVATE cxx_std_17)
