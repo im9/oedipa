@@ -1,11 +1,16 @@
-// Oedipa AudioProcessor — ADR 008 Phase 2 scope.
+// Oedipa AudioProcessor — ADR 008 Phases 2 + 3.
 //
 //   - APVTS holds all numeric / enum parameters at parity with m4l
 //     HostParams (modulo the chordQuality divergence per ADR 008).
 //   - Non-APVTS state (cells, slots, anchors, startChord) lives as
 //     plain data members and serializes into a child ValueTree of
 //     apvts.state under tag "OedipaState" with a `version` attribute.
-//   - processBlock is MIDI passthrough — no engine wiring yet (Phase 3).
+//   - processBlock (Phase 3) drives engine::walkStepEvent from the host
+//     playhead: each block, sub-step boundaries crossed since the prior
+//     block fire MIDI note-on/off pairs at the configured channel +
+//     voicing + (optional) maj7/min7 extension. Backward scrubs and
+//     transport stops emit panic note-offs for held output notes so
+//     dangling notes don't survive a position jump.
 //
 // Public mutator methods (setStartChord / setCell / setSlot / setAnchors)
 // exist primarily so tests can mutate state directly; later phases will
@@ -15,10 +20,12 @@
 
 #include "Engine/State.h"
 #include "Engine/Tonnetz.h"
+#include "Engine/Walker.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
+#include <utility>
 #include <vector>
 
 namespace oedipa {
@@ -87,6 +94,12 @@ public:
     const std::vector<engine::Anchor>& getAnchors() const { return anchors; }
     void setAnchors(std::vector<engine::Anchor> value) { anchors = std::move(value); }
 
+    // Test-facing inspection of the walker's current play state. Lets the
+    // Phase 3 processBlock test verify held-note bookkeeping without
+    // poking the private member directly.
+    int getLastSubStepForTest() const { return lastSubStep; }
+    const std::vector<std::pair<int, int>>& getHeldForTest() const { return held; }
+
 private:
     juce::AudioProcessorValueTreeState apvts;
 
@@ -94,6 +107,23 @@ private:
     std::array<engine::Cell, kCellCount> cells{};
     std::array<engine::Slot, kSlotCount> slots{};
     std::vector<engine::Anchor> anchors{};
+
+    // Walker state — tracked across processBlock calls.
+    //   lastSubStep: highest sub-step pos already emitted (-1 = nothing
+    //                emitted since the last transport (re)start).
+    //   held: (channel, midiNote) currently sounding from walker output.
+    int lastSubStep = -1;
+    std::vector<std::pair<int, int>> held;
+
+    engine::WalkState makeWalkState() const;
+    void emitPanic(juce::MidiBuffer&, int sampleOffset);
+    void emitChord(juce::MidiBuffer&,
+                   const engine::Triad&,
+                   engine::Voicing,
+                   bool seventh,
+                   int channel,
+                   float velocity,
+                   int sampleOffset);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OedipaProcessor)
 };

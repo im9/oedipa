@@ -34,6 +34,8 @@ add_library(oedipa_engine STATIC
     Source/Engine/Tonnetz.cpp
     Source/Engine/Tonnetz.h
     Source/Engine/State.h
+    Source/Engine/Walker.cpp
+    Source/Engine/Walker.h
 )
 target_include_directories(oedipa_engine PUBLIC Source)
 target_compile_features(oedipa_engine PUBLIC cxx_std_17)
@@ -121,6 +123,7 @@ add_executable(oedipa_tests
     tests/main.cpp
     tests/test_Tonnetz.cpp
     tests/test_Plugin.cpp
+    tests/test_Walker.cpp
 )
 target_link_libraries(oedipa_tests PRIVATE
     oedipa_engine

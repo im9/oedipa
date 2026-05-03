@@ -418,7 +418,7 @@ Each phase ends with `make test` green.
   - Loads in Live with 2-track routing setup (Track A: Oedipa as
     Instrument with monitor In; Track B: target instrument with
     "MIDI From" → Track A → Oedipa); save/reopen round-trips state
-- [ ] **Phase 3 — Engine wiring**
+- [x] **Phase 3 — Engine wiring** (2026-05-03 — `Engine/Walker.h/.cpp` ports m4l `walk` / `walkStepEvent` bit-for-bit (mulberry32 + draw order from `walk_step_events` vectors) and adds anchor-reset on top; `processBlock` reads playhead, fires per sub-step boundary, panics on stop / backward scrub; Phase 3 input contract drops MIDI in (ADR 004 wires keyboard later); 21 Catch2 cases / 536 assertions green; in-host audible smoke deferred — needs Phase 5 cells/slot UI to set non-default ops)
   - Walk state held in `Plugin/`, calls into `Engine/` per host step
   - MIDI output reflects walk; transport scrubbing produces correct triads
     (per ADR 001 walk-state determinism)

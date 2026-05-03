@@ -1,10 +1,14 @@
 #include "Plugin/PluginProcessor.h"
 
 #include "Editor/PluginEditor.h"
+#include "Engine/Walker.h"
 #include "Plugin/Parameters.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_core/juce_core.h>
+
+#include <algorithm>
+#include <cmath>
 
 namespace oedipa {
 namespace plugin {
@@ -67,8 +71,69 @@ OedipaProcessor::OedipaProcessor()
       apvts(*this, nullptr, "OedipaParams", makeParameterLayout())
 {}
 
-void OedipaProcessor::prepareToPlay(double, int) {}
+void OedipaProcessor::prepareToPlay(double, int)
+{
+    // A fresh prepareToPlay marks a new transport context; clear any
+    // stale walker state so the next processBlock starts from pos 0.
+    lastSubStep = -1;
+    held.clear();
+}
+
 void OedipaProcessor::releaseResources() {}
+
+engine::WalkState OedipaProcessor::makeWalkState() const
+{
+    engine::WalkState w;
+    w.startChord = startChord;
+    w.stepsPerTransform = (int) *apvts.getRawParameterValue(pid::stepsPerTransform);
+    w.jitter = *apvts.getRawParameterValue(pid::jitter);
+    w.seed = (std::uint32_t) (int) *apvts.getRawParameterValue(pid::seed);
+    w.stepDirection = (engine::StepDirection) (int) *apvts.getRawParameterValue(pid::stepDirection);
+
+    // Active cell count = `length` parameter (1..8). Trailing cells are
+    // ignored by the walker — matches m4l Phase 7 cell-length semantics.
+    const int len = std::clamp((int) *apvts.getRawParameterValue(pid::length), 1, kCellCount);
+    w.cells.reserve((std::size_t) len);
+    for (int i = 0; i < len; ++i) w.cells.push_back(cells[(std::size_t) i]);
+
+    w.anchors = anchors;
+    return w;
+}
+
+void OedipaProcessor::emitPanic(juce::MidiBuffer& midi, int sampleOffset)
+{
+    for (const auto& [ch, note] : held) {
+        midi.addEvent(juce::MidiMessage::noteOff(ch, note), sampleOffset);
+    }
+    held.clear();
+}
+
+void OedipaProcessor::emitChord(juce::MidiBuffer& midi,
+                                 const engine::Triad& chord,
+                                 engine::Voicing voicing,
+                                 bool seventh,
+                                 int channel,
+                                 float velocity,
+                                 int sampleOffset)
+{
+    // Note-off the previous chord at the same sample offset so the
+    // crossfade between attacks is host-deterministic. Then layer the
+    // new chord's note-ons on top.
+    emitPanic(midi, sampleOffset);
+
+    auto voiced = engine::applyVoicing(chord, voicing);
+    if (seventh) {
+        const auto id = engine::identifyTriad(chord);
+        voiced = engine::addSeventh(voiced, id.quality);
+    }
+
+    const auto vel = (juce::uint8) std::clamp((int) std::round(velocity * 127.0f), 1, 127);
+    for (int note : voiced) {
+        const int clamped = std::clamp(note, 0, 127);
+        midi.addEvent(juce::MidiMessage::noteOn(channel, clamped, vel), sampleOffset);
+        held.emplace_back(channel, clamped);
+    }
+}
 
 void OedipaProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi)
 {
@@ -80,9 +145,69 @@ void OedipaProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBu
         audio.clear(ch, 0, audio.getNumSamples());
     }
 
-    // Phase 2: MIDI in → MIDI out unchanged. Phase 3 will replace this with
-    // engine-driven output (the input MIDI will instead drive startChord
-    // recompute per ADR 004, and output will come from the walker).
+    // Phase 3 contract: input MIDI is dropped. Output is purely the
+    // walker — keyboard-driven startChord (ADR 004) ships in a later
+    // phase. Letting the input doubled with the walker would turn
+    // Oedipa into a monitor instead of a generator, defeating the
+    // engine wiring under test.
+    midi.clear();
+
+    auto* playHead = getPlayHead();
+    auto position = (playHead != nullptr) ? playHead->getPosition() : juce::Optional<juce::AudioPlayHead::PositionInfo>{};
+
+    const bool isPlaying = position.hasValue() && position->getIsPlaying();
+    if (! isPlaying) {
+        // Transport stopped (or no playhead at all in some standalone /
+        // offline render contexts): drain held output notes so the host
+        // doesn't see dangling MIDI, then idle.
+        if (! held.empty()) emitPanic(midi, 0);
+        lastSubStep = -1;
+        return;
+    }
+
+    const auto ppqOpt = position->getPpqPosition();
+    if (! ppqOpt.hasValue()) {
+        if (! held.empty()) emitPanic(midi, 0);
+        lastSubStep = -1;
+        return;
+    }
+
+    // Sub-step grid is sixteenth notes (4 per quarter), matching m4l's
+    // ticksPerStep convention so the test vectors apply unchanged.
+    const double ppq = std::max(0.0, *ppqOpt);
+    const int currentSubStep = (int) std::floor(ppq * 4.0);
+
+    if (currentSubStep < lastSubStep) {
+        // Backward jump (loop wrap or user scrub): the walker's PRNG-fresh
+        // contract still computes correct chords at the new pos, but any
+        // notes held from before would dangle until the next attack.
+        // Panic + reset so the catch-up loop fires from the new pos.
+        emitPanic(midi, 0);
+        lastSubStep = currentSubStep - 1;
+    }
+
+    if (currentSubStep == lastSubStep) return;  // no boundaries crossed
+
+    const auto state = makeWalkState();
+
+    const int channel  = (int) *apvts.getRawParameterValue(pid::channel);
+    const auto voicing = (engine::Voicing) (int) *apvts.getRawParameterValue(pid::voicing);
+    const bool seventh = ((int) *apvts.getRawParameterValue(pid::chordQuality)) == 1;
+    const float outLvl = *apvts.getRawParameterValue(pid::outputLevel);
+
+    // Phase 3 simplification: every fired event is emitted at sample 0
+    // of the current block. Sub-block timing precision (mapping a
+    // sub-step's exact ppq into a sample offset within the block) is a
+    // Phase 5 / 6 polish concern — typical block sizes (≤ 512 samples,
+    // ≤ ~12 ms @ 44.1 kHz) are well below a 16th note at ordinary
+    // tempos, so the timing offset is musically inaudible here.
+    for (int step = lastSubStep + 1; step <= currentSubStep; ++step) {
+        const auto ev = engine::walkStepEvent(state, step);
+        if (! ev || ! ev->played) continue;
+        emitChord(midi, ev->chord, voicing, seventh, channel, outLvl, /*sampleOffset=*/0);
+    }
+
+    lastSubStep = currentSubStep;
 }
 
 juce::AudioProcessorEditor* OedipaProcessor::createEditor()

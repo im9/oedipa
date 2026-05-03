@@ -1,6 +1,6 @@
-// Plugin-level tests for ADR 008 Phase 2.
+// Plugin-level tests for ADR 008 Phases 2 + 3.
 //
-// Three concerns:
+// Concerns covered:
 //   1. APVTS layout — every parameter from m4l HostParams is present with
 //      the right type, range, default, and choice ordering. Choice ordering
 //      is the wire format, so any reorder breaks saved presets.
@@ -8,21 +8,29 @@
 //      fresh instance reproduces every APVTS param + every non-APVTS field
 //      (cells, slots, anchors, startChord) and stamps version=1 on the
 //      OedipaState child.
-//   3. MIDI passthrough — processBlock copies the input MidiBuffer to the
-//      output unchanged. Phase 3 will replace this with engine-driven
-//      output, but Phase 2 ships passthrough so the device loads cleanly
-//      in Live + Logic without producing silence on input.
+//   3. Bus layout — Live host workaround (stub stereo output) only kicks in
+//      under Ableton; every other host stays MIDI-only.
+//   4. Phase 3 input contract — input MIDI is dropped (Phase 3 doesn't
+//      wire ADR 004 yet; passing input through would defeat the engine
+//      test and turn the device into a monitor).
+//   5. Phase 3 walker firing — with a fake playhead, processBlock emits
+//      a chord at every transform boundary the playhead has crossed.
+//      Held-note bookkeeping, transport stop, and backward scrub trigger
+//      panic note-offs.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "Engine/State.h"
+#include "Engine/Tonnetz.h"
 #include "Plugin/Parameters.h"
 #include "Plugin/PluginProcessor.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <algorithm>
+#include <set>
 #include <vector>
 
 using namespace oedipa::engine;
@@ -347,35 +355,283 @@ TEST_CASE("Bus layout — Live gets stub stereo output, every other host stays M
     }
 }
 
-TEST_CASE("MIDI passthrough — processBlock copies input MIDI to output unchanged", "[plugin][midi]")
+TEST_CASE("Phase 3 input contract — input MIDI is dropped (no ADR 004 wiring yet)", "[plugin][midi]")
 {
+    // Phase 3 owns MIDI output via the walker. ADR 004 (keyboard-driven
+    // startChord) is a later phase; until then, passing input through
+    // would mix keyboard notes into the walker output. The cleaner
+    // contract is to drop input MIDI entirely so manual smoke testing
+    // hears only the walker.
     OedipaProcessor p;
     p.prepareToPlay(44100.0, 512);
 
     juce::MidiBuffer midi;
-    // Mix of channels, message types, and timestamps so a partial
-    // implementation (e.g. ch=1 only, or noteOn-only) is detectable.
     midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
-    midi.addEvent(juce::MidiMessage::noteOn(7, 67, (juce::uint8) 80), 32);
     midi.addEvent(juce::MidiMessage::controllerEvent(2, 11, 64), 64);
     midi.addEvent(juce::MidiMessage::noteOff(1, 60), 256);
 
-    juce::AudioBuffer<float> audio(0, 512);  // MIDI effect: zero audio channels
+    juce::AudioBuffer<float> audio(0, 512);
+    // No playhead set: walker can't fire, but input still gets cleared.
     p.processBlock(audio, midi);
 
-    std::vector<std::tuple<int, int, int>> got;  // (sample, channel, noteNumberOrCC)
-    for (const auto meta : midi) {
-        const auto m = meta.getMessage();
-        if (m.isNoteOn())              got.emplace_back(meta.samplePosition, m.getChannel(), m.getNoteNumber());
-        else if (m.isNoteOff())        got.emplace_back(meta.samplePosition, m.getChannel(), -m.getNoteNumber());
-        else if (m.isController())     got.emplace_back(meta.samplePosition, m.getChannel(), 1000 + m.getControllerNumber());
-    }
-
-    REQUIRE(got.size() == 4);
-    CHECK(got[0] == std::make_tuple(0,   1,  60));
-    CHECK(got[1] == std::make_tuple(32,  7,  67));
-    CHECK(got[2] == std::make_tuple(64,  2,  1011));
-    CHECK(got[3] == std::make_tuple(256, 1, -60));
+    int numEvents = 0;
+    for (const auto meta : midi) { (void) meta; ++numEvents; }
+    CHECK(numEvents == 0);
 
     p.releaseResources();
+}
+
+namespace {
+
+// Minimal AudioPlayHead fake. Drives processBlock with a controllable
+// (isPlaying, ppqPosition) state. Constructed once per test; mutated
+// between processBlock calls to simulate transport advance, stop, and
+// backward scrub.
+class FakePlayHead : public juce::AudioPlayHead
+{
+public:
+    juce::Optional<PositionInfo> getPosition() const override
+    {
+        PositionInfo info;
+        info.setIsPlaying(playing);
+        info.setPpqPosition(ppq);
+        info.setBpm(120.0);
+        return juce::Optional<PositionInfo>{info};
+    }
+
+    bool playing = true;
+    double ppq = 0.0;
+};
+
+// Iterate all MIDI note events in a buffer and return them as a flat
+// list of (samplePos, isOn, channel, noteNumber, velocity) tuples in
+// emission order. CC and other messages are ignored — Phase 3 only
+// emits notes.
+struct NoteEvt { int sample; bool on; int channel; int note; int velocity; };
+std::vector<NoteEvt> collectNotes(const juce::MidiBuffer& midi)
+{
+    std::vector<NoteEvt> out;
+    for (const auto meta : midi) {
+        const auto m = meta.getMessage();
+        if (m.isNoteOn())  out.push_back({meta.samplePosition, true,  m.getChannel(), m.getNoteNumber(), m.getVelocity()});
+        if (m.isNoteOff()) out.push_back({meta.samplePosition, false, m.getChannel(), m.getNoteNumber(), 0});
+    }
+    return out;
+}
+
+std::set<int> noteSet(const std::vector<NoteEvt>& evts, bool wantOn)
+{
+    std::set<int> s;
+    for (const auto& e : evts) if (e.on == wantOn) s.insert(e.note);
+    return s;
+}
+
+std::set<int> pcSet(const std::set<int>& notes)
+{
+    std::set<int> s;
+    for (int n : notes) s.insert(((n % 12) + 12) % 12);
+    return s;
+}
+
+}  // namespace
+
+TEST_CASE("Phase 3 walker — fires expected chord progression at transform boundaries", "[plugin][walker]")
+{
+    OedipaProcessor p;
+    auto& apvts = p.getApvts();
+
+    // Sub-step grid = 16ths, 1 boundary per sub-step (spt=1). Cells [P, L, R].
+    // Walk from C major (default startChord):
+    //   sub-step 1: cells[0]=P → C minor   PCs {0,3,7}
+    //   sub-step 2: cells[1]=L → Ab major  PCs {0,3,8}
+    //   sub-step 3: cells[2]=R → F  minor  PCs {0,5,8}
+    *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 1;
+    *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 3;
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::voicing)        = 0;  // close
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::chordQuality)   = 0;  // triad
+
+    p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::P, 1, 1, 1, 0});
+    p.setCell(1, oedipa::engine::Cell{oedipa::engine::Op::L, 1, 1, 1, 0});
+    p.setCell(2, oedipa::engine::Cell{oedipa::engine::Op::R, 1, 1, 1, 0});
+
+    FakePlayHead playHead;
+    p.setPlayHead(&playHead);
+    p.prepareToPlay(44100.0, 512);
+
+    // Block 1 — playhead at ppq=0 (sub-step 0): no boundary crossed yet.
+    {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        playHead.ppq = 0.0;
+        p.processBlock(audio, midi);
+        const auto notes = collectNotes(midi);
+        CHECK(notes.empty());
+    }
+
+    // Block 2 — playhead jumps to ppq=0.25 (sub-step 1, P boundary).
+    // Expect: note-on for C minor (PCs 0,3,7).
+    {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        playHead.ppq = 0.25;
+        p.processBlock(audio, midi);
+        const auto notes = collectNotes(midi);
+        REQUIRE(!notes.empty());
+        const auto ons  = noteSet(notes, true);
+        const auto offs = noteSet(notes, false);
+        CHECK(offs.empty());                          // no prior chord to release
+        CHECK(pcSet(ons) == std::set<int>{0, 3, 7});  // C minor
+    }
+
+    // Block 3 — ppq=0.5 (sub-step 2, L boundary).
+    // Expect: note-off for C minor + note-on for Ab major.
+    {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        playHead.ppq = 0.5;
+        p.processBlock(audio, midi);
+        const auto notes = collectNotes(midi);
+        const auto ons  = noteSet(notes, true);
+        const auto offs = noteSet(notes, false);
+        CHECK(pcSet(offs) == std::set<int>{0, 3, 7});  // released C minor
+        CHECK(pcSet(ons)  == std::set<int>{0, 3, 8});  // attacked Ab major
+    }
+
+    // Block 4 — playhead jumps forward by 2 sub-steps in one block (catch-up).
+    // ppq=1.0 (sub-step 4) crosses sub-steps 3 and 4:
+    //   sub-step 3: cells[2]=R on Ab major → F minor   PCs {0,5,8}
+    //   sub-step 4: cells[0]=P on F minor  → F major   PCs {0,5,9}
+    // Final held = F major. Intermediate F-minor must appear and then be
+    // released within the same block so we can assert both the final
+    // chord and that note-off events came through.
+    {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        playHead.ppq = 1.0;
+        p.processBlock(audio, midi);
+        const auto notes = collectNotes(midi);
+        // Two attacks (sub-steps 3 and 4) plus their note-offs were emitted.
+        // Counting events is fragile (gate scheduling is Phase 5+), so just
+        // assert: at least one note-off, and the final held set is F major.
+        CHECK(! noteSet(notes, false).empty());
+        std::set<int> finalHeldPcs;
+        for (const auto& [ch, note] : p.getHeldForTest()) finalHeldPcs.insert(((note % 12) + 12) % 12);
+        CHECK(finalHeldPcs == std::set<int>{0, 5, 9});
+    }
+
+    p.releaseResources();
+    p.setPlayHead(nullptr);
+}
+
+TEST_CASE("Phase 3 walker — transport stop emits panic note-offs for held notes", "[plugin][walker]")
+{
+    OedipaProcessor p;
+    auto& apvts = p.getApvts();
+    *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 1;
+    *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 1;
+    p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::P, 1, 1, 1, 0});
+
+    FakePlayHead playHead;
+    p.setPlayHead(&playHead);
+    p.prepareToPlay(44100.0, 512);
+
+    // Fire one chord.
+    {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        playHead.ppq = 0.25;
+        p.processBlock(audio, midi);
+        REQUIRE(! p.getHeldForTest().empty());
+    }
+
+    // Stop transport.
+    {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        playHead.playing = false;
+        p.processBlock(audio, midi);
+        const auto notes = collectNotes(midi);
+        const auto offs  = noteSet(notes, false);
+        CHECK(! offs.empty());
+        CHECK(p.getHeldForTest().empty());
+        CHECK(p.getLastSubStepForTest() == -1);  // walker resynced for next start
+    }
+
+    p.releaseResources();
+    p.setPlayHead(nullptr);
+}
+
+TEST_CASE("Phase 3 walker — backward scrub panics held + resyncs from new pos", "[plugin][walker]")
+{
+    OedipaProcessor p;
+    auto& apvts = p.getApvts();
+    *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 1;
+    *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 3;
+    p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::P, 1, 1, 1, 0});
+    p.setCell(1, oedipa::engine::Cell{oedipa::engine::Op::L, 1, 1, 1, 0});
+    p.setCell(2, oedipa::engine::Cell{oedipa::engine::Op::R, 1, 1, 1, 0});
+
+    FakePlayHead playHead;
+    p.setPlayHead(&playHead);
+    p.prepareToPlay(44100.0, 512);
+
+    // Advance to sub-step 3 (Ab major already released, F minor held).
+    juce::AudioBuffer<float> audio(0, 512);
+    juce::MidiBuffer midi;
+    playHead.ppq = 0.75;  // sub-step 3
+    p.processBlock(audio, midi);
+    REQUIRE(! p.getHeldForTest().empty());
+
+    // Scrub back to sub-step 1.
+    midi.clear();
+    playHead.ppq = 0.25;
+    p.processBlock(audio, midi);
+    const auto notes = collectNotes(midi);
+    // Panic releases the held F-minor PC set; new attack at sub-step 1
+    // recomputes from pos=0 (walker reseeds), giving C minor again.
+    const auto ons  = noteSet(notes, true);
+    const auto offs = noteSet(notes, false);
+    CHECK(! offs.empty());
+    CHECK(pcSet(ons) == std::set<int>{0, 3, 7});  // C minor again
+
+    p.releaseResources();
+    p.setPlayHead(nullptr);
+}
+
+TEST_CASE("Phase 3 walker — anchor-reset semantics flow through processBlock", "[plugin][walker][anchor]")
+{
+    // ADR 008 Phase 3 explicitly calls out "Conformance to ADR 001
+    // anchor-reset semantics" as a deliverable. Mirror the engine-level
+    // anchor test (cells [L,R,P], anchor at step 2 = C major) and
+    // verify the chord sequence reaches the host buffer correctly.
+    OedipaProcessor p;
+    auto& apvts = p.getApvts();
+    *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 1;
+    *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 3;
+    p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::L, 1, 1, 1, 0});
+    p.setCell(1, oedipa::engine::Cell{oedipa::engine::Op::R, 1, 1, 1, 0});
+    p.setCell(2, oedipa::engine::Cell{oedipa::engine::Op::P, 1, 1, 1, 0});
+    p.setAnchors({oedipa::engine::Anchor{2, 0, oedipa::engine::Quality::Major}});
+
+    FakePlayHead playHead;
+    p.setPlayHead(&playHead);
+    p.prepareToPlay(44100.0, 512);
+
+    // Run blocks one sub-step at a time to capture per-step output.
+    auto firePcsAt = [&](double targetPpq) {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        playHead.ppq = targetPpq;
+        p.processBlock(audio, midi);
+        std::set<int> finalHeldPcs;
+        for (const auto& [ch, note] : p.getHeldForTest()) finalHeldPcs.insert(((note % 12) + 12) % 12);
+        return finalHeldPcs;
+    };
+
+    CHECK(firePcsAt(0.25) == std::set<int>{4, 7, 11});  // sub-step 1: L on C maj → E minor
+    CHECK(firePcsAt(0.50) == std::set<int>{0, 4, 7});   // sub-step 2: anchor → C major
+    CHECK(firePcsAt(0.75) == std::set<int>{4, 7, 11});  // sub-step 3: counter reset → cells[0]=L again → E minor
+
+    p.releaseResources();
+    p.setPlayHead(nullptr);
 }
