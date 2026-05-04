@@ -574,8 +574,7 @@ Each phase ends with `make test` green.
   - MIDI output reflects walk; transport scrubbing produces correct triads
     (per ADR 001 walk-state determinism)
   - Conformance to ADR 001 anchor-reset semantics
-- [ ] **Phase 4 — Lattice UI v1** (engine + editor implemented 2026-05-04
-      uncommitted; box stays UNCHECKED until Live smoke validates "playable")
+- [x] **Phase 4 — Lattice UI v1** (1ca308c, 2026-05-04 — `Engine/Lattice.{h,cpp}` (`pcAt` / `vertexAt` / `buildTriangles` / `triangleAt` / `labelFor` / `rebuildTriadInOctave` / `resolveDragPath` P/L/R only) + `Engine/PointerInteraction.{h,cpp}` (tap / drag / 400ms long-press state machine, time-injected); `Editor/LatticeView.{h,cpp}` (render: triangles + walk-trail polyline + chord-trail overlay; mouse dispatch + 60Hz Timer for long-press tick); `Plugin/PluginProcessor` adds `requestPreview` (lock-free atomic flag + chord) / `applyDragResolution` / `addAnchorAtNextStep` plus `processBlock` split into `handlePreviewMidi` + `handleWalkerMidi`; 1154 assertions / 53 cases; VST3 + AU + Standalone bundles built; lattice + tap-to-set-startChord verified loading in Live; deeper interaction smoke (drag→sequence / long-press→anchor / chord-trail under playback) lives in Phase 7)
   - Lattice geometry (7×5 vertices, vtx skew, `pcAt(r,c)`) in `Engine/`
     (Catch2-tested against inboil's reference output)
   - Triangle build + root identification in `Engine/`
