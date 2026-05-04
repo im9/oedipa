@@ -4,24 +4,23 @@ namespace oedipa {
 namespace editor {
 
 OedipaEditor::OedipaEditor(plugin::OedipaProcessor& p)
-    : AudioProcessorEditor(&p), processor(p)
+    : AudioProcessorEditor(&p), processor(p), lattice(p)
 {
-    setSize(600, 400);
+    addAndMakeVisible(lattice);
+    setResizable(true, true);
+    setResizeLimits(480, 320, 1600, 1200);
+    setSize(720, 480);
 }
 
 void OedipaEditor::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colours::black);
-    g.setColour(juce::Colours::white);
-    g.setFont(16.0f);
-    // ASCII only — JUCE 8.x default font on macOS is mis-interpreting
-    // multi-byte UTF-8 (em-dash 0xE2 0x80 0x94 rendered as 3 Latin-1
-    // glyphs). Worth a deeper look if Phase 4 needs non-ASCII labels;
-    // placeholder is going away anyway when the lattice lands.
-    g.drawText("Oedipa - Tonnetz MIDI Effect", getLocalBounds(), juce::Justification::centred);
 }
 
-void OedipaEditor::resized() {}
+void OedipaEditor::resized()
+{
+    lattice.setBounds(getLocalBounds());
+}
 
 }  // namespace editor
 }  // namespace oedipa

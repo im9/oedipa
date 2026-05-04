@@ -1,6 +1,7 @@
 #include "Plugin/PluginProcessor.h"
 
 #include "Editor/PluginEditor.h"
+#include "Engine/Lattice.h"
 #include "Engine/Walker.h"
 #include "Plugin/Parameters.h"
 
@@ -9,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace oedipa {
 namespace plugin {
@@ -71,12 +73,21 @@ OedipaProcessor::OedipaProcessor()
       apvts(*this, nullptr, "OedipaParams", makeParameterLayout())
 {}
 
-void OedipaProcessor::prepareToPlay(double, int)
+void OedipaProcessor::prepareToPlay(double newSampleRate, int)
 {
     // A fresh prepareToPlay marks a new transport context; clear any
     // stale walker state so the next processBlock starts from pos 0.
     lastSubStep = -1;
     held.clear();
+
+    // Sample rate is captured for the preview release timing only — walker
+    // emission stays sample-rate agnostic (it works in ppq from the
+    // playhead). Preview length is musical-time (300 ms) so it needs sr.
+    sampleRate = newSampleRate;
+    // Drain any in-flight preview held notes; they're stale if the host
+    // is restarting the transport graph.
+    previewHeld.clear();
+    previewSamplesUntilOff = 0;
 }
 
 void OedipaProcessor::releaseResources() {}
@@ -152,6 +163,55 @@ void OedipaProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBu
     // engine wiring under test.
     midi.clear();
 
+    handlePreviewMidi(midi, audio.getNumSamples());
+    handleWalkerMidi(midi);
+}
+
+void OedipaProcessor::handlePreviewMidi(juce::MidiBuffer& midi, int blockSamples)
+{
+    // Lattice tap / long-press auditions a chord. Preview runs independently
+    // of the host transport — the user is exploring even when stopped — so
+    // this lives outside the playhead-gated walker logic below.
+    const int channel = (int) *apvts.getRawParameterValue(pid::channel);
+
+    if (previewRequested.exchange(false, std::memory_order_acquire)) {
+        // Cancel any in-flight preview so back-to-back taps don't stack.
+        if (! previewHeld.empty()) {
+            for (auto& [ch, n] : previewHeld) {
+                midi.addEvent(juce::MidiMessage::noteOff(ch, n), 0);
+            }
+            previewHeld.clear();
+        }
+
+        // Inboil's preview velocity is 0.6; map to MIDI 76. Voicing /
+        // 7th extension intentionally not applied — the preview is the
+        // raw triad the user pointed at, no sequence logic.
+        constexpr juce::uint8 previewVel = 76;
+        for (int n : pendingPreviewChord) {
+            const int clamped = std::clamp(n, 0, 127);
+            midi.addEvent(juce::MidiMessage::noteOn(channel, clamped, previewVel), 0);
+            previewHeld.emplace_back(channel, clamped);
+        }
+        // Inboil PREVIEW_MS = 300.
+        previewSamplesUntilOff = (int) std::round(sampleRate * 0.3);
+    }
+
+    if (previewSamplesUntilOff > 0 && ! previewHeld.empty()) {
+        if (previewSamplesUntilOff <= blockSamples) {
+            const int offset = std::clamp(previewSamplesUntilOff - 1, 0, blockSamples - 1);
+            for (auto& [ch, n] : previewHeld) {
+                midi.addEvent(juce::MidiMessage::noteOff(ch, n), offset);
+            }
+            previewHeld.clear();
+            previewSamplesUntilOff = 0;
+        } else {
+            previewSamplesUntilOff -= blockSamples;
+        }
+    }
+}
+
+void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
+{
     auto* playHead = getPlayHead();
     auto position = (playHead != nullptr) ? playHead->getPosition() : juce::Optional<juce::AudioPlayHead::PositionInfo>{};
 
@@ -208,6 +268,60 @@ void OedipaProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBu
     }
 
     lastSubStep = currentSubStep;
+}
+
+void OedipaProcessor::requestPreview(engine::Triad chord)
+{
+    pendingPreviewChord = chord;
+    previewRequested.store(true, std::memory_order_release);
+}
+
+void OedipaProcessor::applyDragResolution(engine::Triad newStartChord,
+                                           const std::vector<engine::Transform>& ops)
+{
+    // Inboil bails when ops is empty (drag was non-resolvable from start).
+    // Match: leave both startChord and cells untouched.
+    if (ops.empty()) return;
+
+    startChord = newStartChord;
+
+    // Overwrite the leading cells with the resolved transforms; trailing
+    // cells stay (m4l Phase 7 cell-length semantics — dormant cells exist
+    // and reappear if the user expands `length` later).
+    const int n = std::min((int) ops.size(), kCellCount);
+    for (int i = 0; i < n; ++i) {
+        engine::Op op;
+        switch (ops[(std::size_t) i]) {
+            case engine::Transform::P: op = engine::Op::P; break;
+            case engine::Transform::L: op = engine::Op::L; break;
+            case engine::Transform::R: op = engine::Op::R; break;
+        }
+        cells[(std::size_t) i].op = op;
+    }
+
+    // Length follows ops.size(), clamped to [1, kCellCount]. APVTS write
+    // notifies host listeners (automation, undo).
+    if (auto* lenParam = apvts.getParameter(pid::length)) {
+        const auto& range = lenParam->getNormalisableRange();
+        const float v = range.convertTo0to1((float) std::clamp(n, 1, kCellCount));
+        lenParam->setValueNotifyingHost(v);
+    }
+}
+
+void OedipaProcessor::addAnchorAtNextStep(engine::PitchClass rootPc, engine::Quality quality)
+{
+    const int spt = std::max(1, (int) *apvts.getRawParameterValue(pid::stepsPerTransform));
+
+    int lastStep = 0;
+    for (const auto& a : anchors) {
+        if (a.step > lastStep) lastStep = a.step;
+    }
+    const int newStep = lastStep + spt * 4;
+
+    anchors.push_back(engine::Anchor{newStep, rootPc, quality});
+
+    // Long-press also auditions the anchored chord (per inboil).
+    requestPreview(engine::buildTriad(rootPc, quality, startChord[0]));
 }
 
 juce::AudioProcessorEditor* OedipaProcessor::createEditor()

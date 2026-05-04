@@ -25,6 +25,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
+#include <atomic>
 #include <utility>
 #include <vector>
 
@@ -94,11 +95,43 @@ public:
     const std::vector<engine::Anchor>& getAnchors() const { return anchors; }
     void setAnchors(std::vector<engine::Anchor> value) { anchors = std::move(value); }
 
+    // Editor-facing snapshot of the current walk inputs (startChord, cells,
+    // anchors, etc. flattened from APVTS). Lets the lattice view compute the
+    // walk path for trail rendering without re-reading APVTS itself.
+    engine::WalkState makeWalkStateSnapshot() const { return makeWalkState(); }
+
+    // Highest sub-step pos already emitted by the walker; -1 = transport
+    // stopped (no chord is "playing"). Editor reads this to render the
+    // playing-state highlight + chord-trail head position.
+    int getLastSubStep() const { return lastSubStep; }
+
+    // Editor-facing writebacks (Phase 4 lattice interactions). All run on the
+    // message thread; processBlock reads the same fields on the audio thread.
+    // Tearing windows are one-block (≤ ~12 ms) and musically inaudible —
+    // matches the existing setStartChord / setCell relaxed-sync convention.
+    //
+    //   requestPreview        — lattice tap or long-press auditions a chord;
+    //                           queued for emission on the next processBlock.
+    //   applyDragResolution   — drag committed: replace startChord and
+    //                           overwrite cells[0..ops.size()-1] with the
+    //                           resolved P/L/R sequence; `length` follows.
+    //                           No-op when ops is empty (per inboil).
+    //   addAnchorAtNextStep   — long-press: append an anchor at
+    //                           max(existing anchor steps) + spt*4 (or
+    //                           spt*4 if no prior anchor), with the given
+    //                           triangle's (rootPc, quality).
+    void requestPreview(engine::Triad chord);
+    void applyDragResolution(engine::Triad newStartChord,
+                             const std::vector<engine::Transform>& ops);
+    void addAnchorAtNextStep(engine::PitchClass rootPc, engine::Quality quality);
+
     // Test-facing inspection of the walker's current play state. Lets the
     // Phase 3 processBlock test verify held-note bookkeeping without
     // poking the private member directly.
     int getLastSubStepForTest() const { return lastSubStep; }
     const std::vector<std::pair<int, int>>& getHeldForTest() const { return held; }
+    const std::vector<std::pair<int, int>>& getPreviewHeldForTest() const { return previewHeld; }
+    bool isPreviewActiveForTest() const { return ! previewHeld.empty(); }
 
 private:
     juce::AudioProcessorValueTreeState apvts;
@@ -115,6 +148,16 @@ private:
     int lastSubStep = -1;
     std::vector<std::pair<int, int>> held;
 
+    // Preview MIDI (lattice tap / long-press audition). Lock-free hand-off:
+    // the editor stores `pendingPreviewChord`, then flips
+    // `previewRequested` with release-store. processBlock reads the flag
+    // with acquire-load and consumes the chord in the same block.
+    std::atomic<bool> previewRequested{false};
+    engine::Triad pendingPreviewChord{};
+    double sampleRate = 44100.0;
+    int previewSamplesUntilOff = 0;
+    std::vector<std::pair<int, int>> previewHeld;
+
     engine::WalkState makeWalkState() const;
     void emitPanic(juce::MidiBuffer&, int sampleOffset);
     void emitChord(juce::MidiBuffer&,
@@ -124,6 +167,8 @@ private:
                    int channel,
                    float velocity,
                    int sampleOffset);
+    void handlePreviewMidi(juce::MidiBuffer&, int blockSamples);
+    void handleWalkerMidi(juce::MidiBuffer&);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OedipaProcessor)
 };

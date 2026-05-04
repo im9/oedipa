@@ -36,6 +36,10 @@ add_library(oedipa_engine STATIC
     Source/Engine/State.h
     Source/Engine/Walker.cpp
     Source/Engine/Walker.h
+    Source/Engine/Lattice.cpp
+    Source/Engine/Lattice.h
+    Source/Engine/PointerInteraction.cpp
+    Source/Engine/PointerInteraction.h
 )
 target_include_directories(oedipa_engine PUBLIC Source)
 target_compile_features(oedipa_engine PUBLIC cxx_std_17)
@@ -73,6 +77,8 @@ target_sources(Oedipa PRIVATE
     Source/Plugin/Parameters.h
     Source/Editor/PluginEditor.cpp
     Source/Editor/PluginEditor.h
+    Source/Editor/LatticeView.cpp
+    Source/Editor/LatticeView.h
 )
 target_include_directories(Oedipa PRIVATE Source)
 
@@ -100,6 +106,7 @@ add_library(oedipa_plugin_core STATIC
     Source/Plugin/PluginProcessor.cpp
     Source/Plugin/Parameters.cpp
     Source/Editor/PluginEditor.cpp
+    Source/Editor/LatticeView.cpp
 )
 target_include_directories(oedipa_plugin_core PUBLIC Source)
 target_link_libraries(oedipa_plugin_core PUBLIC
@@ -124,6 +131,9 @@ add_executable(oedipa_tests
     tests/test_Tonnetz.cpp
     tests/test_Plugin.cpp
     tests/test_Walker.cpp
+    tests/test_Lattice.cpp
+    tests/test_PointerInteraction.cpp
+    tests/test_Editor.cpp
 )
 target_link_libraries(oedipa_tests PRIVATE
     oedipa_engine
