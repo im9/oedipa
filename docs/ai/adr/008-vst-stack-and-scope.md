@@ -17,6 +17,21 @@ Cubase Pro (VST3 MIDI insert) / Bitwig (Note FX), and **2-track routing
 UX in Live** (Track A: Oedipa as Instrument → Track B: target instrument
 via "MIDI From"). Built-in synth and plugin hosting (Scaler 2 style)
 explicitly out of scope — Oedipa is a pure MIDI generator.
+**Revised**: 2026-05-04 — Positioning clarified: Oedipa is a **MIDI
+instrument**, not a drop-in MIDI effect. The "Live drop-and-play"
+expectation (place plugin on a single track, hear sound) is explicitly
+out of scope; users who want that UX use the m4l target. v1 is
+"playable where it fits naturally" (single-track MIDI hosts, plus
+Live via 2-track or via the Standalone build), and accepts the
+narrower addressable market as the cost of preserving the
+no-internal-sound identity decision. Plugin hosting (option B) was
+re-evaluated 2026-05-04 and remains out of scope (single-developer
+scope, VST3 host license uncertainty, Mac App Store sandboxing
+incompatibility, plus the first-run "no plugin loaded → no sound"
+problem doesn't fully resolve). Two new in-scope items added: a
+**Live first-run onboarding overlay** (`PluginHostType().isAbletonLive()`-
+gated, dismissible) and the **Standalone build promoted to a documented
+user-facing retreat path** (was: dev-convenience only).
 
 ## Context
 
@@ -40,13 +55,24 @@ lattice geometry MUST be reusable across vst/ (JUCE-rendered) and app/
 (SwiftUI-rendered). Drawing this boundary correctly from day 1 is cheaper than
 extracting it later.
 
+A third motivation is **long-term reuse in a future standalone instrument
+suite** (multi-module MIDI sequencer desktop app — Tonnetz alongside other
+sequencer modules). Same `Engine/` boundary serves there too. Oedipa is the
+first vehicle for the JUCE / VST3 / AU / standalone build operational
+knowledge; the engine code itself is the durable asset that survives across
+all three targets (vst/, app/, future suite). This shapes the
+no-JUCE-in-Engine rule below from "nice discipline" into a load-bearing
+architectural constraint.
+
 ## Decision
 
 ### Plugin formats
 
 - **VST3** and **AU** on macOS
-- **Standalone** build kept for dev convenience (faster iteration than booting
-  a host)
+- **Standalone** build — promoted to a user-facing artefact (was:
+  dev-convenience only). See §"Standalone as retreat path" below for the
+  positioning. Built from the same JUCE `FORMATS Standalone` line; no
+  separate codebase.
 - Windows / Linux: deferred (not in v1)
 
 The existing skeleton at [vst/CMakeLists.txt](../../../vst/CMakeLists.txt)
@@ -55,10 +81,11 @@ This ADR ratifies that as v1.
 
 ### DAW integration (per-host UX)
 
-Oedipa is a pure MIDI generator (MIDI in → MIDI out, no audio). The
-"correct" home for it is the host's pre-instrument MIDI-effect slot.
-**That slot's openness to third-party plugins differs sharply by host**,
-and this dictates the per-host UX. Confirmed via empirical testing
+Oedipa is a **MIDI instrument** (MIDI in → MIDI out, no audio): a chord-
+navigation surface that emits MIDI for downstream synths. The "correct"
+home for it is the host's pre-instrument MIDI-effect slot — but **that
+slot's openness to third-party plugins differs sharply by host**, and
+this dictates the per-host UX. Confirmed via empirical testing
 2026-05-03 (Live) and JUCE / Ableton / Steinberg / Cockos community
 sources for the rest:
 
@@ -70,8 +97,50 @@ sources for the rest:
 | **Cubase Pro 13+** | VST3 MIDI insert slot | Yes |
 | **Bitwig** | Note FX slot | Yes |
 
-Live is the outlier. Since Live is also a primary user environment for
-Oedipa, this ADR locks the Live-specific UX explicitly:
+Live is the outlier. **Three options exist within Live, none of which
+match the "drop the plugin and play" expectation that VST3 / AU users
+typically bring**:
+
+1. **2-track routing** (this ADR's primary documented path) — covered below
+2. **Standalone build + virtual MIDI port** — covered in §"Standalone as
+   retreat path"
+3. **Use the m4l target** — single-track Live UX, ships separately under
+   the same name; lattice UI is constrained but the musical engine is
+   identical
+
+This ADR locks how each is supported. Before that, one fourth option
+worth pre-empting:
+
+#### Why not the Audio Effects rack?
+
+Live's Audio Effects rack **does** accept third-party VST3 / AU (only
+the MIDI Effects rack is closed). So a tempting alternative is: ship
+Oedipa as a VST3 / AU **audio effect** (`VST3_CATEGORIES "Fx"`,
+`kAudioUnitType_Effect`), land it in Live's Audio Effects chain on a
+single track. **Evaluated 2026-05-04 and ruled out.** Reasons:
+
+1. **Live's signal flow makes the MIDI useless on the same track.**
+   The chain is `[MIDI Effects] → [Instrument] → [Audio Effects] →
+   [Audio Out]`. An Audio Effect sits *after* the instrument; even
+   if Oedipa-as-Audio-Effect produced MIDI, there's no instrument
+   downstream on the same track to receive it. So the user still
+   needs a second track with `MIDI From: 1-Oedipa` — the 2-track
+   cost is unchanged.
+2. **Cross-DAW semantic confusion.** Logic / Reaper / Cubase / Bitwig
+   all treat an "audio effect that emits MIDI" as a niche pattern.
+   The current `IS_MIDI_EFFECT TRUE` path slots Oedipa cleanly into
+   each host's MIDI-FX-equivalent. Switching to Audio-Effect classification
+   would break that and create ambiguity in every host.
+3. **Discovery is worse.** Users searching for chord / MIDI tools
+   look in Instrument or MIDI Effect categories, not Audio Effects.
+   Putting Oedipa in Audio Effects buries it in EQs, reverbs, etc.
+
+So the Audio Effects rack does not enable single-track Live UX in any
+meaningful sense. The current Instrument-slot + stub-audio-bus + 2-track
+routing remains the best available path. **Within Live's architecture,
+a third-party plugin that behaves as a single-track MIDI generator is
+structurally impossible** — only Ableton-native and M4L devices can
+occupy the MIDI Effects rack, and that is by design.
 
 #### Live UX — 2-track routing
 
@@ -114,13 +183,58 @@ Template ("Oedipa + Synth" pre-wired) so the 2-track setup is one drag
 rather than five clicks. This is content, not engineering — flagged here
 so it doesn't get forgotten at release.
 
+#### Live first-run onboarding overlay
+
+Without explanation, a new user who drops Oedipa on a Live track and
+hears nothing concludes the plugin is broken. To set expectations
+correctly, the editor shows a one-time onboarding overlay when the
+host is detected as Live:
+
+- Triggered by `juce::PluginHostType().isAbletonLive()` on editor open
+- Full-bleed overlay over the lattice with: short explanation of why
+  Oedipa needs 2-track routing, a small wiring diagram (Track A:
+  Oedipa Instrument + Monitor=In; Track B: synth with MIDI From →
+  1-Oedipa), and CTA buttons: [Show me] (links to docs / video) +
+  [Don't show again] (dismisses + persists)
+- Persistence: `juce::PropertiesFile` in user prefs (per-machine, per-
+  user). Choice survives Oedipa updates.
+- Same overlay appears as an opt-in help button (`?`) somewhere in
+  the UI so users who dismissed it can re-read
+
+The overlay does NOT make the plugin "drop and play" — that expectation
+is rejected (see §Out of scope). It makes the friction *intentional and
+explained* rather than apparent breakage.
+
+#### Standalone as retreat path
+
+For Live users who don't want the 2-track setup at all (or who use
+hosts where Oedipa-as-plugin doesn't fit gracefully), the **Standalone
+build is a documented user-facing path**, not just a dev convenience:
+
+- Same JUCE codebase, same lattice, same Tonnetz engine — the
+  Standalone wrapper just adds its own audio-device + MIDI-port host
+- Output: macOS Core MIDI virtual port (configurable). Live (or any
+  DAW) receives via `MIDI From: IAC Driver Bus N → Oedipa`
+- Setup cost: one-time IAC bus enable in `Audio MIDI Setup`, then
+  per-project MIDI From routing in the DAW. Heavier than plugin
+  install but identical to using any other external hardware MIDI
+  controller
+- Bidirectional benefit: also a reference / dogfood ground for the
+  long-term standalone instrument suite (see §Context)
+
+Polish bar for the Standalone build is intentionally minimal in v1
+(default IAC bus discovery, basic MIDI port picker, "About" + version,
+window remembers size/position). Bitwig / Reason class polish is
+explicit non-goal.
+
 #### Live users with MIDI Effects rack expectation
 
 The m4l target ([m4l/](../../../m4l/)) remains the canonical Live UX —
 MIDI Effects rack placement, single track, native to Live's instrument
 chain. Users who want that UX continue to use the m4l device. The VST3
 adds: lattice UI surface + cross-DAW reach. The two targets are
-complementary, not redundant.
+complementary, not redundant — and within Live specifically, m4l is the
+recommended path for users who reject both 2-track and Standalone.
 
 ### Engine
 
@@ -321,6 +435,10 @@ review-blocker. The point of drawing the boundary now is so it doesn't drift.
 - Code signing + notarization required for distribution outside the App Store;
   signing identity and installer format (`.pkg` vs. drag-install) deferred to
   a future distribution ADR (parallel to m4l's ADR 007)
+- **Mac App Store: out of scope** for v1. Direct distribution from im9's
+  site (with notarization) is the channel. No sandboxing entitlements
+  required by current architecture, leaving MAS as a possible future
+  channel if desired (revisit if/when the suite ships)
 
 ### Test infrastructure
 
@@ -346,6 +464,14 @@ review-blocker. The point of drawing the boundary now is so it doesn't drift.
 - Single-track MIDI-effect UX in Logic / Reaper / Cubase Pro / Bitwig
 - 2-track routing UX in Live (Instrument slot + "MIDI From"); JUCE-style
   Live audio-bus workaround
+- **Live first-run onboarding overlay** (`PluginHostType().isAbletonLive()`-
+  gated, dismissible, persisted in `juce::PropertiesFile`); explains
+  2-track requirement and offers Standalone as alternative
+- **Standalone build as user-facing artefact** (was: dev-convenience
+  only). Minimal polish bar (IAC bus discovery, MIDI port picker,
+  window state persistence)
+- **Live Track Template** (`Oedipa + Synth.als`) shipped as a release
+  artefact for the 2-track setup
 
 **Out of scope (with reasoning):**
 
@@ -375,21 +501,46 @@ review-blocker. The point of drawing the boundary now is so it doesn't drift.
   parallel ADR (analog of m4l ADR 007). *Reasoning*: not blocking for
   development; required only at first release.
 - **Built-in synth or sample player** — Oedipa is a pure MIDI generator.
-  *Reasoning*: identity decision (2026-05-03). A bundled sound source
-  would dilute the "instrument with a point of view about chord
-  navigation" framing. If a synth-bundled product is ever wanted, it
-  ships as a separate application, not under the Oedipa name.
+  *Reasoning*: identity decision (2026-05-03), reaffirmed 2026-05-04 as
+  **non-negotiable**. A bundled sound source would dilute the "instrument
+  with a point of view about chord navigation" framing. If a synth-bundled
+  product is ever wanted, it ships as a separate application, not under
+  the Oedipa name. This decision dominates the Live UX trade-off below
+  (Oedipa accepts narrower Live addressability rather than ship sound).
 - **Plugin hosting (Scaler 2 style)** — loading a third-party instrument
-  inside Oedipa to give Live single-track UX. *Reasoning*: same identity
-  decision as built-in synth, plus operational concerns (third-party
-  plugin EULAs, scanner failures bleeding into Oedipa stability,
-  format/OS maintenance burden). The Live 2-track routing UX is
-  accepted as the cost of Live's MIDI Effects rack being closed.
+  inside Oedipa to give Live single-track UX. Re-evaluated 2026-05-04
+  and remains out of scope. *Reasoning*:
+  1. **Implementation cost beyond single-developer scope** — plugin
+     scanner with reliable blacklist, host wrapper for VST3 + AU,
+     out-of-process isolation for crash containment, GUI embedding /
+     window lifecycle, hosted-plugin state serialization, default-plugin
+     onboarding flow. Scaler 2 / Captain Chords ship from paid teams.
+  2. **VST3 host license uncertainty** — Steinberg's developer terms
+     for hosting third-party VST3 plugins (vs. just shipping a VST3
+     plugin) need fresh verification against current 2026 conditions;
+     a wrong reading risks GPL contamination of the whole codebase.
+  3. **Mac App Store sandboxing incompatibility** — sandboxed apps
+     can't load arbitrary plugin bundles. Hosting essentially closes
+     the MAS distribution door (kept open under the C path).
+  4. **First-run problem doesn't fully resolve** — even with hosting,
+     the user must select a plugin before sound exists. "Drop and
+     play" still requires an onboarding flow; the failure mode shifts
+     from "no sound" to "scan + pick plugin first."
+  5. **Support burden grows with hosted plugin matrix** — every
+     "Plugin X doesn't work in Oedipa" issue lands on Oedipa
+     maintenance.
+- **"Drop-and-play" experience in Live** — the expectation that placing
+  Oedipa on a single Live track produces sound is **explicitly rejected**.
+  Three documented paths exist for Live users (2-track / Standalone /
+  m4l); the onboarding overlay redirects users hitting this expectation.
+  *Reasoning*: dropping this expectation is the cost of preserving the
+  no-internal-sound + no-plugin-hosting decisions above. Market narrowing
+  is acceptable because v1 ships free.
 - **Live MIDI Effects rack placement** — the VST3 cannot land there.
   *Reasoning*: Live design decision (Ableton-native + M4L only).
   Confirmed 2026-05-03 across community sources for VST3 / VST2 / AU.
   The m4l target covers this UX; the VST3 lives in the Instrument slot
-  via 2-track routing.
+  via 2-track routing (or the user picks Standalone / m4l instead).
 
 ## Implementation checklist
 
@@ -423,7 +574,8 @@ Each phase ends with `make test` green.
   - MIDI output reflects walk; transport scrubbing produces correct triads
     (per ADR 001 walk-state determinism)
   - Conformance to ADR 001 anchor-reset semantics
-- [ ] **Phase 4 — Lattice UI v1**
+- [ ] **Phase 4 — Lattice UI v1** (engine + editor implemented 2026-05-04
+      uncommitted; box stays UNCHECKED until Live smoke validates "playable")
   - Lattice geometry (7×5 vertices, vtx skew, `pcAt(r,c)`) in `Engine/`
     (Catch2-tested against inboil's reference output)
   - Triangle build + root identification in `Engine/`
@@ -446,16 +598,27 @@ Each phase ends with `make test` green.
   - RHYTHM preset palette + ARP modes matching ADR 006 §Phase 7
   - Slot bank (4) with save/restore matching ADR 006
   - Anchor section (inline-editable badges with step number + remove)
-- [ ] **Phase 6 — Polish + manual host smoke**
-  - Load in Live (macOS) with the documented 2-track routing; save Live
-    set; reopen; verify state and Tonnetz output survive. No crash; CPU
-    sane
-  - Load in at least one single-track host (Logic AU MIDI FX preferred;
-    Reaper FX chain as fallback) to confirm `IS_MIDI_EFFECT` path is
-    intact; save/reopen
+- [ ] **Phase 6 — Onboarding overlay + Standalone polish + visual identity**
+  - Live first-run onboarding overlay (`PluginHostType().isAbletonLive()`-
+    gated): full-bleed, dismissible, persisted in `juce::PropertiesFile`.
+    Re-openable via `?` button in the UI
+  - Live Track Template (`Oedipa + Synth.als`) authored and bundled as a
+    release artefact so 2-track setup is one drag (per §"DAW integration")
+  - Standalone build minimal polish: IAC bus discovery on macOS, MIDI
+    output port picker, window state persistence, "About" with version
+  - Visual identity pass — pull palette / typography toward inboil's
+    `TonnetzSheet` reference (cream background, olive accents, monospace
+    data font); fix any remaining UTF-8 rendering issues
+- [ ] **Phase 7 — Manual host smoke + ship**
+  - Load VST3 in Live (macOS) with the documented 2-track routing; save
+    Live set; reopen; verify state + Tonnetz output survive. No crash;
+    CPU sane. Onboarding overlay appears on first open, dismisses
+    correctly, doesn't reappear
+  - Load AU in Logic Pro AU MIDI FX slot (or Reaper FX chain as fallback)
+    to confirm `IS_MIDI_EFFECT` single-track path is intact; save/reopen
+  - Run Standalone build, configure IAC bus, route into Live and into a
+    second host (Logic) to confirm the retreat path works as documented
   - Manual lattice interaction feel pass with the device in a real DAW
-  - Ship Live Track Template ("Oedipa + Synth" pre-wired) as a release
-    artefact so 2-track setup is one drag (per §"DAW integration")
   - Merge `vst-bootstrap` → `main`
 
 Phase done = playable (per memory): each phase ends with the device usable in

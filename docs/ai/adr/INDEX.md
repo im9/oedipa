@@ -43,7 +43,7 @@ only when relevant to the current task.
 
 | #   | Title | Status | Notes |
 |-----|-------|--------|-------|
-| 008 | [VST Stack and Scope](008-vst-stack-and-scope.md) | Proposed | VST3+AU+Standalone (macOS, Win deferred); C++17 engine via shared test vectors; APVTS+ValueTree state; interactive Tonnetz lattice as primary UI; `Source/Engine/` JUCE-free for iOS reuse |
+| 008 | [VST Stack and Scope](008-vst-stack-and-scope.md) | Proposed | VST3+AU+Standalone (macOS, Win deferred); C++17 engine via shared test vectors; APVTS+ValueTree state; interactive Tonnetz lattice as primary UI; `Source/Engine/` JUCE-free for iOS + future standalone-suite reuse. Positioned as MIDI instrument (no internal sound, no plugin hosting); Live UX = 2-track / Standalone / m4l (drop-and-play explicitly out of scope). |
 
 ## iOS
 
