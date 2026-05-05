@@ -286,11 +286,20 @@ TEST_CASE("State round-trip — APVTS + non-APVTS via get/setStateInformation", 
         CHECK_THAT(d1.jitter, Catch::Matchers::WithinAbs(0.15f, 1e-6f));
         CHECK(d1.seed == 0xCAFEBABEu);
 
-        // Untouched slot remains at default.
+        // Slot 0 is the active slot during all the mutations above —
+        // auto-save (ADR 008 Phase 5) mirrors each user edit into the
+        // active slot, so after round-trip slot 0 reflects the final
+        // live state, not Slot{} defaults.
         const auto& d0 = sink.getSlot(0);
-        CHECK(d0.ops[0] == Op::Hold);
-        CHECK(d0.startRootPc == 0);
-        CHECK(d0.startQuality == Quality::Major);
+        CHECK(d0.ops[0] == Op::P);              // setCell(0, P)
+        CHECK(d0.ops[3] == Op::Rest);           // setCell(3, Rest)
+        CHECK(d0.startRootPc == 2);             // D from setStartChord({62,..})
+        CHECK(d0.startQuality == Quality::Minor);
+        CHECK_THAT(d0.jitter, Catch::Matchers::WithinAbs(0.42f, 1e-6f));
+        CHECK(d0.seed == 12345u);
+
+        // Active slot index round-trips.
+        CHECK(sink.activeSlotIndex() == 0);
     }
 
     SECTION("anchors restored") {

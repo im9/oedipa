@@ -40,6 +40,10 @@ add_library(oedipa_engine STATIC
     Source/Engine/Lattice.h
     Source/Engine/PointerInteraction.cpp
     Source/Engine/PointerInteraction.h
+    Source/Engine/SequenceDrawer.cpp
+    Source/Engine/SequenceDrawer.h
+    Source/Engine/SlotBank.cpp
+    Source/Engine/SlotBank.h
 )
 target_include_directories(oedipa_engine PUBLIC Source)
 target_compile_features(oedipa_engine PUBLIC cxx_std_17)
@@ -133,6 +137,9 @@ add_executable(oedipa_tests
     tests/test_Walker.cpp
     tests/test_Lattice.cpp
     tests/test_PointerInteraction.cpp
+    tests/test_SequenceDrawer.cpp
+    tests/test_SlotBank.cpp
+    tests/test_PluginSlotBank.cpp
     tests/test_Editor.cpp
 )
 target_link_libraries(oedipa_tests PRIVATE

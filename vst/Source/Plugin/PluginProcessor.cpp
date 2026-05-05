@@ -71,7 +71,108 @@ OedipaProcessor::BusesProperties OedipaProcessor::makeBusesProperties(bool addLi
 OedipaProcessor::OedipaProcessor()
     : AudioProcessor(makeBusesProperties(juce::PluginHostType().isAbletonLive())),
       apvts(*this, nullptr, "OedipaParams", makeParameterLayout())
-{}
+{
+    // ADR 008 Phase 5 — auto-save on APVTS-tracked slot fields. cells and
+    // startChord are routed through their own setters; jitter/seed/length
+    // need a listener because the editor + tests mutate them via the
+    // parameter API directly.
+    apvts.addParameterListener(pid::jitter, this);
+    apvts.addParameterListener(pid::seed,   this);
+    apvts.addParameterListener(pid::length, this);
+}
+
+OedipaProcessor::~OedipaProcessor()
+{
+    apvts.removeParameterListener(pid::jitter, this);
+    apvts.removeParameterListener(pid::seed,   this);
+    apvts.removeParameterListener(pid::length, this);
+}
+
+void OedipaProcessor::setStartChord(engine::Triad value)
+{
+    startChord = value;
+    syncActiveSlot();
+}
+
+void OedipaProcessor::setCell(int idx, const engine::Cell& cell)
+{
+    cells.at(static_cast<std::size_t>(idx)) = cell;
+    syncActiveSlot();
+}
+
+void OedipaProcessor::setCellField(int idx, engine::CellField field, float value)
+{
+    if (idx < 0 || idx >= kCellCount) return;
+    if (std::isnan(value)) return;
+    auto& cell = cells[static_cast<std::size_t>(idx)];
+    switch (field) {
+        case engine::CellField::Velocity:    cell.velocity    = value; break;
+        case engine::CellField::Gate:        cell.gate        = value; break;
+        case engine::CellField::Probability: cell.probability = value; break;
+        case engine::CellField::Timing:      cell.timing      = value; break;
+    }
+}
+
+engine::Slot OedipaProcessor::captureSlot() const
+{
+    engine::Slot s{};
+    for (std::size_t i = 0; i < cells.size() && i < s.ops.size(); ++i) {
+        s.ops[i] = cells[i].op;
+    }
+    const auto id = engine::identifyTriad(startChord);
+    s.startRootPc  = id.rootPc;
+    s.startQuality = id.quality;
+    s.jitter = *apvts.getRawParameterValue(pid::jitter);
+    s.seed   = static_cast<std::uint32_t>(static_cast<int>(*apvts.getRawParameterValue(pid::seed)));
+    return s;
+}
+
+void OedipaProcessor::applySlot(const engine::Slot& slot)
+{
+    suppressAutoSave = true;
+
+    for (std::size_t i = 0; i < cells.size() && i < slot.ops.size(); ++i) {
+        cells[i].op = slot.ops[i];
+    }
+    // Rebuild startChord at the current octave (root MIDI note as reference)
+    // — preserves register across slot switches per m4l ADR 006 §"Axis 1".
+    startChord = engine::buildTriad(slot.startRootPc, slot.startQuality, startChord[0]);
+
+    // Write jitter/seed via the parameter API. Each assignment fires the
+    // listener; suppressAutoSave makes those callbacks no-ops so the slot
+    // stays the source of truth, not a partial-mid-apply capture.
+    if (auto* jp = apvts.getParameter(pid::jitter)) {
+        *static_cast<juce::AudioParameterFloat*>(jp) = slot.jitter;
+    }
+    if (auto* sp = apvts.getParameter(pid::seed)) {
+        *static_cast<juce::AudioParameterInt*>(sp) = static_cast<int>(slot.seed);
+    }
+
+    suppressAutoSave = false;
+    // Pin the bank to the exact slot the caller passed in, in case the
+    // listener fired during the brief unsuppressed window between writes.
+    bank.syncActive(slot);
+}
+
+void OedipaProcessor::switchSlot(int idx)
+{
+    if (idx < 0 || idx >= engine::kSlotCount) return;
+    bank.switchTo(idx);
+    applySlot(bank.activeSlot());
+}
+
+void OedipaProcessor::syncActiveSlot()
+{
+    if (suppressAutoSave) return;
+    bank.syncActive(captureSlot());
+}
+
+void OedipaProcessor::parameterChanged(const juce::String& parameterID, float)
+{
+    if (parameterID == pid::jitter || parameterID == pid::seed || parameterID == pid::length) {
+        syncActiveSlot();
+    }
+}
 
 void OedipaProcessor::prepareToPlay(double newSampleRate, int)
 {
@@ -359,7 +460,9 @@ void OedipaProcessor::getStateInformation(juce::MemoryBlock& destData)
     node.appendChild(cellsNode, nullptr);
 
     juce::ValueTree slotsNode{kSlotsTag};
-    for (const auto& s : slots) {
+    slotsNode.setProperty("activeIndex", bank.activeIndex(), nullptr);
+    for (int i = 0; i < engine::kSlotCount; ++i) {
+        const auto& s = bank.slotAt(i);
         juce::ValueTree slotNode{kSlotTag};
         juce::String opsStr;
         for (auto op : s.ops) opsStr += juce::String(opToString(op)) + ",";
@@ -397,10 +500,19 @@ void OedipaProcessor::setStateInformation(const void* data, int sizeInBytes)
     auto state = juce::ValueTree::fromXml(*xml);
     if (! state.isValid() || state.getType() != apvts.state.getType()) return;
 
+    // apvts.replaceState fires parameterChanged for every restored value,
+    // which would otherwise auto-save the just-restored state into slot 0
+    // and clobber the bank we are about to rehydrate. Suppress for the
+    // duration of state restoration; the bank's saved activeIndex is the
+    // source of truth for the restored session.
+    suppressAutoSave = true;
     apvts.replaceState(state);
 
     const auto node = state.getChildWithName(kStateTag);
-    if (! node.isValid()) return;
+    if (! node.isValid()) {
+        suppressAutoSave = false;
+        return;
+    }
 
     if (auto sc = node.getChildWithName(kStartChordTag); sc.isValid()) {
         startChord[0] = (int) sc.getProperty("root",  startChord[0]);
@@ -423,7 +535,7 @@ void OedipaProcessor::setStateInformation(const void* data, int sizeInBytes)
     }
 
     if (auto slotsNode = node.getChildWithName(kSlotsTag); slotsNode.isValid()) {
-        const int n = std::min((int) slots.size(), slotsNode.getNumChildren());
+        const int n = std::min(engine::kSlotCount, slotsNode.getNumChildren());
         for (int i = 0; i < n; ++i) {
             const auto sn = slotsNode.getChild(i);
             engine::Slot s;
@@ -438,8 +550,13 @@ void OedipaProcessor::setStateInformation(const void* data, int sizeInBytes)
             s.startQuality = qualityFromString(sn.getProperty("startQuality").toString());
             s.jitter       = (float) sn.getProperty("jitter",     s.jitter);
             s.seed         = (std::uint32_t) (juce::int64) sn.getProperty("seed", (juce::int64) s.seed);
-            slots[(std::size_t) i] = s;
+            bank.setSlot(i, s);
         }
+        // Restore active slot index. Apply via switchTo (no applySlot —
+        // live params/cells were already restored above; calling applySlot
+        // here would just re-write what's already there).
+        const int activeIdx = (int) slotsNode.getProperty("activeIndex", 0);
+        bank.switchTo(activeIdx);
     }
 
     anchors.clear();
@@ -454,6 +571,8 @@ void OedipaProcessor::setStateInformation(const void* data, int sizeInBytes)
             anchors.push_back(a);
         }
     }
+
+    suppressAutoSave = false;
 }
 
 }  // namespace plugin

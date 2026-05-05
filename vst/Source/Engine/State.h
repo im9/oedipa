@@ -39,6 +39,10 @@ struct Cell {
     float timing = 0.0f;
 };
 
+// Per-cell numeric field selector (used by the drawer's `setCellField`
+// API per ADR 008 Phase 5). Mirrors m4l's `CellNumericField` union.
+enum class CellField { Velocity, Gate, Probability, Timing };
+
 // Slot bank entry (ADR 006 §"Axis 1"). Stores the program: cell-op pattern,
 // start chord (root + quality only — register is anchored at load time),
 // jitter, and seed. Per-cell numeric expression (vel/gate/prob/timing) is

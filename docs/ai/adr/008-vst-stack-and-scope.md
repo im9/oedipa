@@ -588,15 +588,81 @@ Each phase ends with `make test` green.
   - Tap → set `startChord` + MIDI preview note (~300ms)
   - Drag → define `sequence`; long-press 400ms → add anchor
   - Chord-trail overlay during playback
-- [ ] **Phase 5 — Right rail + per-cell drawer + slots**
-  - Right-rail panels in the order Slots / Sequence / Voicing / Anchors
-    (conditional) / MIDI in / Output / Preset+Seed
-  - SEQ-pill drawer with per-cell sliders (velocity / gate / probability /
-    timing / `rest` op) — drawer-state in `Engine/`, drawer-render in
-    `Editor/`
-  - RHYTHM preset palette + ARP modes matching ADR 006 §Phase 7
-  - Slot bank (4) with save/restore matching ADR 006
-  - Anchor section (inline-editable badges with step number + remove)
+- [ ] **Phase 5 — Right rail + per-cell drawer + slots (inboil-aligned design)**
+  - Visual language is inboil's `TonnetzSheet`, not m4l's device strip.
+    `Editor/Theme.{h,cpp}` introduces the palette (cream `#EDE8DC` bg,
+    navy `#1E2028` fg, olive `#787845` for current/active, salmon
+    `#E8A090` for anchors, steel-blue `#4472B4` for drag preview) and
+    JetBrains Mono at three sizes — `fs-sm`=9px (group legend),
+    `fs-md`=10px (control label), `fs-lg`=11px (value). All colors and
+    sizes route through Theme; no literals in views.
+  - Layout is 2-column: lattice on the left (flex), right rail
+    (`280px` fixed, scroll-y, 1px border-left). Header row holds the
+    `TONNETZ` title and a `×` close affordance with a separator below.
+    Mirrors inboil's TonnetzSheet 1:1.
+  - Right rail groups, top to bottom — ordered by parent→child hierarchy
+    (slot is the parent of all other state, so it sits at the top):
+    1. **Slots** — 4 pills `[1][2][3][4]`, current pill in olive,
+       auto-save (matches m4l ADR 006 §Phase 3b).
+    2. **Sequence** — SEQ pills (op dropdowns: ` ` / P / L / R / PL /
+       PR / LR / PLR) with `+` / `−` add/remove; `RATE` row =
+       stepsPerTransform value + slider.
+    3. **Voicing** — VOICE / CHORD / RHYTHM / ARP dropdowns; LEN / LOCK
+       slider rows appear only when RHYTHM = `turing` (matches inboil
+       rows verbatim).
+    4. **Anchors** — conditional (`anchors.length > 0`); inline-editable
+       badges with step number input + `×` (matches inboil).
+    5. **Output** — OUT level + HUMAN(ize) sliders (ADR 005 carry-over).
+    6. **Preset** — PRESET dropdown + SEED row (numeric value or
+       `off`, dice icon = randomize, × icon = clear). Matches inboil's
+       SEED row.
+  - Per-cell drawer — selecting a SEQ pill both commits the op AND
+    opens an inline drawer below the Sequence row showing that cell's
+    `velocity / gate / probability / timing / rest` sliders (m4l
+    ADR 006 §Phase 7 musical scope, rendered in inboil's visual
+    language). The drawer state machine — selected cell index,
+    toggle-same-pill closes, switch on a different pill, auto-close
+    when the sequence shrinks past the selected cell — lives in
+    `Engine/SequenceDrawer.{h,cpp}` (Catch2-tested); render in
+    `Editor/SequenceDrawerView.{h,cpp}`. Animation (if any) is the
+    renderer's concern, not the state machine's.
+  - Dropped from the earlier draft: MERGE / TRACK (scene-graph only;
+    VST writes to host MIDI out unconditionally) and MIDI in
+    (deferred to ADR 004 keyboard-input work).
+  - Sub-checklist (each item ends Gate 3 green; Phase 5 closes only
+    after the manual host smoke item passes):
+    - [x] Engine: `SequenceDrawer` state machine + Catch2 cases
+    - [x] Engine: `SlotBank` 4-slot store + auto-save + Catch2 cases
+    - [x] Plugin: SlotBank wiring on `OedipaProcessor` —
+      `captureSlot()` / `applySlot()`, auto-save hooks on
+      cells / startChord / jitter / seed / length, `switchSlot(idx)`
+      composing `bank.switchTo` + `applySlot`. Round-trip test in
+      `tests/test_Plugin.cpp`
+    - [x] Plugin: `setCellField(idx, field, value)` for the drawer's
+      vel / gate / prob / timing sliders (mirrors m4l's `setCellField`
+      — does NOT auto-save into the slot, since per-cell numeric
+      expression is device-shared per ADR 006 §"Axis 1"). NaN /
+      out-of-range guards
+    - [ ] `Editor/Theme.{h,cpp}` (palette + font sizes via
+      `juce::Colour` + `juce::Font`) — single source for all view
+      colors and typography. Folded in here rather than a JUCE-free
+      `Engine/Theme` because iOS won't share JUCE-typed tokens anyway,
+      and `RailLayout` is delegated to JUCE's FlexBox in the rail
+      view rather than pre-computed in pure C++ (would duplicate the
+      renderer)
+    - [ ] Editor: `Theme.{h,cpp}` + 2-column layout shell + header row
+      with `TONNETZ` title and `×` close
+    - [ ] Editor: `SlotBarView` (4 pills + auto-save indicator)
+    - [ ] Editor: `SequenceRowView` + `SequenceDrawerView` (SEQ pills,
+      `+` / `−`, RATE row, per-cell sliders)
+    - [ ] Editor: `VoicingView` (VOICE / CHORD / RHYTHM / ARP +
+      conditional Turing LEN / LOCK)
+    - [ ] Editor: `AnchorsView` (conditional)
+    - [ ] Editor: `OutputView` (OUT / HUMAN)
+    - [ ] Editor: `PresetView` (PRESET dropdown + SEED row)
+    - [ ] Manual host smoke: load in Live (2-track routing), switch
+      slots audibly, edit a cell via the drawer, save Live set, reopen,
+      verify state survives
 - [ ] **Phase 6 — Onboarding overlay + Standalone polish + visual identity**
   - Live first-run onboarding overlay (`PluginHostType().isAbletonLive()`-
     gated): full-bleed, dismissible, persisted in `juce::PropertiesFile`.
@@ -605,9 +671,8 @@ Each phase ends with `make test` green.
     release artefact so 2-track setup is one drag (per §"DAW integration")
   - Standalone build minimal polish: IAC bus discovery on macOS, MIDI
     output port picker, window state persistence, "About" with version
-  - Visual identity pass — pull palette / typography toward inboil's
-    `TonnetzSheet` reference (cream background, olive accents, monospace
-    data font); fix any remaining UTF-8 rendering issues
+  - Visual identity sweep — fix any remaining UTF-8 / glyph fallback
+    issues (Theme palette and typography already established in Phase 5)
 - [ ] **Phase 7 — Manual host smoke + ship**
   - Load VST3 in Live (macOS) with the documented 2-track routing; save
     Live set; reopen; verify state + Tonnetz output survive. No crash;

@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "Engine/SlotBank.h"
 #include "Engine/State.h"
 #include "Engine/Tonnetz.h"
 #include "Engine/Walker.h"
@@ -32,11 +33,12 @@
 namespace oedipa {
 namespace plugin {
 
-class OedipaProcessor : public juce::AudioProcessor
+class OedipaProcessor : public juce::AudioProcessor,
+                        private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     static constexpr int kCellCount = 8;
-    static constexpr int kSlotCount = 4;
+    static constexpr int kSlotCount = engine::kSlotCount;
     static constexpr int kStateVersion = 1;
 
     // Bus-configuration factory. Per ADR 008 §"DAW integration":
@@ -54,7 +56,7 @@ public:
     static BusesProperties makeBusesProperties(bool addLiveStubOutput);
 
     OedipaProcessor();
-    ~OedipaProcessor() override = default;
+    ~OedipaProcessor() override;
 
     // --- juce::AudioProcessor overrides -------------------------------------
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
@@ -84,13 +86,46 @@ public:
     const juce::AudioProcessorValueTreeState& getApvts() const { return apvts; }
 
     engine::Triad getStartChord() const { return startChord; }
-    void setStartChord(engine::Triad value) { startChord = value; }
+    void setStartChord(engine::Triad value);
 
     const engine::Cell& getCell(int idx) const { return cells.at((std::size_t) idx); }
-    void setCell(int idx, const engine::Cell& cell) { cells.at((std::size_t) idx) = cell; }
+    void setCell(int idx, const engine::Cell& cell);
 
-    const engine::Slot& getSlot(int idx) const { return slots.at((std::size_t) idx); }
-    void setSlot(int idx, const engine::Slot& slot) { slots.at((std::size_t) idx) = slot; }
+    // Drawer-side mutator — change one numeric field of the cell at `idx`
+    // without disturbing op or other fields. Out-of-range idx and NaN
+    // values are silently ignored (matches m4l host.setCellField). Does
+    // NOT auto-save: per-cell vel/gate/prob/timing are device-shared, not
+    // per-slot, per ADR 006 §"Axis 1" — the active slot only stores ops.
+    void setCellField(int idx, engine::CellField field, float value);
+
+    // Slot bank accessors. setSlot is rehydration-only — it stores into the
+    // bank without applying to live state or changing the active index.
+    const engine::Slot& getSlot(int idx) const { return bank.slotAt(idx); }
+    void setSlot(int idx, const engine::Slot& slot) { bank.setSlot(idx, slot); }
+    int activeSlotIndex() const { return bank.activeIndex(); }
+    const engine::SlotBank& getSlotBank() const { return bank; }
+
+    // === SlotBank wiring (ADR 008 Phase 5) ==================================
+    // Snapshot the current live state into a Slot. Reads cells.op[i],
+    // identifies startChord, and pulls jitter/seed from APVTS.
+    engine::Slot captureSlot() const;
+
+    // Apply a slot to live state. Writes cells.op (leaves vel/gate/prob/
+    // timing untouched — those are device-shared per m4l ADR 006 §"Axis 1"),
+    // rebuilds startChord at the current octave, and writes jitter/seed
+    // into APVTS. Auto-save is suppressed during the call so the slot the
+    // caller passed in stays the source of truth, not a partial-mid-apply
+    // capture.
+    void applySlot(const engine::Slot& slot);
+
+    // Switch the active slot and apply its contents to live state. Out-of-
+    // range index is a no-op.
+    void switchSlot(int idx);
+
+    // Mirror current live state into the active slot. Hooked from setCell /
+    // setStartChord and from parameterChanged for jitter / seed / length.
+    // Public so the editor can call it explicitly after composite edits.
+    void syncActiveSlot();
 
     const std::vector<engine::Anchor>& getAnchors() const { return anchors; }
     void setAnchors(std::vector<engine::Anchor> value) { anchors = std::move(value); }
@@ -138,8 +173,15 @@ private:
 
     engine::Triad startChord{60, 64, 67};   // C major (C4 E4 G4)
     std::array<engine::Cell, kCellCount> cells{};
-    std::array<engine::Slot, kSlotCount> slots{};
+    engine::SlotBank bank{};
     std::vector<engine::Anchor> anchors{};
+
+    // Defangs auto-save recursion during applySlot / setStateInformation:
+    // listener fires from APVTS writes are no-ops while this is true.
+    bool suppressAutoSave = false;
+
+    // juce::AudioProcessorValueTreeState::Listener
+    void parameterChanged(const juce::String& parameterID, float newValue) override;
 
     // Walker state — tracked across processBlock calls.
     //   lastSubStep: highest sub-step pos already emitted (-1 = nothing
