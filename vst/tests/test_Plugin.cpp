@@ -365,36 +365,38 @@ TEST_CASE("State round-trip — empty anchors round-trip cleanly", "[plugin][sta
     CHECK(sink.getAnchors().empty());
 }
 
-TEST_CASE("Phase 3 input contract — note events dropped, non-note pass through", "[plugin][midi]")
+TEST_CASE("Phase 3 input contract — notes & sysex dropped, CC pass through", "[plugin][midi]")
 {
     // Phase 3 owns note emission via the walker; ADR 004 (keyboard-driven
     // startChord) is a later phase. Until then, INPUT NOTES are dropped
-    // so they don't double the walker. NON-NOTE messages (CC, pitch
-    // bend, sustain pedal, system) pass through — Logic relies on
-    // synthesizing transport-start sync messages downstream, and a
-    // blanket clear stripped those, producing an audible click on the
-    // synth at play start (user report 2026-05-06).
+    // so they don't double the walker. SYSEX is also dropped — Logic Pro
+    // injects sysex (6 + 406 bytes) at transport-start that we have no
+    // contract to relay. CC / pitch-bend / sustain / channel-pressure
+    // continue to pass through to the downstream synth.
     OedipaProcessor p;
     p.prepareToPlay(44100.0, 512);
 
+    const juce::uint8 sysexBytes[] = {0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7};
     juce::MidiBuffer midi;
     midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
-    midi.addEvent(juce::MidiMessage::controllerEvent(2, 11, 64), 64);
+    midi.addEvent(juce::MidiMessage::controllerEvent(2, 11, 64), 32);
+    midi.addEvent(juce::MidiMessage::createSysExMessage(sysexBytes, sizeof(sysexBytes)), 64);
     midi.addEvent(juce::MidiMessage::noteOff(1, 60), 256);
 
     juce::AudioBuffer<float> audio(0, 512);
-    // No playhead set: walker can't fire. Notes get filtered out, the CC
-    // survives.
     p.processBlock(audio, midi);
 
     int notes = 0;
     int ccs   = 0;
+    int sysex = 0;
     for (const auto meta : midi) {
         const auto m = meta.getMessage();
         if (m.isNoteOn() || m.isNoteOff()) ++notes;
         else if (m.isController())         ++ccs;
+        else if (m.isSysEx())              ++sysex;
     }
     CHECK(notes == 0);
+    CHECK(sysex == 0);
     CHECK(ccs   == 1);
 
     p.releaseResources();
@@ -619,6 +621,57 @@ TEST_CASE("Phase 3 walker — backward scrub panics held + resyncs from new pos"
     const auto offs = noteSet(notes, false);
     CHECK(! offs.empty());
     CHECK(pcSet(ons) == std::set<int>{0, 3, 7});  // C minor again
+
+    p.releaseResources();
+    p.setPlayHead(nullptr);
+}
+
+TEST_CASE("Walker — transport resume from non-zero ppq does not replay history", "[plugin][walker][resume]")
+{
+    // Logic Pro resumes playback from the stopped position rather than
+    // rewinding to bar 1. Before the resume-skip fix, lastSubStep=-1
+    // (set by the transport-stop branch) combined with a non-zero
+    // currentSubStep made the catch-up loop iterate steps [0..currentSubStep],
+    // emitting every cell-boundary chord at sample offset 0 of the
+    // first block — audible as a click + cascade of simultaneous noteOns,
+    // visible as a flash of the pre-stop chord history.
+    //
+    // Threshold derivation:
+    //   - resume at ppq=5.0 → currentSubStep = floor(5.0 * 4) = 20
+    //   - spt=4, length=3 → boundaries cross at steps {0, 4, 8, 12, 16, 20}
+    //     = 6 cell boundaries. Without the fix, all 6 chord transitions
+    //     fire at offset 0 (≥18 noteOns: 6 chords × 3 notes/triad).
+    //   - With the fix, only the resume position fires (1 chord = 3 notes
+    //     for a triad, no arp), all at sample offset 0 of this single block.
+    //   - Assert ≤ 6 noteOns to pin "no cascade" while leaving headroom
+    //     for any single-chord arp or future single-fire variation.
+    OedipaProcessor p;
+    auto& apvts = p.getApvts();
+    *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 4;
+    *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 3;
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::voicing)        = 0;  // close
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::chordQuality)   = 0;  // triad
+
+    p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::P, 1, 1, 1, 0});
+    p.setCell(1, oedipa::engine::Cell{oedipa::engine::Op::L, 1, 1, 1, 0});
+    p.setCell(2, oedipa::engine::Cell{oedipa::engine::Op::R, 1, 1, 1, 0});
+
+    FakePlayHead playHead;
+    p.setPlayHead(&playHead);
+    p.prepareToPlay(44100.0, 512);
+
+    // Cold start at ppq=5.0 (= sub-step 20). Walker has lastSubStep=-1
+    // (no prior block emitted). This is the resume-after-stop scenario.
+    juce::AudioBuffer<float> audio(0, 512);
+    juce::MidiBuffer midi;
+    playHead.ppq = 5.0;
+    p.processBlock(audio, midi);
+
+    int noteOns = 0;
+    for (const auto meta : midi) {
+        if (meta.getMessage().isNoteOn()) ++noteOns;
+    }
+    CHECK(noteOns <= 6);
 
     p.releaseResources();
     p.setPlayHead(nullptr);

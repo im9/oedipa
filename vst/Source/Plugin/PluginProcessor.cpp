@@ -315,19 +315,22 @@ void OedipaProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBu
 
     // Drop region / keyboard NOTES so the walker is the sole note source
     // (ADR 004 keyboard-driven startChord ships later — letting region
-    // notes through doubles them with the walker). But keep every
-    // non-note message (CC, sustain pedal, pitch-bend, channel pressure,
-    // system messages) so the downstream synth still sees the host's
-    // transport / sustain / state-init signals. A blanket midi.clear()
-    // wiped Logic's transport-start sync messages and produced an
-    // audible click at play start (user report 2026-05-06): the synth
-    // started attacking notes from a state Logic expected to have
-    // initialised via those messages.
+    // notes through doubles them with the walker). Drop sysex too:
+    // diagnostic log 2026-05-06 showed Logic injects a 6-byte and a
+    // 406-byte sysex at sample 0 of transport-start in the click-
+    // reproducing scenario; click was absent in plays where Logic
+    // sent no sysex. Whether the sysex is the click cause or only a
+    // correlate is empirically untested at the time of this comment;
+    // in either case we have no reason to relay sysex to the downstream
+    // synth (we generate none ourselves, and the host's own sysex is
+    // not part of MIDI fx contract). Non-sysex non-note messages
+    // (CC, sustain pedal, pitch-bend, channel pressure) still pass
+    // through to the synth.
     {
         juce::MidiBuffer kept;
         for (const auto meta : midi) {
             const auto m = meta.getMessage();
-            if (m.isNoteOn() || m.isNoteOff()) continue;
+            if (m.isNoteOn() || m.isNoteOff() || m.isSysEx()) continue;
             kept.addEvent(m, meta.samplePosition);
         }
         midi.swapWith(kept);
@@ -431,6 +434,19 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
     // Honour a RATE change made via parameterChanged: drop the cached
     // cell event so the next boundary picks up the new spt.
     if (cellStateDirty.exchange(false, std::memory_order_acquire)) {
+        currentCellEvent.reset();
+        fireIdxThisCell = 0;
+    }
+
+    // Transport-resume from non-zero ppq (Logic resumes at the stopped
+    // position rather than rewinding to bar 1). lastSubStep was reset
+    // to -1 on stop; without this, the catch-up loop below would replay
+    // every step from 0 to currentSubStep at sample offset 0, producing
+    // a burst of stacked noteOns and a visible flash of the pre-stop
+    // chord history. Skip ahead so the loop only fires the resume
+    // position.
+    if (lastSubStep == -1 && currentSubStep > 0) {
+        lastSubStep = currentSubStep - 1;
         currentCellEvent.reset();
         fireIdxThisCell = 0;
     }

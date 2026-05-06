@@ -1,4 +1,5 @@
 build/
+build-asan/
 .DS_Store
 *.user
 node_modules/
