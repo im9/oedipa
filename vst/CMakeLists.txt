@@ -45,6 +45,9 @@ add_library(oedipa_engine STATIC
     Source/Engine/SlotBank.cpp
     Source/Engine/SlotBank.h
     Source/Engine/Presets.h
+    Source/Engine/Rng.h
+    Source/Engine/Rhythm.cpp
+    Source/Engine/Rhythm.h
 )
 target_include_directories(oedipa_engine PUBLIC Source)
 target_compile_features(oedipa_engine PUBLIC cxx_std_17)
@@ -161,6 +164,7 @@ add_executable(oedipa_tests
     tests/test_SlotBank.cpp
     tests/test_PluginSlotBank.cpp
     tests/test_Editor.cpp
+    tests/test_Rhythm.cpp
 )
 target_link_libraries(oedipa_tests PRIVATE
     oedipa_engine

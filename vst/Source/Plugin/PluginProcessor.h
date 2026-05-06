@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include "Engine/Rhythm.h"
+#include "Engine/Rng.h"
 #include "Engine/SlotBank.h"
 #include "Engine/State.h"
 #include "Engine/Tonnetz.h"
@@ -27,6 +29,7 @@
 
 #include <array>
 #include <atomic>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -178,6 +181,37 @@ private:
     //   held: (channel, midiNote) currently sounding from walker output.
     std::atomic<int> lastSubStep{-1};
     std::vector<std::pair<int, int>> held;
+
+    // Sub-step rhythm/arp state (mirrors m4l host.ts:140-156). The walker
+    // computes a fresh chord at every cell boundary; rhythm gating decides
+    // which sub-steps within the cell fire, ARP picker selects the voiced
+    // index, and the turing register evolves per sub-step.
+    //   currentCellEvent — chord/cellIdx/played from the most recent cell
+    //                      boundary's walkStepEvent, replayed for the
+    //                      sub-step refires inside the cell.
+    //   fireIdxThisCell  — count of arp-active fires since the cell head.
+    //                      Reset at every cell boundary EXCEPT under
+    //                      legato + arp where the cycle spans cells.
+    //   arpRng           — mulberry32 stream consumed by ArpMode::Random.
+    //                      Reseeded from `seed` on transport restart.
+    //   turingState      — register + private rng. Reseeded from
+    //                      (turingLength, turingSeed) on transport restart
+    //                      and on those params changing.
+    //   lastTuringLength / lastTuringSeed — cached so parameterChanged can
+    //                      tell when to rebuild turingState without
+    //                      reseeding on every callback.
+    std::optional<engine::StepEvent> currentCellEvent{};
+    int                              fireIdxThisCell = 0;
+    engine::Mulberry32               arpRng{0u};
+    engine::TuringRhythmState        turingState = engine::makeTuringState(8, 0u);
+    int                              lastSeedForArpRng = 0;
+    int                              lastTuringLength = 8;
+    int                              lastTuringSeed = 0;
+    // Set by `parameterChanged` when stepsPerTransform changes; consumed
+    // (and cleared) at the top of the next handleWalkerMidi sub-step
+    // catch-up loop. Lets a RATE change take effect at the next sub-step
+    // boundary rather than waiting for the old cell to finish.
+    std::atomic<bool>                cellStateDirty{false};
 
     // Preview MIDI (lattice tap / long-press audition). Lock-free hand-off:
     // the editor stores `pendingPreviewChord`, then flips

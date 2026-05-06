@@ -365,13 +365,15 @@ TEST_CASE("State round-trip — empty anchors round-trip cleanly", "[plugin][sta
     CHECK(sink.getAnchors().empty());
 }
 
-TEST_CASE("Phase 3 input contract — input MIDI is dropped (no ADR 004 wiring yet)", "[plugin][midi]")
+TEST_CASE("Phase 3 input contract — note events dropped, non-note pass through", "[plugin][midi]")
 {
-    // Phase 3 owns MIDI output via the walker. ADR 004 (keyboard-driven
-    // startChord) is a later phase; until then, passing input through
-    // would mix keyboard notes into the walker output. The cleaner
-    // contract is to drop input MIDI entirely so manual smoke testing
-    // hears only the walker.
+    // Phase 3 owns note emission via the walker; ADR 004 (keyboard-driven
+    // startChord) is a later phase. Until then, INPUT NOTES are dropped
+    // so they don't double the walker. NON-NOTE messages (CC, pitch
+    // bend, sustain pedal, system) pass through — Logic relies on
+    // synthesizing transport-start sync messages downstream, and a
+    // blanket clear stripped those, producing an audible click on the
+    // synth at play start (user report 2026-05-06).
     OedipaProcessor p;
     p.prepareToPlay(44100.0, 512);
 
@@ -381,12 +383,19 @@ TEST_CASE("Phase 3 input contract — input MIDI is dropped (no ADR 004 wiring y
     midi.addEvent(juce::MidiMessage::noteOff(1, 60), 256);
 
     juce::AudioBuffer<float> audio(0, 512);
-    // No playhead set: walker can't fire, but input still gets cleared.
+    // No playhead set: walker can't fire. Notes get filtered out, the CC
+    // survives.
     p.processBlock(audio, midi);
 
-    int numEvents = 0;
-    for (const auto meta : midi) { (void) meta; ++numEvents; }
-    CHECK(numEvents == 0);
+    int notes = 0;
+    int ccs   = 0;
+    for (const auto meta : midi) {
+        const auto m = meta.getMessage();
+        if (m.isNoteOn() || m.isNoteOff()) ++notes;
+        else if (m.isController())         ++ccs;
+    }
+    CHECK(notes == 0);
+    CHECK(ccs   == 1);
 
     p.releaseResources();
 }
@@ -468,18 +477,25 @@ TEST_CASE("Phase 3 walker — fires expected chord progression at transform boun
     p.setPlayHead(&playHead);
     p.prepareToPlay(44100.0, 512);
 
-    // Block 1 — playhead at ppq=0 (sub-step 0): no boundary crossed yet.
+    // Block 1 — playhead at ppq=0 (sub-step 0). m4l host.ts:471-484 fires
+    // startChord at the cell head (synthetic init event with cellIdx=-1
+    // played=true). The walker emits the held chord here; subsequent
+    // boundaries apply transforms.
     {
         juce::AudioBuffer<float> audio(0, 512);
         juce::MidiBuffer midi;
         playHead.ppq = 0.0;
         p.processBlock(audio, midi);
         const auto notes = collectNotes(midi);
-        CHECK(notes.empty());
+        REQUIRE(! notes.empty());
+        const auto ons  = noteSet(notes, true);
+        const auto offs = noteSet(notes, false);
+        CHECK(offs.empty());                          // first fire, nothing to release
+        CHECK(pcSet(ons) == std::set<int>{0, 4, 7});  // C major (startChord)
     }
 
     // Block 2 — playhead jumps to ppq=0.25 (sub-step 1, P boundary).
-    // Expect: note-on for C minor (PCs 0,3,7).
+    // Expect: note-off for C major (head fire) + note-on for C minor.
     {
         juce::AudioBuffer<float> audio(0, 512);
         juce::MidiBuffer midi;
@@ -489,8 +505,8 @@ TEST_CASE("Phase 3 walker — fires expected chord progression at transform boun
         REQUIRE(!notes.empty());
         const auto ons  = noteSet(notes, true);
         const auto offs = noteSet(notes, false);
-        CHECK(offs.empty());                          // no prior chord to release
-        CHECK(pcSet(ons) == std::set<int>{0, 3, 7});  // C minor
+        CHECK(pcSet(offs) == std::set<int>{0, 4, 7});  // released C major
+        CHECK(pcSet(ons)  == std::set<int>{0, 3, 7});  // C minor
     }
 
     // Block 3 — ppq=0.5 (sub-step 2, L boundary).
@@ -644,4 +660,186 @@ TEST_CASE("Phase 3 walker — anchor-reset semantics flow through processBlock",
 
     p.releaseResources();
     p.setPlayHead(nullptr);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Integration tests: each APVTS parameter that the editor exposes must
+// have an audible effect at processBlock. These cases cover the wiring
+// gaps surfaced during the Phase-5 audit: rhythm, arp, per-cell velocity.
+// They are deliberately end-to-end (param → processBlock → MIDI bytes)
+// so the next port that forgets to wire a parameter fails here, not in
+// manual host-smoke months later.
+// ──────────────────────────────────────────────────────────────────────────
+
+namespace {
+// Drive the plugin one sub-step at a time and collect attack note-ons in
+// the produced MIDI for that block. Returns sorted note numbers (0..127).
+std::vector<int> attackNotesAt(OedipaProcessor& p,
+                               FakePlayHead& playHead,
+                               double targetPpq)
+{
+    juce::AudioBuffer<float> audio(0, 512);
+    juce::MidiBuffer midi;
+    playHead.ppq = targetPpq;
+    p.processBlock(audio, midi);
+    std::vector<int> out;
+    for (const auto meta : midi) {
+        const auto m = meta.getMessage();
+        if (m.isNoteOn()) out.push_back(m.getNoteNumber());
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+int firstAttackVelocityAt(OedipaProcessor& p,
+                          FakePlayHead& playHead,
+                          double targetPpq)
+{
+    juce::AudioBuffer<float> audio(0, 512);
+    juce::MidiBuffer midi;
+    playHead.ppq = targetPpq;
+    p.processBlock(audio, midi);
+    for (const auto meta : midi) {
+        const auto m = meta.getMessage();
+        if (m.isNoteOn()) return m.getVelocity();
+    }
+    return -1;
+}
+}  // namespace
+
+TEST_CASE("APVTS rhythm — Onbeat fires only on quarter-note grid", "[plugin][rhythm][integration]")
+{
+    OedipaProcessor p;
+    auto& apvts = p.getApvts();
+
+    *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 16;  // long cell so all sub-steps stay inside cell 0
+    *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 1;
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::voicing)        = 0;   // close
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::chordQuality)   = 0;   // triad
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::rhythm)         = 2;   // onbeat (idx % 4 == 0)
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::arp)            = 0;   // off
+
+    p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::Hold, 1, 1, 1, 0});
+
+    FakePlayHead playHead;
+    p.setPlayHead(&playHead);
+    p.prepareToPlay(44100.0, 512);
+
+    // sub-steps 0..7 within the cell. Onbeat fires at idx 0 + 4 only.
+    CHECK(attackNotesAt(p, playHead, 0.0  ).size() > 0);  // idx 0 — head fire
+    CHECK(attackNotesAt(p, playHead, 0.25 ).empty());      // idx 1
+    CHECK(attackNotesAt(p, playHead, 0.5  ).empty());      // idx 2
+    CHECK(attackNotesAt(p, playHead, 0.75 ).empty());      // idx 3
+    CHECK(attackNotesAt(p, playHead, 1.0  ).size() > 0);  // idx 4
+    CHECK(attackNotesAt(p, playHead, 1.25 ).empty());      // idx 5
+    CHECK(attackNotesAt(p, playHead, 1.75 ).empty());      // idx 7
+
+    p.releaseResources();
+    p.setPlayHead(nullptr);
+}
+
+TEST_CASE("APVTS rhythm — Legato fires only at the cell head", "[plugin][rhythm][integration]")
+{
+    OedipaProcessor p;
+    auto& apvts = p.getApvts();
+
+    *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 4;
+    *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 1;
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::rhythm)         = 1;   // legato
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::arp)            = 0;   // off
+
+    // Op::P (not Hold) — Hold sets played=false in walkStepEvent so the
+    // walker never fires at cell boundaries with Hold cells, regardless
+    // of rhythm. Legato gating is layered ON TOP of `played`.
+    p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::P, 1, 1, 1, 0});
+
+    FakePlayHead playHead;
+    p.setPlayHead(&playHead);
+    p.prepareToPlay(44100.0, 512);
+
+    CHECK(attackNotesAt(p, playHead, 0.0).size() > 0);   // head fire (init)
+    CHECK(attackNotesAt(p, playHead, 0.25).empty());      // mid-cell silent under legato
+    CHECK(attackNotesAt(p, playHead, 0.5).empty());
+    CHECK(attackNotesAt(p, playHead, 0.75).empty());
+    // ppq=1.0 = sub-step 4 = next cell boundary, op=P, played=true:
+    // legato gating allows the head fire.
+    CHECK(attackNotesAt(p, playHead, 1.0).size() > 0);
+
+    p.releaseResources();
+    p.setPlayHead(nullptr);
+}
+
+TEST_CASE("APVTS arp — Up fires a single note that walks the voiced chord", "[plugin][arp][integration]")
+{
+    OedipaProcessor p;
+    auto& apvts = p.getApvts();
+
+    *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 16;  // long cell
+    *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 1;
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::voicing)        = 0;   // close — 3-note voicing
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::chordQuality)   = 0;   // triad (3 notes)
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::rhythm)         = 0;   // all (every sub-step fires)
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::arp)            = 1;   // up
+
+    p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::Hold, 1, 1, 1, 0});
+
+    FakePlayHead playHead;
+    p.setPlayHead(&playHead);
+    p.prepareToPlay(44100.0, 512);
+
+    // Each sub-step should emit exactly one note (the arp picks one voiced
+    // index per fire). Walks 0,1,2,0,1,2 over a 3-note triad.
+    const auto a0 = attackNotesAt(p, playHead, 0.0);
+    const auto a1 = attackNotesAt(p, playHead, 0.25);
+    const auto a2 = attackNotesAt(p, playHead, 0.5);
+    const auto a3 = attackNotesAt(p, playHead, 0.75);
+    REQUIRE(a0.size() == 1);
+    REQUIRE(a1.size() == 1);
+    REQUIRE(a2.size() == 1);
+    REQUIRE(a3.size() == 1);
+    // Up cycles 0,1,2,0 so index 0 and index 3 land on the same note.
+    CHECK(a0[0] == a3[0]);
+    CHECK(a0[0] != a1[0]);
+    CHECK(a1[0] != a2[0]);
+
+    p.releaseResources();
+    p.setPlayHead(nullptr);
+}
+
+TEST_CASE("APVTS per-cell velocity — scales the output noteOn velocity", "[plugin][cells][integration]")
+{
+    // Set spt=1 so EVERY sub-step is a cell boundary — this ensures the
+    // attack at sub-step 1 reflects cells[0]'s velocity (cellIdx=0), not
+    // the synthetic init event (cellIdx=-1, which uses default velocity).
+    auto velocityAt = [](float cellVel) {
+        OedipaProcessor p;
+        auto& apvts = p.getApvts();
+        *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 1;
+        *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 1;
+        *paramAs<juce::AudioParameterFloat>(apvts, pid::outputLevel)     = 1.0f;
+        p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::P, cellVel, 1.0f, 1.0f, 0.0f});
+
+        FakePlayHead playHead;
+        p.setPlayHead(&playHead);
+        p.prepareToPlay(44100.0, 512);
+
+        // Pump sub-step 0 (init fire) so we're past the synthetic init
+        // event when we measure.
+        attackNotesAt(p, playHead, 0.0);
+        // sub-step 1 is the first walkStepEvent boundary (spt=1) → its
+        // cellIdx is 0, so cells[0].velocity scales the noteOn.
+        const int v = firstAttackVelocityAt(p, playHead, 0.25);
+
+        p.releaseResources();
+        p.setPlayHead(nullptr);
+        return v;
+    };
+
+    const int v100 = velocityAt(1.0f);
+    const int v050 = velocityAt(0.5f);
+    const int v010 = velocityAt(0.1f);
+
+    CHECK(v100 > v050);
+    CHECK(v050 > v010);
+    CHECK(v010 >= 1);  // velocity 0 is conventionally a noteOff; clamp to ≥ 1.
 }

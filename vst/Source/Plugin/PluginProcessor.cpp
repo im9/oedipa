@@ -82,16 +82,34 @@ OedipaProcessor::OedipaProcessor()
     // startChord are routed through their own setters; jitter/seed/length
     // need a listener because the editor + tests mutate them via the
     // parameter API directly.
-    apvts.addParameterListener(pid::jitter, this);
-    apvts.addParameterListener(pid::seed,   this);
-    apvts.addParameterListener(pid::length, this);
+    apvts.addParameterListener(pid::jitter,            this);
+    apvts.addParameterListener(pid::seed,              this);
+    apvts.addParameterListener(pid::length,            this);
+    apvts.addParameterListener(pid::turingLength,      this);
+    apvts.addParameterListener(pid::turingSeed,        this);
+    apvts.addParameterListener(pid::stepsPerTransform, this);
+
+    // Seed the rhythm/arp state from the initial APVTS values so a fresh
+    // processor has a deterministic stochastic stream from the first
+    // processBlock — same contract as walkStepEvent's seed.
+    const int seed0 = (int) *apvts.getRawParameterValue(pid::seed);
+    const int tLen0 = (int) *apvts.getRawParameterValue(pid::turingLength);
+    const int tSed0 = (int) *apvts.getRawParameterValue(pid::turingSeed);
+    arpRng            = engine::Mulberry32{(std::uint32_t) seed0};
+    lastSeedForArpRng = seed0;
+    turingState       = engine::makeTuringState(tLen0, (std::uint32_t) tSed0);
+    lastTuringLength  = tLen0;
+    lastTuringSeed    = tSed0;
 }
 
 OedipaProcessor::~OedipaProcessor()
 {
-    apvts.removeParameterListener(pid::jitter, this);
-    apvts.removeParameterListener(pid::seed,   this);
-    apvts.removeParameterListener(pid::length, this);
+    apvts.removeParameterListener(pid::jitter,            this);
+    apvts.removeParameterListener(pid::seed,              this);
+    apvts.removeParameterListener(pid::length,            this);
+    apvts.removeParameterListener(pid::turingLength,      this);
+    apvts.removeParameterListener(pid::turingSeed,        this);
+    apvts.removeParameterListener(pid::stepsPerTransform, this);
 }
 
 void OedipaProcessor::setStartChord(engine::Triad value)
@@ -178,6 +196,34 @@ void OedipaProcessor::parameterChanged(const juce::String& parameterID, float)
     if (parameterID == pid::jitter || parameterID == pid::seed || parameterID == pid::length) {
         syncActiveSlot();
     }
+    // Seed change reseeds the ARP rng so the random-arp stream tracks the
+    // user-visible seed. Same contract m4l host.ts:179-181 enforces.
+    if (parameterID == pid::seed) {
+        const int seedNow = (int) *apvts.getRawParameterValue(pid::seed);
+        if (seedNow != lastSeedForArpRng) {
+            arpRng = engine::Mulberry32{(std::uint32_t) seedNow};
+            lastSeedForArpRng = seedNow;
+        }
+    }
+    // Turing register init is a function of (length, seed); rebuild on any
+    // change. Lock is read live in turingFires, no rebuild needed.
+    if (parameterID == pid::turingLength || parameterID == pid::turingSeed) {
+        const int tLen = (int) *apvts.getRawParameterValue(pid::turingLength);
+        const int tSed = (int) *apvts.getRawParameterValue(pid::turingSeed);
+        if (tLen != lastTuringLength || tSed != lastTuringSeed) {
+            turingState = engine::makeTuringState(tLen, (std::uint32_t) tSed);
+            lastTuringLength = tLen;
+            lastTuringSeed   = tSed;
+        }
+    }
+    // RATE change: invalidate the cached cell event so the next sub-step
+    // re-pulls a fresh chord from the walker at the new spt boundary.
+    // Without this, the walker keeps replaying the previously-cached
+    // cell until the OLD (stale-spt) boundary lands, which is what the
+    // user perceives as "RATE doesn't take effect immediately".
+    if (parameterID == pid::stepsPerTransform) {
+        cellStateDirty.store(true, std::memory_order_release);
+    }
 }
 
 void OedipaProcessor::prepareToPlay(double newSampleRate, int)
@@ -257,18 +303,35 @@ void OedipaProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBu
 {
     juce::ScopedNoDenormals noDenormals;
 
-    // MIDI effect: zero audio channels, but processBlock can still receive
-    // a sized buffer in some hosts. Clear it defensively.
-    for (int ch = 0; ch < audio.getNumChannels(); ++ch) {
-        audio.clear(ch, 0, audio.getNumSamples());
-    }
+    // MIDI effect: do NOT clear `audio`. Even though `IS_MIDI_EFFECT TRUE`
+    // means the host should pass zero audio channels, some hosts (Logic
+    // among them) defensively hand us a buffer with channels carrying
+    // residual samples — clearing those to zero introduces a sample-step
+    // discontinuity that the downstream synth path renders as a click on
+    // transport-start (and at any sub-step where we'd otherwise be
+    // silent under e.g. rhythm='offbeat'). User report 2026-05-06.
+    // The buffer is left untouched; we only emit MIDI.
+    juce::ignoreUnused(audio);
 
-    // Phase 3 contract: input MIDI is dropped. Output is purely the
-    // walker — keyboard-driven startChord (ADR 004) ships in a later
-    // phase. Letting the input doubled with the walker would turn
-    // Oedipa into a monitor instead of a generator, defeating the
-    // engine wiring under test.
-    midi.clear();
+    // Drop region / keyboard NOTES so the walker is the sole note source
+    // (ADR 004 keyboard-driven startChord ships later — letting region
+    // notes through doubles them with the walker). But keep every
+    // non-note message (CC, sustain pedal, pitch-bend, channel pressure,
+    // system messages) so the downstream synth still sees the host's
+    // transport / sustain / state-init signals. A blanket midi.clear()
+    // wiped Logic's transport-start sync messages and produced an
+    // audible click at play start (user report 2026-05-06): the synth
+    // started attacking notes from a state Logic expected to have
+    // initialised via those messages.
+    {
+        juce::MidiBuffer kept;
+        for (const auto meta : midi) {
+            const auto m = meta.getMessage();
+            if (m.isNoteOn() || m.isNoteOff()) continue;
+            kept.addEvent(m, meta.samplePosition);
+        }
+        midi.swapWith(kept);
+    }
 
     handlePreviewMidi(midi, audio.getNumSamples());
     handleWalkerMidi(midi);
@@ -329,6 +392,9 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
         // doesn't see dangling MIDI, then idle.
         if (! held.empty()) emitPanic(midi, 0);
         lastSubStep = -1;
+        // Clear sub-step state so the next start re-runs the init path.
+        currentCellEvent.reset();
+        fireIdxThisCell = 0;
         return;
     }
 
@@ -336,6 +402,8 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
     if (! ppqOpt.hasValue()) {
         if (! held.empty()) emitPanic(midi, 0);
         lastSubStep = -1;
+        currentCellEvent.reset();
+        fireIdxThisCell = 0;
         return;
     }
 
@@ -348,30 +416,117 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
         // Backward jump (loop wrap or user scrub): the walker's PRNG-fresh
         // contract still computes correct chords at the new pos, but any
         // notes held from before would dangle until the next attack.
-        // Panic + reset so the catch-up loop fires from the new pos.
+        // Panic + reset rhythm/arp/turing state so the catch-up loop fires
+        // from the new pos with a fresh stochastic stream (matches m4l's
+        // pendingPosReset path in host.ts:435-446).
         emitPanic(midi, 0);
         lastSubStep = currentSubStep - 1;
+        currentCellEvent.reset();
+        fireIdxThisCell = 0;
+        const int seedNow = (int) *apvts.getRawParameterValue(pid::seed);
+        arpRng = engine::Mulberry32{(std::uint32_t) seedNow};
+        turingState = engine::makeTuringState(lastTuringLength, (std::uint32_t) lastTuringSeed);
+    }
+
+    // Honour a RATE change made via parameterChanged: drop the cached
+    // cell event so the next boundary picks up the new spt.
+    if (cellStateDirty.exchange(false, std::memory_order_acquire)) {
+        currentCellEvent.reset();
+        fireIdxThisCell = 0;
     }
 
     if (currentSubStep == lastSubStep) return;  // no boundaries crossed
 
-    const auto state = makeWalkState();
+    const auto state    = makeWalkState();
+    const int  channel  = (int) *apvts.getRawParameterValue(pid::channel);
+    const auto voicing  = (engine::Voicing) (int) *apvts.getRawParameterValue(pid::voicing);
+    const bool seventh  = ((int) *apvts.getRawParameterValue(pid::chordQuality)) == 1;
+    const float outLvl  = *apvts.getRawParameterValue(pid::outputLevel);
+    const int  spt      = std::max(1, (int) *apvts.getRawParameterValue(pid::stepsPerTransform));
+    const auto rhythm   = (engine::RhythmPreset) (int) *apvts.getRawParameterValue(pid::rhythm);
+    const auto arp      = (engine::ArpMode)      (int) *apvts.getRawParameterValue(pid::arp);
+    const float tLock   = *apvts.getRawParameterValue(pid::turingLock);
 
-    const int channel  = (int) *apvts.getRawParameterValue(pid::channel);
-    const auto voicing = (engine::Voicing) (int) *apvts.getRawParameterValue(pid::voicing);
-    const bool seventh = ((int) *apvts.getRawParameterValue(pid::chordQuality)) == 1;
-    const float outLvl = *apvts.getRawParameterValue(pid::outputLevel);
-
-    // Phase 3 simplification: every fired event is emitted at sample 0
-    // of the current block. Sub-block timing precision (mapping a
-    // sub-step's exact ppq into a sample offset within the block) is a
-    // Phase 5 / 6 polish concern — typical block sizes (≤ 512 samples,
-    // ≤ ~12 ms @ 44.1 kHz) are well below a 16th note at ordinary
-    // tempos, so the timing offset is musically inaudible here.
     for (int step = lastSubStep + 1; step <= currentSubStep; ++step) {
-        const auto ev = engine::walkStepEvent(state, step);
-        if (! ev || ! ev->played) continue;
-        emitChord(midi, ev->chord, voicing, seventh, channel, outLvl, /*sampleOffset=*/0);
+        // Init synthetic event at step==0 — same shape as m4l's pos=0 path
+        // (host.ts:471-484): startChord with cellIdx=-1, played=true, used
+        // for the head fire and any sub-step refires before pos>=spt.
+        if (step == 0) {
+            engine::StepEvent init{};
+            init.cellIdx    = -1;
+            init.resolvedOp = engine::Op::Hold;
+            init.chord      = startChord;
+            init.played     = true;
+            currentCellEvent = init;
+            fireIdxThisCell  = 0;
+        } else if ((step % spt) == 0) {
+            // Cell boundary at step >= spt: pull a fresh event from the
+            // walker for the cell that just ended.
+            currentCellEvent = engine::walkStepEvent(state, step);
+            fireIdxThisCell  = 0;
+        }
+
+        if (! currentCellEvent) continue;
+
+        const int subStepIdxInCell = step % spt;
+
+        // Rhythm gate decides whether this sub-step fires. Three branches:
+        //   - Turing: stateful register advances every sub-step (the call
+        //     mutates turingState whether or not we end up firing).
+        //   - Legato + ARP active: override head-only gating to fire every
+        //     sub-step, so the held chord audibly arpeggiates.
+        //   - Stateless gating predicate per preset.
+        bool fires;
+        if (rhythm == engine::RhythmPreset::Turing) {
+            fires = engine::turingFires(turingState, tLock);
+        } else if (rhythm == engine::RhythmPreset::Legato && arp != engine::ArpMode::Off) {
+            fires = true;
+        } else {
+            fires = engine::gatingFires(rhythm, subStepIdxInCell);
+        }
+        if (! fires || ! currentCellEvent->played) continue;
+
+        // Per-cell expression. cells[ev->cellIdx] is the source of truth
+        // for vel/gate/prob/timing; for the init synthetic event the
+        // cellIdx is -1, fall back to defaults (gate=1.0, vel=1.0).
+        const int  cIdx = currentCellEvent->cellIdx;
+        const bool isInit = cIdx < 0;
+        const float cellVel = isInit ? 1.0f : cells[(std::size_t) cIdx].velocity;
+
+        auto voiced = engine::applyVoicing(currentCellEvent->chord, voicing);
+        if (seventh) {
+            const auto id = engine::identifyTriad(currentCellEvent->chord);
+            voiced = engine::addSeventh(voiced, id.quality);
+        }
+
+        // ARP picker: nullopt = full chord, otherwise pick a single voiced
+        // index. fireIdxThisCell only advances on actual fires — cells
+        // gated to silence don't tick the arp cycle.
+        const auto pickIdx = engine::arpIndex(arp, (int) voiced.size(),
+                                              fireIdxThisCell, arpRng);
+
+        const float velNorm = std::clamp(cellVel * outLvl, 0.0f, 1.0f);
+        const auto vel = (juce::uint8) std::clamp((int) std::round(velNorm * 127.0f), 1, 127);
+
+        // Emit handoff note-offs first (legato handoff: prior notes off at
+        // the same sample offset as the new noteOns).
+        for (const auto& [ch, note] : held) {
+            midi.addEvent(juce::MidiMessage::noteOff(ch, note), 0);
+        }
+        held.clear();
+
+        if (pickIdx) {
+            const int n = std::clamp(voiced[(std::size_t) *pickIdx], 0, 127);
+            midi.addEvent(juce::MidiMessage::noteOn(channel, n, vel), 0);
+            held.emplace_back(channel, n);
+        } else {
+            for (int n : voiced) {
+                const int clamped = std::clamp(n, 0, 127);
+                midi.addEvent(juce::MidiMessage::noteOn(channel, clamped, vel), 0);
+                held.emplace_back(channel, clamped);
+            }
+        }
+        ++fireIdxThisCell;
     }
 
     lastSubStep = currentSubStep;
@@ -379,6 +534,11 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
 
 void OedipaProcessor::requestPreview(engine::Triad chord)
 {
+    // Suppress the lattice-tap / long-press preview while the transport is
+    // playing — the audition note collides with the walker's output and
+    // reads as noise during a take. -1 = transport stopped (no chord
+    // currently emitting), so previewing is OK in that state.
+    if (lastSubStep.load(std::memory_order_acquire) >= 0) return;
     pendingPreviewChord = chord;
     previewRequested.store(true, std::memory_order_release);
 }
