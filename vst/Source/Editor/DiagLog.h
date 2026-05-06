@@ -8,7 +8,7 @@
 
 #pragma once
 
-#define OEDIPA_DIAG 1
+#define OEDIPA_DIAG 0
 
 #if OEDIPA_DIAG
 #include <juce_core/juce_core.h>

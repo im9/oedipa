@@ -490,7 +490,7 @@ Each phase ends with `make test` green.
   - Tap → set `startChord` + MIDI preview note (~300ms)
   - Drag → define `sequence`; long-press 400ms → add anchor
   - Chord-trail overlay during playback
-- [ ] **Phase 5 — Right rail + per-cell drawer + slots (inboil-aligned design)**
+- [x] **Phase 5 — Right rail + per-cell drawer + slots (inboil-aligned design)** (Gate 1 d225355, Gate 2 164d09f, 2026-05-06)
   - Visual language is inboil's `TonnetzSheet`, not m4l's device strip.
     `Editor/Theme.{h,cpp}` introduces the palette (cream `#EDE8DC` bg,
     navy `#1E2028` fg, olive `#787845` for current/active, salmon
@@ -545,26 +545,43 @@ Each phase ends with `make test` green.
       — does NOT auto-save into the slot, since per-cell numeric
       expression is device-shared per ADR 006 §"Axis 1"). NaN /
       out-of-range guards
-    - [ ] `Editor/Theme.{h,cpp}` (palette + font sizes via
+    - [x] `Editor/Theme.{h,cpp}` (palette + font sizes via
       `juce::Colour` + `juce::Font`) — single source for all view
       colors and typography. Folded in here rather than a JUCE-free
       `Engine/Theme` because iOS won't share JUCE-typed tokens anyway,
       and `RailLayout` is delegated to JUCE's FlexBox in the rail
       view rather than pre-computed in pure C++ (would duplicate the
       renderer)
-    - [ ] Editor: `Theme.{h,cpp}` + 2-column layout shell + header row
-      with `TONNETZ` title and `×` close
-    - [ ] Editor: `SlotBarView` (4 pills + auto-save indicator)
-    - [ ] Editor: `SequenceRowView` + `SequenceDrawerView` (SEQ pills,
-      `+` / `−`, RATE row, per-cell sliders)
-    - [ ] Editor: `VoicingView` (VOICE / CHORD / RHYTHM / ARP +
+    - [x] Editor: `Theme.{h,cpp}` + 2-column layout shell + header row
+      with `TONNETZ` title (`×` close affordance from inboil omitted —
+      VST/AU host owns plugin window lifecycle, so an `×` would be a
+      no-op or call host-internal close; deviation comment in
+      `PluginEditor::paint`)
+    - [x] Editor: `SlotBarView` (4 pills + auto-save indicator)
+    - [x] Editor: `SequenceRowView` + `SequenceDrawerView` (SEQ pills,
+      `+` / `−`, RATE row, per-cell sliders). Deviation: SEQ pill
+      click toggles the drawer; op selection moved into the drawer's
+      top-row buttons. Original ADR text said pills double as op
+      dropdowns + drawer triggers — split for clarity. Comment at top
+      of `SequenceRowView.h`
+    - [x] Editor: `VoicingView` (VOICE / CHORD / RHYTHM / ARP +
       conditional Turing LEN / LOCK)
-    - [ ] Editor: `AnchorsView` (conditional)
-    - [ ] Editor: `OutputView` (OUT / HUMAN)
-    - [ ] Editor: `PresetView` (PRESET dropdown + SEED row)
-    - [ ] Manual host smoke: load AU in Logic Pro (MIDI FX slot), switch
+    - [x] Editor: `AnchorsView` (conditional)
+    - [x] Editor: `OutputView` (OUT / HUMAN)
+    - [x] Editor: `PresetView` (PRESET dropdown + SEED row)
+    - [x] Manual host smoke: load AU in Logic Pro (MIDI FX slot), switch
       slots audibly, edit a cell via the drawer, save project, reopen,
-      verify state survives
+      verify state survives (passed 2026-05-06)
+  - Known issue (not a Phase 5 blocker): on macOS Tahoe (26.x) corner-
+    drag resize in Logic Pro produces ~50 px Y-axis jitter mid-drag.
+    Diagnosed in this build to upstream Apple/Logic — JUCE's
+    `MouseEvent::getDistanceFromDragStartY` receives non-monotonic
+    OS event deltas; community confirms across all reported JUCE
+    versions and no JUCE-level workaround. Will resolve when Apple
+    fixes Logic/Tahoe. Other in-scope hosts (Logic on pre-Tahoe,
+    Cubase, Reaper, Bitwig, Standalone) unaffected. Comment + link in
+    `OedipaEditor` ctor; community thread:
+    <https://forum.juce.com/t/glitchy-resizing-in-logic-pro-on-macos-tahoe/67529>
 - [ ] **Phase 6 — Visual identity sweep**
   - Visual identity sweep — fix any remaining UTF-8 / glyph fallback
     issues (Theme palette and typography already established in Phase 5)

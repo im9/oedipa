@@ -11,6 +11,20 @@ OedipaEditor::OedipaEditor(plugin::OedipaProcessor& p)
 {
     addAndMakeVisible(lattice);
     addAndMakeVisible(rightRail);
+    // Known issue: corner-resize in Logic Pro on macOS Tahoe makes the
+    // editor's height oscillate by ~50 px during a single drag, even
+    // when cursor.x moves smoothly. Diagnosed against this build:
+    // MouseEvent::getDistanceFromDragStartY does not increase
+    // monotonically under the OS event stream Logic delivers — the JUCE
+    // corner faithfully reflects the noisy Y deltas it gets.
+    // Upstream is Apple/Logic, not JUCE; community thread:
+    //   https://forum.juce.com/t/glitchy-resizing-in-logic-pro-on-macos-tahoe/67529
+    // Affected matrix: macOS Tahoe (26.x) × Logic Pro (11.2+ / 12.x) ×
+    // every JUCE version reported (≤ 8.0.10). No JUCE-level workaround
+    // exists; symptom is expected to disappear when Apple fixes it.
+    // Other in-scope hosts (Logic on pre-Tahoe, Cubase, Reaper, Bitwig,
+    // Standalone) are unaffected — do NOT add a Tahoe-only mitigation
+    // that would degrade resize feel everywhere else.
     setResizable(true, true);
     setResizeLimits(640, 360, 1800, 1200);
     setSize(900, 540);
@@ -42,13 +56,6 @@ void OedipaEditor::resized()
     auto rail = bounds.removeFromRight(theme::railWidth);
     rightRail.setBounds(rail);
     lattice.setBounds(bounds);
-
-    OEDIPA_DIAG_LOG(juce::String::formatted(
-        "editor.resize t=%u %dx%d (lattice %dx%d, rail %dx%d)",
-        (unsigned int) juce::Time::getMillisecondCounter(),
-        getWidth(), getHeight(),
-        lattice.getWidth(), lattice.getHeight(),
-        rightRail.getWidth(), rightRail.getHeight()));
 }
 
 }  // namespace editor
