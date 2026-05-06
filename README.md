@@ -38,8 +38,11 @@ Full musical model: [`docs/ai/concept.md`](docs/ai/concept.md).
 frozen `Oedipa.amxd` ships via [GitHub Releases](../../releases) and
 runs on any Live 12 install with Max for Live.
 
-`vst/` and `app/` targets are scaffold / planned — see
-[Targets](#targets).
+`vst/` Audio Unit (AU) is in beta on Logic Pro for macOS. The VST3 bundle
+builds from the same codebase but is not yet host-verified. Neither is
+packaged for distribution yet.
+
+`app/` (iOS) is planned — see [Targets](#targets).
 
 ## Use (Max for Live)
 
@@ -57,9 +60,10 @@ musical concept but differ in UI and integration.
 
 | Target | Status | Notes |
 |---|---|---|
-| [`m4l/`](m4l/) | Released | Max for Live device. Current primary target. |
-| [`vst/`](vst/) | Not implemented | VST3 / AU plugin (C++17 / JUCE). Source skeleton + JUCE wiring only — no Tonnetz logic, no MIDI processing yet. |
-| `app/` | Planned | iOS app (AUv3 + standalone, JUCE). Touch-based exploration. |
+| [Max for Live](m4l/) | Released | Max for Live device. Current primary target. |
+| [Audio Unit](vst/) | Beta | Logic Pro on macOS. C++17 / JUCE. |
+| [VST3](vst/) | Build-only | Same codebase as the AU. Not yet host-verified. |
+| [iOS](app/) | Planned | AUv3 + standalone, JUCE. Touch-based exploration. |
 
 Musical logic is shared as a specification, not as code. Each target is a
 native implementation in its own stack. Cross-target conformance is verified
@@ -81,10 +85,7 @@ Per-target build commands:
 | Target | First time | Build | Test |
 |---|---|---|---|
 | `m4l/` (workspace) | `cd m4l && pnpm install` | `pnpm -r build` | `pnpm -r test` |
-| `vst/` | `git submodule update --init --recursive` | `make build` | `make test` |
-
-`vst/` currently builds a JUCE plugin shell with no Tonnetz logic — see
-[Targets](#targets).
+| `vst/` (AU + VST3) | `git submodule update --init --recursive` | `make build` | `make test` |
 
 Per-target dev docs:
 - [`m4l/engine/README.md`](m4l/engine/README.md)
