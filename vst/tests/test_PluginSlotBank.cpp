@@ -175,6 +175,12 @@ TEST_CASE("setStartChord auto-saves into the active slot",
           "[plugin][slotbank][autosave]")
 {
     OedipaProcessor p;
+    // Capture slot 0 BEFORE switching. The processor seeds slot 0 with the
+    // default program (Mixed: P, L, R, Hold) at construction, so the
+    // "untouched" baseline is whatever the constructor put there, not the
+    // engine-level Slot{} aggregate.
+    const auto s0Before = p.getSlot(0);
+
     p.switchSlot(1);
     p.setStartChord({64, 67, 71});  // E minor (root pc 4, minor)
 
@@ -182,10 +188,8 @@ TEST_CASE("setStartChord auto-saves into the active slot",
     CHECK(s.startRootPc == 4);
     CHECK(s.startQuality == Quality::Minor);
 
-    // Slot 0 stays default — auto-save targets the active slot only.
-    const auto& s0 = p.getSlot(0);
-    Slot defaults{};
-    CHECK(slotsEqual(s0, defaults));
+    // Slot 0 stays untouched — auto-save targets the active slot only.
+    CHECK(slotsEqual(p.getSlot(0), s0Before));
 }
 
 TEST_CASE("setCell auto-saves into the active slot",
@@ -198,7 +202,9 @@ TEST_CASE("setCell auto-saves into the active slot",
 
     const auto& s = p.getSlot(0);
     CHECK(s.ops[3] == Op::R);
-    CHECK(s.ops[0] == Op::Hold);  // untouched cells stay Hold
+    // Untouched cells keep the default-program ops the constructor seeded
+    // (Mixed: cells[0]=P).
+    CHECK(s.ops[0] == Op::P);
 }
 
 TEST_CASE("APVTS jitter change auto-saves", "[plugin][slotbank][autosave][apvts]")
@@ -289,19 +295,24 @@ TEST_CASE("Edit slot 0, switch to 1, edit, switch back: slot 0's edit survives",
 {
     OedipaProcessor p;
 
-    // Slot 0 edit
+    // Slot 0 edit — pick an op that differs from the constructor default
+    // (Mixed: cells[0]=P) so the assertion has signal.
     Cell c0{};
-    c0.op = Op::P;
+    c0.op = Op::Rest;
     p.setCell(0, c0);
 
-    // Switch to slot 1, make a different edit
+    // Switch to slot 1, make a different edit on cell 1. Slot 1 starts as
+    // the engine-default Slot (all Hold), so cell[1]=Hold there. Set it to
+    // a value that also differs from slot 0's cell[1] (Mixed: L) so we can
+    // tell whether slot 1's edit bled back.
     p.switchSlot(1);
     Cell c1{};
-    c1.op = Op::L;
+    c1.op = Op::P;
     p.setCell(1, c1);
 
-    // Switch back to slot 0 — original edit should be live again
+    // Switch back to slot 0 — original edit + slot-0 default cell[1]=L
+    // should be live; cell[1] must NOT be P (which was slot 1's edit).
     p.switchSlot(0);
-    CHECK(p.getCell(0).op == Op::P);
-    CHECK(p.getCell(1).op != Op::L);  // slot 1's edit didn't bleed back
+    CHECK(p.getCell(0).op == Op::Rest);
+    CHECK(p.getCell(1).op != Op::P);
 }

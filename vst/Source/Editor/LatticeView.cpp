@@ -1,6 +1,9 @@
 #include "Editor/LatticeView.h"
 
+#include "Editor/DiagLog.h"
+#include "Editor/Theme.h"
 #include "Engine/Walker.h"
+#include "Plugin/Parameters.h"
 
 #include <algorithm>
 #include <array>
@@ -10,21 +13,22 @@ namespace editor {
 
 namespace {
 
-// Visual identity carried over from inboil's TonnetzSheet — palette is
-// approximate; pixel-exact hexes are a polish item per ADR 008 §"Pixel-
-// level visual details" (deferred).
-const juce::Colour kBg            = juce::Colour::fromRGB(20, 22, 22);
-const juce::Colour kFg            = juce::Colour::fromRGB(220, 220, 210);
-const juce::Colour kMajorFill     = juce::Colour::fromRGB(48, 50, 48);
-const juce::Colour kMinorFill     = juce::Colour::fromRGB(32, 34, 32);
-const juce::Colour kCurrentFill   = juce::Colour::fromRGB(140, 130, 70);   // olive
-const juce::Colour kPlayingFill   = juce::Colour::fromRGB(245, 245, 235);  // near-white
-const juce::Colour kWalkFill      = juce::Colour::fromRGB(60, 58, 38);     // olive bg tint
-const juce::Colour kStroke        = juce::Colour::fromRGB(60, 60, 56);
-const juce::Colour kWalkTrail     = juce::Colour::fromRGB(140, 130, 70).withAlpha(0.30f);
-const juce::Colour kAnchor        = juce::Colour::fromRGB(220, 130, 110);  // salmon
-const juce::Colour kChordTrailBg  = juce::Colour::fromRGB(20, 22, 22);
-const juce::Colour kChordTrailDim = juce::Colour::fromRGB(220, 220, 210).withAlpha(0.35f);
+// Inboil palette via Editor/Theme.h. Major triangles render as cream-on-
+// cream (--dz-divider over --color-bg, near-invisible) and minor as a
+// faint navy tint (--lz-divider) — same near-monochrome lattice inboil
+// renders against its cream sheet.
+const juce::Colour kBg            = theme::bg;
+const juce::Colour kFg            = theme::fg;
+const juce::Colour kMajorFill     = theme::bg;                       // dz-divider over bg ≈ bg
+const juce::Colour kMinorFill     = theme::lzDivider.overlaidWith(theme::bg);
+const juce::Colour kCurrentFill   = theme::olive;
+const juce::Colour kPlayingFill   = juce::Colours::white;
+const juce::Colour kWalkFill      = theme::oliveBg;
+const juce::Colour kStroke        = theme::fg;
+const juce::Colour kWalkTrail     = theme::olive.withAlpha(0.30f);
+const juce::Colour kAnchor        = theme::salmon;
+const juce::Colour kChordTrailBg  = theme::bg;
+const juce::Colour kChordTrailDim = theme::fg.withAlpha(0.35f);
 
 constexpr float kChordTrailHeight = 22.0f;
 
@@ -56,9 +60,11 @@ LatticeView::LatticeView(plugin::OedipaProcessor& p)
 {
     setOpaque(true);
     setMouseCursor(juce::MouseCursor::PointingHandCursor);
-    // 60 Hz drives both the long-press tick and the walk-state animation;
-    // higher than needed for either alone but cheap on this canvas size.
-    startTimerHz(60);
+    // 15 Hz is enough for both the long-press tick (~250 ms threshold) and
+    // the walk-state animation (chord boundaries fire at most every spt
+    // sub-steps ≈ a quarter note). 60 Hz produced visible flicker during
+    // corner-drag resize because it stacked on JUCE's resize-driven paints.
+    startTimerHz(15);
 }
 
 LatticeView::~LatticeView()
@@ -66,7 +72,13 @@ LatticeView::~LatticeView()
     stopTimer();
 }
 
-void LatticeView::resized() {}
+void LatticeView::resized()
+{
+    OEDIPA_DIAG_LOG(juce::String::formatted(
+        "lattice.resize t=%u %dx%d",
+        (unsigned int) juce::Time::getMillisecondCounter(),
+        getWidth(), getHeight()));
+}
 
 void LatticeView::rebuildTrianglesIfStale()
 {
@@ -94,9 +106,15 @@ juce::AffineTransform LatticeView::latticeToComponent() const
     const float availH = std::max(1.0f, bh - kChordTrailHeight);
     const float scale = std::min(bw / lw, availH / lh);
     const float drawnW = lw * scale;
-    const float drawnH = lh * scale;
     const float offX = (bw - drawnW) * 0.5f;
-    const float offY = kChordTrailHeight + (availH - drawnH) * 0.5f;
+    // Anchor the lattice top just below the chord-trail strip rather than
+    // vertically centring the drawn area. Centring made offY swing ~90 px
+    // in 24 ms during a corner drag (diag log: 144 → 53 → 46) even though
+    // drawnH barely moved (406 → 411 → 412), which read as flicker because
+    // the whole lattice translated upward each frame the window shrank.
+    // Top-anchoring keeps offY constant for any given scale, so resizing
+    // shrinks/grows the empty area below without moving the lattice.
+    const float offY = kChordTrailHeight;
     return juce::AffineTransform::scale(scale, scale).translated(offX, offY);
 }
 
@@ -115,6 +133,26 @@ void LatticeView::paint(juce::Graphics& g)
 
     const_cast<LatticeView*>(this)->rebuildTrianglesIfStale();
     if (triangles_.empty()) return;
+
+#if OEDIPA_DIAG
+    {
+        const float bw_dbg = (float) getWidth();
+        const float bh_dbg = (float) getHeight();
+        const float availH_dbg = std::max(1.0f, bh_dbg - kChordTrailHeight);
+        const float lw_dbg = engine::latticeWidth();
+        const float lh_dbg = engine::latticeHeight();
+        const float scale_dbg = std::min(bw_dbg / lw_dbg, availH_dbg / lh_dbg);
+        const float drawnH_dbg = lh_dbg * scale_dbg;
+        const float offY_dbg = kChordTrailHeight + (availH_dbg - drawnH_dbg) * 0.5f;
+        const int   lastSub_dbg = processor_.getLastSubStep();
+        OEDIPA_DIAG_LOG(juce::String::formatted(
+            "paint t=%u bw=%d bh=%d availH=%.1f scale=%.4f drawnH=%.1f offY=%.1f lastSub=%d",
+            (unsigned int) juce::Time::getMillisecondCounter(),
+            getWidth(), getHeight(),
+            availH_dbg, scale_dbg, drawnH_dbg, offY_dbg,
+            lastSub_dbg));
+    }
+#endif
 
     const auto startPcs   = sortPcs(processor_.getStartChord());
     const auto walkState  = processor_.makeWalkStateSnapshot();
@@ -288,10 +326,26 @@ void LatticeView::timerCallback()
         if (auto anchor = interaction_.onTick(currentTimeMs())) {
             handleOutcome(*anchor);
         }
+        // Press-state animation (long-press progress hint via downstream
+        // interaction state) wants a fresh paint each tick; resize-time
+        // flicker doesn't apply when the user is holding the lattice.
+        repaint();
+        return;
     }
-    // Cheap full repaint: lattice is small and bounded; selective redraw
-    // would help only if this canvas grew dense (Phase 5 right rail).
-    repaint();
+
+    // Otherwise, only repaint when the visual state actually changed:
+    // the chord boundary advanced, or the start chord moved (centerPc).
+    // JUCE's own size-change paints handle the resize case, so we don't
+    // need to paint on every tick.
+    const int  spt        = std::max(1, (int) *processor_.getApvts().getRawParameterValue(plugin::pid::stepsPerTransform));
+    const int  lastSubStep = processor_.getLastSubStep();
+    const int  boundary   = (lastSubStep >= 0) ? (lastSubStep / spt) : -1;
+    const auto centerPc   = ((processor_.getStartChord()[0] % 12) + 12) % 12;
+    if (boundary != lastDrawnSubStep_ || centerPc != lastDrawnCenterPc_) {
+        lastDrawnSubStep_  = boundary;
+        lastDrawnCenterPc_ = centerPc;
+        repaint();
+    }
 }
 
 void LatticeView::handleOutcome(const engine::PointerOutcome& out)

@@ -10,6 +10,9 @@
 
 #include "Editor/LatticeView.h"
 #include "Editor/PluginEditor.h"
+#include "Editor/SequenceDrawerView.h"
+#include "Editor/Theme.h"
+#include "Engine/SequenceDrawer.h"
 #include "Engine/Lattice.h"
 #include "Engine/PointerInteraction.h"
 #include "Engine/State.h"
@@ -251,4 +254,55 @@ TEST_CASE("Plugin preview — back-to-back requests release the prior chord firs
     REQUIRE(p.getPreviewHeldForTest().size() == 3);
     // Held now reflects the new chord (D minor, root note 62).
     CHECK(p.getPreviewHeldForTest()[0].second == 62);
+}
+
+TEST_CASE("OutputView LEVEL slider displays 2-decimal text after attachment", "[editor][output][format]")
+{
+    // Reproduces the bug where OUTPUT shows "1.000..." truncated. Root cause
+    // candidates:
+    //   (a) SliderParameterAttachment overrides textFromValueFunction in its
+    //       constructor (verified in JUCE source at juce_ParameterAttachments
+    //       .cpp:128).
+    //   (b) Our styleSlider override lambda runs AFTER the attachment, but
+    //       the slider's value text-box is a Label that won't re-pull the
+    //       formatted text until updateText() is called or the value changes.
+    //
+    // This test calls slider.getTextFromValue() directly so the assertion
+    // bypasses the Label's stale cache and pinpoints which code path is
+    // returning the wrong format.
+    plugin::OedipaProcessor proc;
+    juce::Slider slider;
+    juce::SliderParameterAttachment att(*proc.getApvts().getParameter(plugin::pid::outputLevel),
+                                         slider);
+    slider.textFromValueFunction = [](double v) { return juce::String(v, 2); };
+
+    CHECK(slider.getTextFromValue(1.0) == "1.00");
+    CHECK(slider.getTextFromValue(0.0) == "0.00");
+}
+
+TEST_CASE("SequenceDrawerView preferredHeight covers the legend + 4 slider rows", "[editor][drawer][layout]")
+{
+    // Layout invariant: when the drawer is open, the right rail places the
+    // view at exactly preferredHeight() pixels tall. The view stacks:
+    //   [groupPadY] [legend (fsSm + rowGap + 2)] [op-button row + rowGap]
+    //   [3 × (slider row + rowGap)] [last slider row] [groupPadY]
+    // and TIME (the bottom slider) gets clipped if any of those summands
+    // is missing. Reproduces the bug where preferredHeight() forgot the
+    // legend area and the TIME row drew below the component bottom.
+    plugin::OedipaProcessor proc;
+    engine::SequenceDrawer drawer;
+    drawer.toggle(0);
+    REQUIRE(drawer.isOpen());
+
+    editor::SequenceDrawerView view(proc, drawer);
+
+    namespace t = oedipa::editor::theme;
+    const int required =
+        t::groupPadY                                  // top pad
+      + (int) t::fsSm + t::rowGap + 2                 // CELL N legend
+      + t::rowHeight + t::rowGap                      // op-button row
+      + 3 * (t::rowHeight + t::rowGap)                // VEL / GATE / PROB
+      + t::rowHeight                                  // TIME (last row)
+      + t::groupPadY;                                 // bottom pad
+    CHECK(view.preferredHeight() >= required);
 }

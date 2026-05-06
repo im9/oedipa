@@ -62,6 +62,14 @@ private:
     engine::PointerInteraction interaction_;
     int lastEnteredTri_ = -1;
 
+    // Timer-driven repaint diff state. The timer wakes 15× / s and only
+    // schedules a repaint when the playhead boundary (substep / spt) or the
+    // start chord changes. Without this gate, a 60 Hz unconditional repaint
+    // stacks on top of JUCE's resize-driven paints during corner drag and
+    // produces visible flicker on the lattice.
+    int lastDrawnSubStep_ = -2;
+    engine::PitchClass lastDrawnCenterPc_ = -1;
+
     // Lattice timestamp for PointerInteraction's long-press timer. Wall
     // time would also work; juce::Time::getMillisecondCounter is monotonic
     // enough for this scope and easy to drive from tests via offsets.

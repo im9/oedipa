@@ -1,0 +1,218 @@
+#include "Editor/SequenceRowView.h"
+
+#include "Editor/Theme.h"
+#include "Plugin/Parameters.h"
+
+#include <algorithm>
+
+namespace oedipa {
+namespace editor {
+
+namespace {
+
+// Returns juce::String (not const char*): the implicit decay from a
+// CharPointer_UTF8 to const char* drops the UTF-8 marker, which causes
+// "·" (U+00B7, two UTF-8 bytes 0xC2 0xB7) to render as the Latin-1 pair
+// "Â·" once juce::String reconstructs the bytes. fromUTF8 keeps the
+// glyph intact.
+juce::String opLabel(engine::Op op)
+{
+    switch (op) {
+        case engine::Op::P:    return "P";
+        case engine::Op::L:    return "L";
+        case engine::Op::R:    return "R";
+        case engine::Op::Rest: return "-";
+        case engine::Op::Hold: return juce::String::fromUTF8("\xC2\xB7");
+    }
+    return juce::String::fromUTF8("\xC2\xB7");
+}
+
+}  // namespace
+
+SequenceRowView::SequenceRowView(plugin::OedipaProcessor& p, engine::SequenceDrawer& d)
+    : processor_(p),
+      drawer_(d),
+      rateAttachment_(p.getApvts(), plugin::pid::stepsPerTransform, rateSlider_)
+{
+    for (int i = 0; i < (int) pills_.size(); ++i) {
+        auto& b = pills_[(std::size_t) i];
+        b.setColour(juce::TextButton::buttonColourId,    theme::bg);
+        b.setColour(juce::TextButton::buttonOnColourId,  theme::oliveBg);
+        b.setColour(juce::TextButton::textColourOffId,   theme::olive);
+        b.setColour(juce::TextButton::textColourOnId,    theme::olive);
+        b.setClickingTogglesState(false);
+        b.onClick = [this, i] { onPillClicked(i); };
+        // Seed the label from current state. Without this, timerCallback's
+        // diff-on-change skips the first paint when cells[i].op happens to
+        // equal Op{} (= Op::P, the enum's first value), leaving the pill
+        // blank. Mirroring lastOps_ keeps the diff invariant.
+        const auto op0 = processor_.getCell(i).op;
+        b.setButtonText(opLabel(op0));
+        lastOps_[(std::size_t) i] = op0;
+        addAndMakeVisible(b);
+    }
+    plusBtn_ .onClick = [this] { onLengthDelta(+1); };
+    minusBtn_.onClick = [this] { onLengthDelta(-1); };
+    for (auto* b : { &plusBtn_, &minusBtn_ }) {
+        b->setColour(juce::TextButton::buttonColourId, theme::bg);
+        b->setColour(juce::TextButton::textColourOffId, theme::fg.withAlpha(0.6f));
+        addAndMakeVisible(*b);
+    }
+    rateSlider_.setColour(juce::Slider::trackColourId,    theme::olive.withAlpha(0.6f));
+    rateSlider_.setColour(juce::Slider::backgroundColourId, theme::lzBorder);
+    rateSlider_.setColour(juce::Slider::thumbColourId,    theme::olive);
+    rateSlider_.setColour(juce::Slider::textBoxTextColourId, theme::fg);
+    rateSlider_.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    rateSlider_.setColour(juce::Slider::textBoxBackgroundColourId, theme::bg);
+    rateSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 32, theme::rowHeight);
+    addAndMakeVisible(rateSlider_);
+
+    startTimerHz(15);
+}
+
+SequenceRowView::~SequenceRowView() { stopTimer(); }
+
+int SequenceRowView::preferredHeight() const
+{
+    // Legend + pill row + RATE row + frame padding.
+    return theme::groupPadY * 2
+         + (int) theme::fsSm + theme::rowGap
+         + theme::rowHeight + theme::rowGap
+         + theme::rowHeight;
+}
+
+void SequenceRowView::paint(juce::Graphics& g)
+{
+    g.fillAll(theme::bg);
+    g.setColour(theme::lzBorder);
+    g.drawRect(getLocalBounds(), 1);
+
+    g.setFont(theme::dataFont(theme::fsSm, true));
+    g.setColour(theme::fg.withAlpha(0.4f));
+    g.drawText("SEQUENCE",
+               theme::groupPadX + 4,
+               theme::groupPadY,
+               getWidth() - theme::groupPadX * 2,
+               (int) theme::fsSm + 2,
+               juce::Justification::topLeft);
+
+    // SEQ row label
+    g.setFont(theme::dataFont(theme::fsMd, true));
+    g.setColour(theme::fg.withAlpha(0.6f));
+    g.drawText("SEQ",
+               theme::groupPadX,
+               theme::groupPadY + (int) theme::fsSm + theme::rowGap + 2,
+               36,
+               theme::rowHeight,
+               juce::Justification::centredLeft);
+
+    // RATE row label
+    g.drawText("RATE",
+               theme::groupPadX,
+               theme::groupPadY + (int) theme::fsSm + theme::rowGap + 2 + theme::rowHeight + theme::rowGap,
+               36,
+               theme::rowHeight,
+               juce::Justification::centredLeft);
+
+    // Selected-pill highlight (olive frame around the pill the drawer
+    // is currently focused on).
+    const int sel = drawer_.selectedCell();
+    if (sel >= 0 && sel < (int) pills_.size() && pills_[(std::size_t) sel].isVisible()) {
+        const auto r = pills_[(std::size_t) sel].getBounds().expanded(1);
+        g.setColour(theme::olive);
+        g.drawRect(r, 1);
+    }
+}
+
+void SequenceRowView::resized()
+{
+    const int labelW = 36;
+    const int seqRowY = theme::groupPadY + (int) theme::fsSm + theme::rowGap + 2;
+    const int rateRowY = seqRowY + theme::rowHeight + theme::rowGap;
+
+    // Visible pills follow `length` parameter.
+    const int len = std::clamp((int) *processor_.getApvts().getRawParameterValue(plugin::pid::length),
+                               1, plugin::OedipaProcessor::kCellCount);
+
+    const int pillsAreaX = theme::groupPadX + labelW;
+    const int controlsRightW = 24 + 24;  // +/- buttons
+    const int pillsAreaW = getWidth() - pillsAreaX - controlsRightW - theme::groupPadX;
+
+    const int pillGap = 2;
+    const int pillW = std::max(16, (pillsAreaW - pillGap * (len - 1)) / std::max(1, len));
+
+    int x = pillsAreaX;
+    for (int i = 0; i < (int) pills_.size(); ++i) {
+        auto& b = pills_[(std::size_t) i];
+        if (i < len) {
+            b.setVisible(true);
+            b.setBounds(x, seqRowY, pillW, theme::rowHeight);
+            x += pillW + pillGap;
+        } else {
+            b.setVisible(false);
+        }
+    }
+
+    minusBtn_.setBounds(getWidth() - theme::groupPadX - 24 - 24,
+                        seqRowY, 22, theme::rowHeight);
+    plusBtn_.setBounds(getWidth() - theme::groupPadX - 22,
+                       seqRowY, 22, theme::rowHeight);
+
+    rateSlider_.setBounds(theme::groupPadX + labelW,
+                          rateRowY,
+                          getWidth() - theme::groupPadX * 2 - labelW,
+                          theme::rowHeight);
+}
+
+void SequenceRowView::timerCallback()
+{
+    bool dirty = false;
+    const int len = std::clamp((int) *processor_.getApvts().getRawParameterValue(plugin::pid::length),
+                               1, plugin::OedipaProcessor::kCellCount);
+    if (len != lastLength_) {
+        drawer_.onSequenceLengthChanged(len);
+        lastLength_ = len;
+        resized();
+        dirty = true;
+    }
+    for (int i = 0; i < (int) pills_.size(); ++i) {
+        const auto op = processor_.getCell(i).op;
+        if (op != lastOps_[(std::size_t) i]) {
+            pills_[(std::size_t) i].setButtonText(opLabel(op));
+            lastOps_[(std::size_t) i] = op;
+            dirty = true;
+        }
+    }
+    const int sel = drawer_.selectedCell();
+    if (sel != lastDrawerSel_) {
+        for (int i = 0; i < (int) pills_.size(); ++i) {
+            pills_[(std::size_t) i].setToggleState(i == sel, juce::dontSendNotification);
+        }
+        lastDrawerSel_ = sel;
+        if (onDrawerStateChanged) onDrawerStateChanged();
+        dirty = true;
+    }
+    if (dirty) repaint();
+}
+
+void SequenceRowView::onPillClicked(int cellIdx)
+{
+    drawer_.toggle(cellIdx);
+    // Force an immediate refresh; the timer would catch it within 66 ms,
+    // but the drawer should snap open on the same tick as the click.
+    timerCallback();
+}
+
+void SequenceRowView::onLengthDelta(int delta)
+{
+    auto* lenParam = processor_.getApvts().getParameter(plugin::pid::length);
+    if (lenParam == nullptr) return;
+    const auto& range = lenParam->getNormalisableRange();
+    const int cur = (int) *processor_.getApvts().getRawParameterValue(plugin::pid::length);
+    const int next = std::clamp(cur + delta, 1, plugin::OedipaProcessor::kCellCount);
+    if (next == cur) return;
+    lenParam->setValueNotifyingHost(range.convertTo0to1((float) next));
+}
+
+}  // namespace editor
+}  // namespace oedipa

@@ -44,6 +44,7 @@ add_library(oedipa_engine STATIC
     Source/Engine/SequenceDrawer.h
     Source/Engine/SlotBank.cpp
     Source/Engine/SlotBank.h
+    Source/Engine/Presets.h
 )
 target_include_directories(oedipa_engine PUBLIC Source)
 target_compile_features(oedipa_engine PUBLIC cxx_std_17)
@@ -83,6 +84,24 @@ target_sources(Oedipa PRIVATE
     Source/Editor/PluginEditor.h
     Source/Editor/LatticeView.cpp
     Source/Editor/LatticeView.h
+    Source/Editor/Theme.cpp
+    Source/Editor/Theme.h
+    Source/Editor/RightRailView.cpp
+    Source/Editor/RightRailView.h
+    Source/Editor/SlotBarView.cpp
+    Source/Editor/SlotBarView.h
+    Source/Editor/SequenceRowView.cpp
+    Source/Editor/SequenceRowView.h
+    Source/Editor/SequenceDrawerView.cpp
+    Source/Editor/SequenceDrawerView.h
+    Source/Editor/VoicingView.cpp
+    Source/Editor/VoicingView.h
+    Source/Editor/AnchorsView.cpp
+    Source/Editor/AnchorsView.h
+    Source/Editor/OutputView.cpp
+    Source/Editor/OutputView.h
+    Source/Editor/PresetView.cpp
+    Source/Editor/PresetView.h
 )
 target_include_directories(Oedipa PRIVATE Source)
 
@@ -111,6 +130,15 @@ add_library(oedipa_plugin_core STATIC
     Source/Plugin/Parameters.cpp
     Source/Editor/PluginEditor.cpp
     Source/Editor/LatticeView.cpp
+    Source/Editor/Theme.cpp
+    Source/Editor/RightRailView.cpp
+    Source/Editor/SlotBarView.cpp
+    Source/Editor/SequenceRowView.cpp
+    Source/Editor/SequenceDrawerView.cpp
+    Source/Editor/VoicingView.cpp
+    Source/Editor/AnchorsView.cpp
+    Source/Editor/OutputView.cpp
+    Source/Editor/PresetView.cpp
 )
 target_include_directories(oedipa_plugin_core PUBLIC Source)
 target_link_libraries(oedipa_plugin_core PUBLIC
