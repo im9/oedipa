@@ -41,20 +41,6 @@ public:
     static constexpr int kSlotCount = engine::kSlotCount;
     static constexpr int kStateVersion = 1;
 
-    // Bus-configuration factory. Per ADR 008 §"DAW integration":
-    //   - Live's VST3 host rejects plugins with zero audio buses
-    //     ("plugin has an effect category, but no valid audio input
-    //     bus"), so under Live we add a stub stereo output bus that
-    //     processBlock never writes to. JUCE's MidiLogger workaround
-    //     (commit 6ed49ff74f, 2020).
-    //   - Every other host gets zero buses, so AU's
-    //     kAudioUnitType_MIDIProcessor classification (set by JUCE's
-    //     IS_MIDI_EFFECT TRUE) stays clean for Logic's MIDI FX slot.
-    // Pure static — exposed so tests can drive both branches without
-    // faking host detection. Lives on the class because BusesProperties
-    // is a protected nested type of juce::AudioProcessor.
-    static BusesProperties makeBusesProperties(bool addLiveStubOutput);
-
     OedipaProcessor();
     ~OedipaProcessor() override;
 
@@ -185,9 +171,12 @@ private:
 
     // Walker state — tracked across processBlock calls.
     //   lastSubStep: highest sub-step pos already emitted (-1 = nothing
-    //                emitted since the last transport (re)start).
+    //                emitted since the last transport (re)start). Atomic
+    //                because the editor's lattice paint reads this from
+    //                the message thread to drive the playing-chord
+    //                highlight; processBlock writes from the audio thread.
     //   held: (channel, midiNote) currently sounding from walker output.
-    int lastSubStep = -1;
+    std::atomic<int> lastSubStep{-1};
     std::vector<std::pair<int, int>> held;
 
     // Preview MIDI (lattice tap / long-press audition). Lock-free hand-off:

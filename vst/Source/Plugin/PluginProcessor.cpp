@@ -62,16 +62,22 @@ constexpr const char* kAnchorTag     = "Anchor";
 
 }  // namespace
 
-OedipaProcessor::BusesProperties OedipaProcessor::makeBusesProperties(bool addLiveStubOutput)
-{
-    if (! addLiveStubOutput) return BusesProperties();
-    return BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true);
-}
-
 OedipaProcessor::OedipaProcessor()
-    : AudioProcessor(makeBusesProperties(juce::PluginHostType().isAbletonLive())),
+    : AudioProcessor(BusesProperties()),
       apvts(*this, nullptr, "OedipaParams", makeParameterLayout())
 {
+    // Default program: P, L, R, Hold (the canonical "Mixed" preset shape).
+    // Walker.cpp treats Hold as no-attack (played=false), so an all-Hold
+    // default — which is what `Cell{}` defaults give — produces silence on
+    // a fresh insert. P/L/R on cells[0..2] guarantees the first transform
+    // boundary fires an audible chord change.
+    cells[0].op = engine::Op::P;
+    cells[1].op = engine::Op::L;
+    cells[2].op = engine::Op::R;
+    // Sync slot 0 so the bank reflects what live state is. Without this,
+    // switching to slot 1 and back would land on an all-Hold slot 0.
+    bank.syncActive(captureSlot());
+
     // ADR 008 Phase 5 — auto-save on APVTS-tracked slot fields. cells and
     // startChord are routed through their own setters; jitter/seed/length
     // need a listener because the editor + tests mutate them via the

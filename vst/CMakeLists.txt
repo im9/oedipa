@@ -61,17 +61,9 @@ juce_add_plugin(Oedipa
     PLUGIN_CODE "Oedp"
     FORMATS VST3 AU Standalone
     PRODUCT_NAME "Oedipa"
-    # ADR 008 §"DAW integration": Live's MIDI Effects rack is closed to
-    # third-party plugins, so the VST3 ships in the Instrument slot via
-    # 2-track routing. "Instrument" subcategory lands Oedipa in Live's
-    # Instrument browser bucket. JUCE's default ("Fx") would put it in
-    # the Audio FX bucket, which is positionally wrong for a MIDI
-    # generator. AU classification is unaffected (IS_MIDI_EFFECT TRUE
-    # → kAudioUnitType_MIDIProcessor for Logic's MIDI FX slot).
-    VST3_CATEGORIES "Instrument"
     # On every build, JUCE copies the VST3/AU bundles to the user's
     # Audio Plug-Ins folders (Standalone is skipped). Removes the
-    # per-build manual copy/symlink step for Live + Logic dev loops.
+    # per-build manual copy/symlink step for the Logic / Cubase dev loop.
     COPY_PLUGIN_AFTER_BUILD TRUE
 )
 

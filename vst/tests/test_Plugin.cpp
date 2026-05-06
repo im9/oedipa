@@ -162,6 +162,34 @@ TEST_CASE("APVTS layout — m4l parity parameters present with correct types & d
     }
 }
 
+TEST_CASE("Default program — fresh insert plays motion on first boundary", "[plugin][defaults]")
+{
+    // A fresh device must produce audible chord motion under playback. With
+    // default cells = all Hold, the walker emits no notes (Walker.cpp: Hold
+    // sets played=false). Default cells therefore start as the canonical
+    // "Mixed" preset (P, L, R, Hold) — same shape kFactoryPresets[3] uses.
+    OedipaProcessor p;
+
+    CHECK(p.getCell(0).op == Op::P);
+    CHECK(p.getCell(1).op == Op::L);
+    CHECK(p.getCell(2).op == Op::R);
+    // Trailing cells stay Hold (length defaults to 4; cells[3..7] are
+    // dormant under default length, kept Hold for the round-trip default).
+    for (int i = 3; i < OedipaProcessor::kCellCount; ++i) {
+        CHECK(p.getCell(i).op == Op::Hold);
+    }
+
+    // Slot 0 (the active slot on a fresh insert) must mirror the default
+    // cells so switching to slot 1 and back round-trips to the same state.
+    const auto& s0 = p.getSlot(0);
+    CHECK(s0.ops[0] == Op::P);
+    CHECK(s0.ops[1] == Op::L);
+    CHECK(s0.ops[2] == Op::R);
+    for (std::size_t i = 3; i < s0.ops.size(); ++i) {
+        CHECK(s0.ops[i] == Op::Hold);
+    }
+}
+
 TEST_CASE("State round-trip — APVTS + non-APVTS via get/setStateInformation", "[plugin][state]")
 {
 
@@ -335,33 +363,6 @@ TEST_CASE("State round-trip — empty anchors round-trip cleanly", "[plugin][sta
     sink.setStateInformation(block.getData(), (int) block.getSize());
 
     CHECK(sink.getAnchors().empty());
-}
-
-TEST_CASE("Bus layout — Live gets stub stereo output, every other host stays MIDI-only", "[plugin][buses]")
-{
-    // ADR 008 §"DAW integration": Live's VST3 host rejects zero-bus
-    // plugins. We add a stub stereo OUTPUT bus only when the host is
-    // Live (detected via PluginHostType().isAbletonLive() in production).
-    // Every other host keeps zero buses so JUCE's IS_MIDI_EFFECT TRUE
-    // path remains intact (notably AU's kAudioUnitType_MIDIProcessor
-    // for Logic's MIDI FX slot).
-
-    SECTION("non-Live host — zero buses, preserves MIDI-effect contract") {
-        const auto buses = OedipaProcessor::makeBusesProperties(false);
-        CHECK(buses.inputLayouts.size() == 0);
-        CHECK(buses.outputLayouts.size() == 0);
-    }
-
-    SECTION("Live host — single stereo OUTPUT bus, no input bus") {
-        const auto buses = OedipaProcessor::makeBusesProperties(true);
-        // No input bus: Oedipa never reads audio. The Live host's
-        // complaint was specifically "no audio input" but inspection of
-        // the JUCE MidiLogger fix shows an OUTPUT bus is what Live
-        // actually requires (it scans for SOME audio bus presence).
-        CHECK(buses.inputLayouts.size() == 0);
-        REQUIRE(buses.outputLayouts.size() == 1);
-        CHECK(buses.outputLayouts[0].defaultLayout == juce::AudioChannelSet::stereo());
-    }
 }
 
 TEST_CASE("Phase 3 input contract — input MIDI is dropped (no ADR 004 wiring yet)", "[plugin][midi]")

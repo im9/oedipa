@@ -32,6 +32,21 @@ problem doesn't fully resolve). Two new in-scope items added: a
 **Live first-run onboarding overlay** (`PluginHostType().isAbletonLive()`-
 gated, dismissible) and the **Standalone build promoted to a documented
 user-facing retreat path** (was: dev-convenience only).
+**Revised**: 2026-05-05 — **Live VST3 accommodations withdrawn. Live = m4l
+target only.** With m4l/ already shipping the canonical Live UX, the VST3
+2-track-routing path was scope creep on top of vst/'s real audience
+(DAWs that natively host MIDI fx). Withdrawn: `VST3_CATEGORIES "Instrument"`
+override, `isAbletonLive()`-gated stub stereo bus, Live first-run
+onboarding overlay, Live Track Template. **Standalone build demoted back
+to dev-convenience** (its prior user-facing promotion was justified solely
+as a Live retreat path, which no longer applies; maintaining a polished
+standalone is also a burden the author does not want to carry). vst/
+target audience is now: **Logic Pro** and **Cubase Pro** as primary
+(empirical verification commitment), Reaper / Bitwig / Studio One as
+best-effort (verified opportunistically — Bitwig specifically when the
+author acquires it on sale). FL Studio remains out of scope per
+project memory. Live users who do not own Max for Live / Live Suite are
+explicitly outside v1's addressable market.
 
 ## Context
 
@@ -68,173 +83,57 @@ architectural constraint.
 
 ### Plugin formats
 
-- **VST3** and **AU** on macOS
-- **Standalone** build — promoted to a user-facing artefact (was:
-  dev-convenience only). See §"Standalone as retreat path" below for the
-  positioning. Built from the same JUCE `FORMATS Standalone` line; no
-  separate codebase.
+- **VST3** and **AU** on macOS — the user-facing formats
+- **Standalone** build — retained as dev convenience only (CI / smoke /
+  screenshots). Not user-facing; not maintained to release polish. See
+  §Out-of-scope below.
 - Windows / Linux: deferred (not in v1)
 
 The existing skeleton at [vst/CMakeLists.txt](../../../vst/CMakeLists.txt)
-already declares `FORMATS VST3 AU Standalone` with `IS_MIDI_EFFECT TRUE`.
-This ADR ratifies that as v1.
+declares `FORMATS VST3 AU Standalone` with `IS_MIDI_EFFECT TRUE`. This
+ADR ratifies VST3 + AU as user-facing v1; the Standalone format string
+stays in the FORMATS line for the dev workflow.
 
 ### DAW integration (per-host UX)
 
 Oedipa is a **MIDI instrument** (MIDI in → MIDI out, no audio): a chord-
-navigation surface that emits MIDI for downstream synths. The "correct"
-home for it is the host's pre-instrument MIDI-effect slot — but **that
-slot's openness to third-party plugins differs sharply by host**, and
-this dictates the per-host UX. Confirmed via empirical testing
-2026-05-03 (Live) and JUCE / Ableton / Steinberg / Cockos community
-sources for the rest:
+navigation surface that emits MIDI for downstream synths. The host's
+pre-instrument MIDI-effect slot is the natural home — but **that slot's
+openness to third-party plugins differs sharply by host**, and this
+dictates which DAWs vst/ targets and which it leaves to m4l/.
 
-| Host | Slot for MIDI generators / processors | Single track? |
+| Host | Slot for MIDI generators / processors | vst/ supports? |
 |---|---|---|
-| **Live 12** | **MIDI Effects rack — closed to third-party VST3/VST2/AU**. Ableton-native + M4L only. Confirmed in 12.3.8. | **No — 2-track routing required (see below)** |
-| **Logic Pro** | AU MIDI FX slot accepts `kAudioUnitType_MIDIProcessor` (set by JUCE `IS_MIDI_EFFECT TRUE`) | Yes |
-| **Reaper** | FX chain accepts MIDI plugins in any position | Yes |
-| **Cubase Pro 13+** | VST3 MIDI insert slot | Yes |
-| **Bitwig** | Note FX slot | Yes |
+| **Logic Pro** | AU MIDI FX slot accepts `kAudioUnitType_MIDIProcessor` (set by JUCE `IS_MIDI_EFFECT TRUE`) | **Yes — primary v1 target** |
+| **Cubase Pro 13+** | VST3 MIDI insert slot | **Yes — primary v1 target** (empirical verification via trial) |
+| **Reaper** | FX chain accepts MIDI plugins in any position | Yes (best-effort, expected to work given Reaper's permissive FX chain) |
+| **Bitwig** | Note FX slot | Yes (best-effort, verified when the author acquires Bitwig on sale) |
+| **Studio One** | Note FX slot (v5+) | Yes (best-effort) |
+| **Live 12** | **MIDI Effects rack — closed to third-party VST3/VST2/AU**. Ableton-native + M4L only. Confirmed in 12.3.8. | **No — Live users use the m4l target** |
+| **FL Studio** | No native MIDI fx slot concept | No (out of v1 scope) |
 
-Live is the outlier. **Three options exist within Live, none of which
-match the "drop the plugin and play" expectation that VST3 / AU users
-typically bring**:
+**Logic Pro and Cubase Pro are the two empirical-verification commitments
+for v1.** Other listed hosts are best-effort: vst/ ships with JUCE
+defaults for `IS_MIDI_EFFECT TRUE` (no host-specific accommodations);
+if a host's MIDI fx slot picks it up cleanly, it works; if not, those
+users use m4l/ (for Live) or wait for a future ADR.
 
-1. **2-track routing** (this ADR's primary documented path) — covered below
-2. **Standalone build + virtual MIDI port** — covered in §"Standalone as
-   retreat path"
-3. **Use the m4l target** — single-track Live UX, ships separately under
-   the same name; lattice UI is constrained but the musical engine is
-   identical
+**Live is excluded from vst/ on purpose.** Live's MIDI Effects rack does
+not accept third-party plugins, and the workarounds (Instrument-slot 2-
+track routing, Standalone + IAC bus) require enough VST3-side
+accommodation, host-detection branching, and onboarding content to count
+as their own product surface — surface that the m4l/ target already
+provides natively. Pursuing both is scope drift on a free release. The
+m4l/ target ([m4l/](../../../m4l/)) is the **canonical and only
+supported Live UX**: MIDI Effects rack placement, single track, native
+to Live's instrument chain. Live users without Max for Live / Live Suite
+are outside v1's addressable market.
 
-This ADR locks how each is supported. Before that, one fourth option
-worth pre-empting:
+The two targets are complementary by host, not by UX layer:
 
-#### Why not the Audio Effects rack?
-
-Live's Audio Effects rack **does** accept third-party VST3 / AU (only
-the MIDI Effects rack is closed). So a tempting alternative is: ship
-Oedipa as a VST3 / AU **audio effect** (`VST3_CATEGORIES "Fx"`,
-`kAudioUnitType_Effect`), land it in Live's Audio Effects chain on a
-single track. **Evaluated 2026-05-04 and ruled out.** Reasons:
-
-1. **Live's signal flow makes the MIDI useless on the same track.**
-   The chain is `[MIDI Effects] → [Instrument] → [Audio Effects] →
-   [Audio Out]`. An Audio Effect sits *after* the instrument; even
-   if Oedipa-as-Audio-Effect produced MIDI, there's no instrument
-   downstream on the same track to receive it. So the user still
-   needs a second track with `MIDI From: 1-Oedipa` — the 2-track
-   cost is unchanged.
-2. **Cross-DAW semantic confusion.** Logic / Reaper / Cubase / Bitwig
-   all treat an "audio effect that emits MIDI" as a niche pattern.
-   The current `IS_MIDI_EFFECT TRUE` path slots Oedipa cleanly into
-   each host's MIDI-FX-equivalent. Switching to Audio-Effect classification
-   would break that and create ambiguity in every host.
-3. **Discovery is worse.** Users searching for chord / MIDI tools
-   look in Instrument or MIDI Effect categories, not Audio Effects.
-   Putting Oedipa in Audio Effects buries it in EQs, reverbs, etc.
-
-So the Audio Effects rack does not enable single-track Live UX in any
-meaningful sense. The current Instrument-slot + stub-audio-bus + 2-track
-routing remains the best available path. **Within Live's architecture,
-a third-party plugin that behaves as a single-track MIDI generator is
-structurally impossible** — only Ableton-native and M4L devices can
-occupy the MIDI Effects rack, and that is by design.
-
-#### Live UX — 2-track routing
-
-```
-┌─ Track 1: "Oedipa" (MIDI track) ─────┐
-│  Instrument slot: Oedipa (VST3)       │ ← lattice UI lives here
-│  • MIDI From: All Ins / keyboard      │
-│  • Monitor: In                        │
-│  • keyboard → Tonnetz walk → MIDI Out │
-└────────────────┬─────────────────────┘
-                 │ (MIDI through Live's bus)
-                 ▼
-┌─ Track 2: "Synth" (MIDI track) ──────┐
-│  Instrument slot: Serum / piano / ... │
-│  • MIDI From: "1-Oedipa" → "Oedipa"   │ ← explicit routing
-│  • Monitor: In                        │
-│  • receives Oedipa's MIDI, plays sound│
-└──────────────────────────────────────┘
-```
-
-To make this work, two implementation accommodations are required:
-
-1. **VST3 subcategory = `Instrument`** (single-element `VST3_CATEGORIES "Instrument"`
-   in CMakeLists). Lands Oedipa in Live's Instrument browser bucket so
-   it can occupy the Instrument slot. Trade-off: discovery drift —
-   users searching MIDI Effects won't find it. Mitigated by docs and
-   Track Template (see below).
-2. **Stub stereo audio output bus when host is Live**
-   (`PluginHostType().isAbletonLive()` query in `getBusesProperties()`).
-   Live's VST3 host rejects plugins with zero audio buses regardless
-   of subcategory ("plugin has an effect category, but no valid audio
-   input bus"). Following the JUCE MidiLogger workaround (commit
-   6ed49ff74f, 2020), conditionally add a stereo output. The bus is
-   never written to — `processBlock` clears the audio buffer. Other
-   hosts get zero buses (per `IS_MIDI_EFFECT TRUE` default), so
-   Logic's AU MIDI FX classification stays clean.
-
-User onboarding shipped with the device should include a Live Track
-Template ("Oedipa + Synth" pre-wired) so the 2-track setup is one drag
-rather than five clicks. This is content, not engineering — flagged here
-so it doesn't get forgotten at release.
-
-#### Live first-run onboarding overlay
-
-Without explanation, a new user who drops Oedipa on a Live track and
-hears nothing concludes the plugin is broken. To set expectations
-correctly, the editor shows a one-time onboarding overlay when the
-host is detected as Live:
-
-- Triggered by `juce::PluginHostType().isAbletonLive()` on editor open
-- Full-bleed overlay over the lattice with: short explanation of why
-  Oedipa needs 2-track routing, a small wiring diagram (Track A:
-  Oedipa Instrument + Monitor=In; Track B: synth with MIDI From →
-  1-Oedipa), and CTA buttons: [Show me] (links to docs / video) +
-  [Don't show again] (dismisses + persists)
-- Persistence: `juce::PropertiesFile` in user prefs (per-machine, per-
-  user). Choice survives Oedipa updates.
-- Same overlay appears as an opt-in help button (`?`) somewhere in
-  the UI so users who dismissed it can re-read
-
-The overlay does NOT make the plugin "drop and play" — that expectation
-is rejected (see §Out of scope). It makes the friction *intentional and
-explained* rather than apparent breakage.
-
-#### Standalone as retreat path
-
-For Live users who don't want the 2-track setup at all (or who use
-hosts where Oedipa-as-plugin doesn't fit gracefully), the **Standalone
-build is a documented user-facing path**, not just a dev convenience:
-
-- Same JUCE codebase, same lattice, same Tonnetz engine — the
-  Standalone wrapper just adds its own audio-device + MIDI-port host
-- Output: macOS Core MIDI virtual port (configurable). Live (or any
-  DAW) receives via `MIDI From: IAC Driver Bus N → Oedipa`
-- Setup cost: one-time IAC bus enable in `Audio MIDI Setup`, then
-  per-project MIDI From routing in the DAW. Heavier than plugin
-  install but identical to using any other external hardware MIDI
-  controller
-- Bidirectional benefit: also a reference / dogfood ground for the
-  long-term standalone instrument suite (see §Context)
-
-Polish bar for the Standalone build is intentionally minimal in v1
-(default IAC bus discovery, basic MIDI port picker, "About" + version,
-window remembers size/position). Bitwig / Reason class polish is
-explicit non-goal.
-
-#### Live users with MIDI Effects rack expectation
-
-The m4l target ([m4l/](../../../m4l/)) remains the canonical Live UX —
-MIDI Effects rack placement, single track, native to Live's instrument
-chain. Users who want that UX continue to use the m4l device. The VST3
-adds: lattice UI surface + cross-DAW reach. The two targets are
-complementary, not redundant — and within Live specifically, m4l is the
-recommended path for users who reject both 2-track and Standalone.
+- vst/ → DAWs that natively host MIDI fx (Logic / Cubase / Reaper /
+  Bitwig / Studio One). Lattice UI surface lives here.
+- m4l/ → Ableton Live. Constrained device-strip UI, but musically identical.
 
 ### Engine
 
@@ -454,24 +353,19 @@ review-blocker. The point of drawing the boundary now is so it doesn't drift.
 ## Scope
 
 **In scope (v1):**
-- VST3 + AU + Standalone formats on macOS
+- VST3 + AU formats on macOS
 - C++17 engine matching ADR 001 contract; conformance via shared test vectors
 - Parameter surface at parity with m4l (`HostParams`)
 - APVTS + ValueTree state persistence with version attribute
 - Interactive Tonnetz lattice as primary UI
 - `Engine/` / `Plugin/` / `Editor/` split with the no-JUCE-in-Engine rule
 - Catch2 + nlohmann/json wired into CMake
-- Single-track MIDI-effect UX in Logic / Reaper / Cubase Pro / Bitwig
-- 2-track routing UX in Live (Instrument slot + "MIDI From"); JUCE-style
-  Live audio-bus workaround
-- **Live first-run onboarding overlay** (`PluginHostType().isAbletonLive()`-
-  gated, dismissible, persisted in `juce::PropertiesFile`); explains
-  2-track requirement and offers Standalone as alternative
-- **Standalone build as user-facing artefact** (was: dev-convenience
-  only). Minimal polish bar (IAC bus discovery, MIDI port picker,
-  window state persistence)
-- **Live Track Template** (`Oedipa + Synth.als`) shipped as a release
-  artefact for the 2-track setup
+- Single-track MIDI-effect UX in **Logic Pro** (AU MIDI FX) and
+  **Cubase Pro** (VST3 MIDI insert) — empirical verification commitment
+- Best-effort host coverage for Reaper / Bitwig / Studio One via JUCE
+  defaults (no host-specific accommodations)
+- Standalone build target retained as **dev convenience** (CI / smoke /
+  screenshots). Not promoted as a user-facing artefact
 
 **Out of scope (with reasoning):**
 
@@ -529,18 +423,31 @@ review-blocker. The point of drawing the boundary now is so it doesn't drift.
   5. **Support burden grows with hosted plugin matrix** — every
      "Plugin X doesn't work in Oedipa" issue lands on Oedipa
      maintenance.
-- **"Drop-and-play" experience in Live** — the expectation that placing
-  Oedipa on a single Live track produces sound is **explicitly rejected**.
-  Three documented paths exist for Live users (2-track / Standalone /
-  m4l); the onboarding overlay redirects users hitting this expectation.
-  *Reasoning*: dropping this expectation is the cost of preserving the
-  no-internal-sound + no-plugin-hosting decisions above. Market narrowing
-  is acceptable because v1 ships free.
-- **Live MIDI Effects rack placement** — the VST3 cannot land there.
-  *Reasoning*: Live design decision (Ableton-native + M4L only).
-  Confirmed 2026-05-03 across community sources for VST3 / VST2 / AU.
-  The m4l target covers this UX; the VST3 lives in the Instrument slot
-  via 2-track routing (or the user picks Standalone / m4l instead).
+- **Live VST3/AU support of any kind** — the VST3 / AU build is not
+  intended to load in Live. *Reasoning*: Live's MIDI Effects rack is
+  closed to third-party plugins (Ableton-native + M4L only, confirmed
+  2026-05-03 across VST3 / VST2 / AU). The workarounds (Instrument-slot
+  2-track routing, Standalone + IAC bus) were evaluated 2026-05-03–05
+  and withdrawn 2026-05-05: each requires VST3-side accommodation,
+  host-detection branching, onboarding content, and a Track Template
+  release artefact — collectively a second product surface duplicating
+  what m4l/ already provides natively. The m4l target ([m4l/](../../../m4l/))
+  is the canonical and only supported Live UX. Live users without Max
+  for Live / Live Suite are outside v1's addressable market; this is
+  acceptable because v1 ships free and the author primarily uses Live
+  Suite + Logic himself.
+- **FL Studio support** — out of scope. *Reasoning*: FL has no native
+  MIDI fx slot concept; supporting it requires Instrument-bucket
+  spoofing or a CLAP build, neither justified for a free MIDI tool the
+  author does not personally use.
+- **Standalone as user-facing artefact** — withdrawn 2026-05-05. The
+  prior promotion was justified only as a Live retreat path; with
+  Live = m4l only, the rationale evaporates. The standalone target
+  remains buildable for dev convenience (CI / smoke / screenshots) but
+  is not maintained to user-facing polish (no IAC bus discovery, no MIDI
+  port picker, no window state persistence, no "About"). A future
+  standalone-suite ADR is the right vehicle if standalone polish ever
+  becomes a goal.
 
 ## Implementation checklist
 
@@ -554,21 +461,16 @@ Each phase ends with `make test` green.
     `applyVoicing`, `addSeventh`)
   - Test reads `docs/ai/tonnetz-test-vectors.json` and asserts conformance
   - `make test` green; plugin not yet expected to load anywhere
-- [x] **Phase 2 — Plugin scaffold + APVTS + state I/O + Live host workaround** (625ec90, 2026-05-03 — Live load confirmed; save/reopen round-trip covered by Catch2 state test, host-side smoke pending)
+- [x] **Phase 2 — Plugin scaffold + APVTS + state I/O** (625ec90,
+  2026-05-03; Live host workaround that originally shipped here was
+  withdrawn 2026-05-05 — see §Revised note)
   - APVTS param tree mirroring m4l `HostParams` (numeric / enum params)
   - Non-APVTS state (cells, slots, anchors, startChord) serialized into the
     APVTS ValueTree under a child node with `version=1`
   - MIDI passthrough (input → output unchanged, no engine wiring yet)
-  - `VST3_CATEGORIES "Instrument"` in CMakeLists so Live places Oedipa in
-    the Instrument browser bucket (MIDI Effects rack is closed to
-    third-party plugins per §"DAW integration")
-  - `getBusesProperties()` returns stub stereo audio output ONLY when
-    `PluginHostType().isAbletonLive()`; zero buses on every other host
-    (preserves Logic's `kAudioUnitType_MIDIProcessor` classification).
-    Stub bus is never written — `processBlock` clears the audio buffer
-  - Loads in Live with 2-track routing setup (Track A: Oedipa as
-    Instrument with monitor In; Track B: target instrument with
-    "MIDI From" → Track A → Oedipa); save/reopen round-trips state
+  - JUCE defaults for `IS_MIDI_EFFECT TRUE` (no host-specific
+    accommodations; AU is `kAudioUnitType_MIDIProcessor`, VST3 carries
+    JUCE's default MIDI-fx subcategory)
 - [x] **Phase 3 — Engine wiring** (2026-05-03 — `Engine/Walker.h/.cpp` ports m4l `walk` / `walkStepEvent` bit-for-bit (mulberry32 + draw order from `walk_step_events` vectors) and adds anchor-reset on top; `processBlock` reads playhead, fires per sub-step boundary, panics on stop / backward scrub; Phase 3 input contract drops MIDI in (ADR 004 wires keyboard later); 21 Catch2 cases / 536 assertions green; in-host audible smoke deferred — needs Phase 5 cells/slot UI to set non-default ops)
   - Walk state held in `Plugin/`, calls into `Engine/` per host step
   - MIDI output reflects walk; transport scrubbing produces correct triads
@@ -660,29 +562,27 @@ Each phase ends with `make test` green.
     - [ ] Editor: `AnchorsView` (conditional)
     - [ ] Editor: `OutputView` (OUT / HUMAN)
     - [ ] Editor: `PresetView` (PRESET dropdown + SEED row)
-    - [ ] Manual host smoke: load in Live (2-track routing), switch
-      slots audibly, edit a cell via the drawer, save Live set, reopen,
+    - [ ] Manual host smoke: load AU in Logic Pro (MIDI FX slot), switch
+      slots audibly, edit a cell via the drawer, save project, reopen,
       verify state survives
-- [ ] **Phase 6 — Onboarding overlay + Standalone polish + visual identity**
-  - Live first-run onboarding overlay (`PluginHostType().isAbletonLive()`-
-    gated): full-bleed, dismissible, persisted in `juce::PropertiesFile`.
-    Re-openable via `?` button in the UI
-  - Live Track Template (`Oedipa + Synth.als`) authored and bundled as a
-    release artefact so 2-track setup is one drag (per §"DAW integration")
-  - Standalone build minimal polish: IAC bus discovery on macOS, MIDI
-    output port picker, window state persistence, "About" with version
+- [ ] **Phase 6 — Visual identity sweep**
   - Visual identity sweep — fix any remaining UTF-8 / glyph fallback
     issues (Theme palette and typography already established in Phase 5)
+  - (Live onboarding overlay, Live Track Template, and Standalone polish
+    items previously planned here are withdrawn per the 2026-05-05
+    revision — Live = m4l only, Standalone = dev convenience.)
 - [ ] **Phase 7 — Manual host smoke + ship**
-  - Load VST3 in Live (macOS) with the documented 2-track routing; save
-    Live set; reopen; verify state + Tonnetz output survive. No crash;
-    CPU sane. Onboarding overlay appears on first open, dismisses
-    correctly, doesn't reappear
-  - Load AU in Logic Pro AU MIDI FX slot (or Reaper FX chain as fallback)
-    to confirm `IS_MIDI_EFFECT` single-track path is intact; save/reopen
-  - Run Standalone build, configure IAC bus, route into Live and into a
-    second host (Logic) to confirm the retreat path works as documented
+  - Load AU in **Logic Pro** (MIDI FX slot): save project, reopen, verify
+    state + Tonnetz output survive; no crash; CPU sane
+  - Load VST3 in **Cubase Pro** trial (MIDI Insert slot): save project,
+    reopen, verify state + Tonnetz output; no crash. This is the
+    empirical-verification commitment for Cubase
+  - Best-effort: smoke in Reaper / Studio One via JUCE defaults if the
+    plugin appears in their respective MIDI fx slots. Bitwig deferred
+    until the author acquires it on sale (separate follow-up, not a
+    ship blocker)
   - Manual lattice interaction feel pass with the device in a real DAW
+    (primary: Logic; secondary: Cubase trial)
   - Merge `vst-bootstrap` → `main`
 
 Phase done = playable (per memory): each phase ends with the device usable in
