@@ -174,12 +174,16 @@ void LatticeView::paint(juce::Graphics& g)
     const int currentBoundary = (lastSubStep >= 0) ? (lastSubStep / spt) : -1;
     const bool isPlaying = currentBoundary >= 0;
 
+    // Compute the playing chord directly from walkState — independent of
+    // walkPcs's fixed size. Earlier code looked up `walkPcs[currentBoundary]`
+    // guarded by `currentBoundary < walkPcs.size()`; that silently dropped
+    // the playhead highlight once the boundary advanced past 4 (visible to
+    // the user as "playhead disappears", reported 2026-05-06).
+    const auto playing = computePlayingHighlight(walkState, currentBoundary, spt);
+
     auto stateOf = [&](const engine::Triangle& tri) -> int {
         // 3 = playing, 2 = current, 1 = walk, 0 = none
-        if (isPlaying && currentBoundary < (int) walkPcs.size()
-            && tri.notes == walkPcs[(std::size_t) currentBoundary]) {
-            return 3;
-        }
+        if (playing.active && tri.notes == playing.pcs) return 3;
         if (tri.notes == startPcs) return 2;
         for (const auto& w : walkPcs) {
             if (tri.notes == w) return 1;
@@ -249,30 +253,56 @@ void LatticeView::paint(juce::Graphics& g)
     // from the lattice; the right-rail AnchorsView still lists every
     // anchor with step + chord so the data is one click away.
 
-    // Chord-trail overlay (top strip) — only during playback.
-    if (isPlaying && currentBoundary < (int) walkPcs.size()) {
-        g.setColour(kChordTrailBg);
-        g.fillRect(0.0f, 0.0f, (float) getWidth(), kChordTrailHeight);
-        g.setFont(juce::Font(juce::FontOptions(13.0f).withStyle("Bold")));
-        const int start = std::max(0, currentBoundary - kChordTrailHistoryMax);
-        float x = 8.0f;
-        for (int i = start; i <= currentBoundary; ++i) {
-            for (const auto& tri : triangles_) {
-                if (tri.notes == walkPcs[(std::size_t) i]) {
-                    g.setColour(i == currentBoundary ? kFg : kChordTrailDim);
-                    juce::String label{engine::labelFor(tri.rootPc, tri.quality)};
-                    g.drawText(label, (int) x, 4, 40, 16, juce::Justification::centredLeft);
-                    x += 32.0f;
-                    if (i < currentBoundary) {
-                        g.setColour(kChordTrailDim);
-                        g.drawText(">", (int) x, 4, 12, 16, juce::Justification::centredLeft);
-                        x += 12.0f;
+    // Chord-trail overlay (top strip) — only during playback. Uses a
+    // rolling window of the last `kChordTrailHistoryMax` boundaries
+    // around `currentBoundary`, computed fresh each frame from the walk
+    // engine. Earlier code re-used the lattice-highlight `walkPcs`
+    // (program-start-anchored, fixed size 5) which made the strip
+    // disappear once the playhead crossed boundary 5 — see ADR 008
+    // history-strip rolling-window fix 2026-05-06.
+    if (isPlaying) {
+        const auto range = computeChordTrailRange(currentBoundary, kChordTrailHistoryMax);
+        if (range.start >= 0) {
+            g.setColour(kChordTrailBg);
+            g.fillRect(0.0f, 0.0f, (float) getWidth(), kChordTrailHeight);
+            g.setFont(juce::Font(juce::FontOptions(13.0f).withStyle("Bold")));
+            float x = 8.0f;
+            for (int i = range.start; i <= range.end; ++i) {
+                const auto pcs = sortPcs(engine::walk(walkState, i * spt));
+                for (const auto& tri : triangles_) {
+                    if (tri.notes == pcs) {
+                        g.setColour(i == currentBoundary ? kFg : kChordTrailDim);
+                        juce::String label{engine::labelFor(tri.rootPc, tri.quality)};
+                        g.drawText(label, (int) x, 4, 40, 16, juce::Justification::centredLeft);
+                        x += 32.0f;
+                        if (i < currentBoundary) {
+                            g.setColour(kChordTrailDim);
+                            g.drawText(">", (int) x, 4, 12, 16, juce::Justification::centredLeft);
+                            x += 12.0f;
+                        }
+                        break;
                     }
-                    break;
                 }
             }
         }
     }
+}
+
+LatticeView::ChordTrailRange
+LatticeView::computeChordTrailRange(int currentBoundary, int maxHistory)
+{
+    if (currentBoundary < 0 || maxHistory <= 0) return {-1, -1};
+    const int start = std::max(0, currentBoundary - maxHistory + 1);
+    return {start, currentBoundary};
+}
+
+LatticeView::PlayingHighlight
+LatticeView::computePlayingHighlight(const engine::WalkState& walkState,
+                                     int currentBoundary, int spt)
+{
+    if (currentBoundary < 0) return {false, {}};
+    const int safeSpt = std::max(1, spt);
+    return {true, sortPcs(engine::walk(walkState, currentBoundary * safeSpt))};
 }
 
 void LatticeView::mouseDown(const juce::MouseEvent& e)

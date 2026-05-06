@@ -60,6 +60,100 @@ engine::PointerOutcome anchorOn(int idx)
 
 }  // namespace
 
+TEST_CASE("LatticeView::computeChordTrailRange — rolling window survives boundary > maxHistory",
+          "[editor][lattice][history]")
+{
+    // The chord-trail strip used to read from the lattice-highlight
+    // `walkPcs` array (sized to kWalkHorizonBoundaries+1 = 5, anchored at
+    // program-start boundary 0). Once the playhead crossed boundary 5,
+    // currentBoundary >= walkPcs.size() and the entire strip vanished.
+    // The rolling-window helper computes a window of the last `maxHistory`
+    // boundaries ending at `currentBoundary`, regardless of how far the
+    // playhead has advanced.
+    using R = editor::LatticeView::ChordTrailRange;
+
+    // Stopped: no range to render.
+    auto r0 = editor::LatticeView::computeChordTrailRange(-1, 8);
+    CHECK(r0.start == -1);
+    CHECK(r0.end   == -1);
+
+    // Boundary 0: window is just the current boundary.
+    auto r1 = editor::LatticeView::computeChordTrailRange(0, 8);
+    CHECK(r1.start == 0);
+    CHECK(r1.end   == 0);
+
+    // Boundary 5 (the regression boundary). Window covers [0..5] = 6.
+    auto r2 = editor::LatticeView::computeChordTrailRange(5, 8);
+    CHECK(r2.start == 0);
+    CHECK(r2.end   == 5);
+
+    // Boundary 20: window of 8 ending at 20 → [13..20].
+    auto r3 = editor::LatticeView::computeChordTrailRange(20, 8);
+    CHECK(r3.start == 13);
+    CHECK(r3.end   == 20);
+
+    // maxHistory = 1: only the current boundary.
+    auto r4 = editor::LatticeView::computeChordTrailRange(20, 1);
+    CHECK(r4.start == 20);
+    CHECK(r4.end   == 20);
+
+    // maxHistory = 0 or negative: defensive, returns "not playing".
+    auto r5 = editor::LatticeView::computeChordTrailRange(5, 0);
+    CHECK(r5.start == -1);
+    auto r6 = editor::LatticeView::computeChordTrailRange(5, -3);
+    CHECK(r6.start == -1);
+}
+
+TEST_CASE("LatticeView::computePlayingHighlight — survives boundary > kWalkHorizonBoundaries",
+          "[editor][lattice][playhead]")
+{
+    // The lattice playhead highlight used to look up `walkPcs[currentBoundary]`
+    // guarded by `currentBoundary < walkPcs.size()` (= kWalkHorizonBoundaries+1
+    // = 5). Once the playhead crossed boundary 5 the guard failed and no
+    // triangle was highlighted as "playing" — visible as the playhead
+    // disappearing, reported 2026-05-06. This helper resolves the chord
+    // directly from walkState so any boundary value works.
+    using PH = editor::LatticeView::PlayingHighlight;
+
+    engine::WalkState ws;
+    ws.startChord       = engine::Triad{60, 64, 67};        // C major
+    ws.cells            = {
+        engine::Cell{engine::Op::P, 1, 1, 1, 0},
+        engine::Cell{engine::Op::L, 1, 1, 1, 0},
+        engine::Cell{engine::Op::R, 1, 1, 1, 0},
+    };
+    ws.stepsPerTransform = 4;
+    ws.jitter           = 0.0f;
+    ws.seed             = 0;
+    ws.stepDirection    = engine::StepDirection::Forward;
+
+    // Stopped: not active.
+    const PH stopped = editor::LatticeView::computePlayingHighlight(ws, -1, 4);
+    CHECK_FALSE(stopped.active);
+
+    // Boundary 0 = startChord itself.
+    const PH b0 = editor::LatticeView::computePlayingHighlight(ws, 0, 4);
+    REQUIRE(b0.active);
+    CHECK(b0.pcs == sortPcs(engine::Triad{60, 64, 67}));
+
+    // Boundary 5 (the regression boundary). Just confirm we get SOME chord
+    // back, not the silent-drop the buggy guard produced.
+    const PH b5 = editor::LatticeView::computePlayingHighlight(ws, 5, 4);
+    REQUIRE(b5.active);
+    CHECK(b5.pcs == sortPcs(engine::walk(ws, 5 * 4)));
+
+    // Far-future boundary 20: still active, no out-of-bounds silent drop.
+    const PH b20 = editor::LatticeView::computePlayingHighlight(ws, 20, 4);
+    REQUIRE(b20.active);
+    CHECK(b20.pcs == sortPcs(engine::walk(ws, 20 * 4)));
+
+    // Defensive spt: 0 / negative clamped to 1 (avoids div-by-zero / negative
+    // multiply if a caller passes garbage).
+    const PH spt0 = editor::LatticeView::computePlayingHighlight(ws, 3, 0);
+    REQUIRE(spt0.active);
+    CHECK(spt0.pcs == sortPcs(engine::walk(ws, 3)));
+}
+
 TEST_CASE("Editor Tap — sets startChord to the tapped triangle's PCs", "[editor][tap]")
 {
     plugin::OedipaProcessor p;

@@ -46,6 +46,29 @@ public:
     // (test_PointerInteraction) in isolation; this is the glue layer.
     void handleOutcomeForTest(const engine::PointerOutcome&);
 
+    // Chord-trail history strip range. Returns the inclusive [start, end]
+    // boundary range to render as past-chord breadcrumbs. Pure function
+    // (no LatticeView state read), exposed publicly so tests can pin the
+    // rolling-window math without instantiating the GUI component.
+    //   currentBoundary  = (lastSubStep / spt), or -1 when stopped
+    //   maxHistory       = max number of past boundaries to render
+    // Returns {-1, -1} when not playing (caller should skip the strip).
+    struct ChordTrailRange { int start; int end; };
+    static ChordTrailRange computeChordTrailRange(int currentBoundary, int maxHistory);
+
+    // Currently-playing chord PCs at `currentBoundary`. Pure function over
+    // the walker state — does NOT consult the cached lattice-highlight
+    // `walkPcs` array (which is fixed-size and only valid for boundary <
+    // kWalkHorizonBoundaries+1; relying on it made the playhead highlight
+    // disappear once the boundary advanced past 4). `active=false` when
+    // not playing (currentBoundary < 0).
+    struct PlayingHighlight {
+        bool active;
+        std::array<engine::PitchClass, 3> pcs;
+    };
+    static PlayingHighlight computePlayingHighlight(
+        const engine::WalkState& walkState, int currentBoundary, int spt);
+
 private:
     void timerCallback() override;
     void rebuildTrianglesIfStale();
