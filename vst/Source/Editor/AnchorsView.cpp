@@ -97,7 +97,14 @@ void AnchorsView::timerCallback()
     lastVersion_ = v;
     lastAnchorCount_ = anchors.size();
     rebuildRows();
-    if (auto* parent = getParentComponent()) parent->resized();
+    // Notify the rail to re-stack groups: AnchorsView's preferredHeight is
+    // 0 when empty and grows with anchor count, so the rail must relayout
+    // to give us a non-zero rect (which then triggers our `resized` and
+    // positions the new TextEditor / Label / × button child rows).
+    // Earlier impl called `getParentComponent()->resized()` — but our
+    // parent is the rail's inner `content_` (a plain Component), whose
+    // default `resized` is a no-op, so the rebuild was visually invisible.
+    if (onAnchorsChanged) onAnchorsChanged();
     repaint();
 }
 

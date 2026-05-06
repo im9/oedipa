@@ -33,10 +33,13 @@ const juce::Colour kChordTrailDim = theme::fg.withAlpha(0.35f);
 constexpr float kChordTrailHeight = 22.0f;
 
 // Visualization horizon: how many transform boundaries to walk forward when
-// computing the walk-trail polyline. inboil ties this to the host pattern
-// length; vst/ has no equivalent, so 16 boundaries (≈ 4 bars at default
-// stepsPerTransform=4) gives a useful preview without burning paint() time.
-constexpr int kWalkHorizonBoundaries = 16;
+// computing the walk-trail polyline. Earlier 16 produced long diagonal
+// strokes that cut across unrelated cells (the polyline connects
+// non-adjacent centroids in walker order, not cell-edge order). User
+// feedback: "lines from behind". Cap at 4 so the trail stays close to
+// the current chord's neighbourhood rather than slashing across the
+// whole lattice.
+constexpr int kWalkHorizonBoundaries = 4;
 
 // Chord-trail history shown to the LEFT of the playing chord during
 // playback. Past chords dimmed; current at the right edge.
@@ -239,36 +242,12 @@ void LatticeView::paint(juce::Graphics& g)
                    juce::Justification::centred);
     }
 
-    // Anchor markers — salmon rounded pill above the anchor cell with the
-    // step number inside (cream on salmon). Earlier rendering was a 12×12
-    // ellipse with `@N` text overlaid via a 32-px-wide bg-coloured drawText
-    // — the digits leaked past the dot onto neighbouring cells, and the
-    // `@` glyph looked like a stray symbol. Drop the `@`, size the pill to
-    // the label.
-    g.setFont(juce::Font(juce::FontOptions(9.0f).withStyle("Bold")));
-    for (const auto& a : processor_.getAnchors()) {
-        const auto chord = engine::buildTriad(a.rootPc, a.quality, processor_.getStartChord()[0]);
-        const auto pcs = sortPcs(chord);
-        for (const auto& tri : triangles_) {
-            if (tri.notes != pcs) continue;
-            juce::Point<float> p{tri.centroid.x, tri.centroid.y - 14.0f};
-            p.applyTransform(xform);
-
-            const juce::String label{a.step};
-            const int textW = g.getCurrentFont().getStringWidth(label);
-            const float pillW = (float) std::max(14, textW + 8);
-            const float pillH = 13.0f;
-            g.setColour(kAnchor.withAlpha(0.85f));
-            g.fillRoundedRectangle(p.x - pillW * 0.5f, p.y - pillH * 0.5f,
-                                   pillW, pillH, 4.0f);
-            g.setColour(kBg);
-            g.drawText(label,
-                       (int) (p.x - pillW * 0.5f), (int) (p.y - pillH * 0.5f),
-                       (int) pillW, (int) pillH,
-                       juce::Justification::centred);
-            break;
-        }
-    }
+    // Anchor markers were a salmon pill with the step number drawn on each
+    // anchored cell. Per UX feedback the badge read as a "mystery number"
+    // (the step value has no inherent visual meaning when isolated) and
+    // cluttered the lattice without surfacing what an "anchor" is. Removed
+    // from the lattice; the right-rail AnchorsView still lists every
+    // anchor with step + chord so the data is one click away.
 
     // Chord-trail overlay (top strip) — only during playback.
     if (isPlaying && currentBoundary < (int) walkPcs.size()) {

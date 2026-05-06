@@ -152,7 +152,10 @@ void VoicingView::timerCallback()
         lastTuringVisible_ = turing;
         lenSlider_ .setVisible(turing);
         lockSlider_.setVisible(turing);
-        if (auto* parent = getParentComponent()) parent->resized();
+        // Notify the rail to re-stack: our parent here is the rail's
+        // inner `content_` (a plain Component) whose `resized` is a
+        // no-op — same trap that hid AnchorsView's row rebuild.
+        if (onTuringVisibilityChanged) onTuringVisibilityChanged();
         repaint();
     }
 }

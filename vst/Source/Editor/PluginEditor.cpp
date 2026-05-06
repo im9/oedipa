@@ -27,6 +27,13 @@ OedipaEditor::OedipaEditor(plugin::OedipaProcessor& p)
     // that would degrade resize feel everywhere else.
     setResizable(true, true);
     setResizeLimits(640, 360, 1800, 1200);
+    // Edge-drag resize was attempted via `ResizableBorderComponent` but
+    // is incompatible with the AU plugin context: dragging top/left
+    // changes the editor's (x, y) origin within EditorCompHolder, but
+    // the host NSView frame only follows the size — leaving the editor
+    // visibly offset inside a larger host window. Bottom-right corner
+    // resize via the auto-corner stays as the only resize affordance
+    // until JUCE provides a host-aware edge resizer.
     setSize(900, 540);
 }
 

@@ -11,6 +11,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
 #include <memory>
 
 namespace oedipa {
@@ -26,6 +27,12 @@ public:
     void resized() override;
 
     int preferredHeight() const;
+
+    // Fired when the Turing LEN/LOCK rows show/hide because the user
+    // changed the RHYTHM combo to/from "turing" — preferredHeight steps
+    // by 2 row heights. The rail listens and re-stacks groups so the
+    // collapse/expand is visually reflected.
+    std::function<void()> onTuringVisibilityChanged;
 
 private:
     void timerCallback() override;

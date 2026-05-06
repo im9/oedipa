@@ -29,8 +29,9 @@ RightRailView::RightRailView(plugin::OedipaProcessor& p)
     content_.addAndMakeVisible(output_);
     content_.addAndMakeVisible(preset_);
 
-    sequenceRow_.onDrawerStateChanged = [this] { relayout(); };
-    anchors_     .onAnchorsChanged    = [this] { relayout(); };
+    sequenceRow_.onDrawerStateChanged           = [this] { relayout(); };
+    anchors_     .onAnchorsChanged              = [this] { relayout(); };
+    voicing_     .onTuringVisibilityChanged     = [this] { relayout(); };
 }
 
 void RightRailView::paint(juce::Graphics& g)
