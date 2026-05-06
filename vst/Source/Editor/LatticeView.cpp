@@ -239,7 +239,12 @@ void LatticeView::paint(juce::Graphics& g)
                    juce::Justification::centred);
     }
 
-    // Anchor markers — salmon dot above the anchor cell + step label.
+    // Anchor markers — salmon rounded pill above the anchor cell with the
+    // step number inside (cream on salmon). Earlier rendering was a 12×12
+    // ellipse with `@N` text overlaid via a 32-px-wide bg-coloured drawText
+    // — the digits leaked past the dot onto neighbouring cells, and the
+    // `@` glyph looked like a stray symbol. Drop the `@`, size the pill to
+    // the label.
     g.setFont(juce::Font(juce::FontOptions(9.0f).withStyle("Bold")));
     for (const auto& a : processor_.getAnchors()) {
         const auto chord = engine::buildTriad(a.rootPc, a.quality, processor_.getStartChord()[0]);
@@ -248,10 +253,18 @@ void LatticeView::paint(juce::Graphics& g)
             if (tri.notes != pcs) continue;
             juce::Point<float> p{tri.centroid.x, tri.centroid.y - 14.0f};
             p.applyTransform(xform);
-            g.setColour(kAnchor.withAlpha(0.7f));
-            g.fillEllipse(p.x - 6.0f, p.y - 6.0f, 12.0f, 12.0f);
+
+            const juce::String label{a.step};
+            const int textW = g.getCurrentFont().getStringWidth(label);
+            const float pillW = (float) std::max(14, textW + 8);
+            const float pillH = 13.0f;
+            g.setColour(kAnchor.withAlpha(0.85f));
+            g.fillRoundedRectangle(p.x - pillW * 0.5f, p.y - pillH * 0.5f,
+                                   pillW, pillH, 4.0f);
             g.setColour(kBg);
-            g.drawText("@" + juce::String(a.step), (int) (p.x - 16), (int) (p.y - 6), 32, 12,
+            g.drawText(label,
+                       (int) (p.x - pillW * 0.5f), (int) (p.y - pillH * 0.5f),
+                       (int) pillW, (int) pillH,
                        juce::Justification::centred);
             break;
         }

@@ -27,6 +27,40 @@ juce::String opLabel(engine::Op op)
     return juce::String::fromUTF8("\xC2\xB7");
 }
 
+// Compact pill LookAndFeel: forces fsMd (10pt) and skips the trailing-
+// ellipsis path. JUCE's default `getTextButtonFont` returns
+// `min(15, height * 0.6)` ≈ 13pt at our rowHeight=22, which combined
+// with LAF text padding overflows pillW≈16 (the natural width when
+// length=8 fills the rail) and renders every pill as "...". A 10pt
+// label fits cleanly.
+class PillLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    juce::Font getTextButtonFont(juce::TextButton&, int /*buttonHeight*/) override
+    {
+        return theme::dataFont(theme::fsMd, true);
+    }
+
+    void drawButtonText(juce::Graphics& g, juce::TextButton& button,
+                        bool /*shouldDrawHighlighted*/, bool /*shouldDrawDown*/) override
+    {
+        g.setFont(theme::dataFont(theme::fsMd, true));
+        g.setColour(button.findColour(button.getToggleState()
+                                       ? juce::TextButton::textColourOnId
+                                       : juce::TextButton::textColourOffId));
+        // useEllipsesIfTooBig=false: clip silently rather than render
+        // "..." — at this size the digit/letter is intentionally tight.
+        g.drawText(button.getButtonText(), button.getLocalBounds(),
+                   juce::Justification::centred, false);
+    }
+};
+
+PillLookAndFeel& pillLAF()
+{
+    static PillLookAndFeel laf;
+    return laf;
+}
+
 }  // namespace
 
 SequenceRowView::SequenceRowView(plugin::OedipaProcessor& p, engine::SequenceDrawer& d)
@@ -36,6 +70,7 @@ SequenceRowView::SequenceRowView(plugin::OedipaProcessor& p, engine::SequenceDra
 {
     for (int i = 0; i < (int) pills_.size(); ++i) {
         auto& b = pills_[(std::size_t) i];
+        b.setLookAndFeel(&pillLAF());
         b.setColour(juce::TextButton::buttonColourId,    theme::bg);
         b.setColour(juce::TextButton::buttonOnColourId,  theme::oliveBg);
         b.setColour(juce::TextButton::textColourOffId,   theme::olive);
@@ -70,7 +105,11 @@ SequenceRowView::SequenceRowView(plugin::OedipaProcessor& p, engine::SequenceDra
     startTimerHz(15);
 }
 
-SequenceRowView::~SequenceRowView() { stopTimer(); }
+SequenceRowView::~SequenceRowView()
+{
+    stopTimer();
+    for (auto& b : pills_) b.setLookAndFeel(nullptr);
+}
 
 int SequenceRowView::preferredHeight() const
 {
