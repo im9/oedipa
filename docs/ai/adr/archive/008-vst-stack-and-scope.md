@@ -82,6 +82,13 @@ unaffected; no Oedipa-side fix is required. Status: not a release
 blocker for the AU-beta PR. Lesson recorded as a feedback memory
 (audio-thread probes must be realtime-safe — lock-free FIFO + dedicated
 logger thread, never `FileLogger` / mutex / file I/O directly).
+**Implemented**: 2026-05-08 — `vst-bootstrap` → `main` merged via PR #1
+(`8c00803`); Phases 1–7 complete; AU beta verified in Logic Pro and VST3
+verified in Cubase Pro 14 trial (instrument-disguise topology, MIDI-out
+routing); `Engine/` JUCE-free with ADR 001 conformance via shared test
+vectors; audio-thread realtime-safety hardened (anchor lock-free
+`shared_ptr` snapshot + `WalkState` scratch). Distribution path (signing
+/ notarization / `dist/` artefacts) deferred to a parallel ADR.
 
 ## Context
 
@@ -617,13 +624,13 @@ Each phase ends with `make test` green.
     Cubase, Reaper, Bitwig, Standalone) unaffected. Comment + link in
     `OedipaEditor` ctor; community thread:
     <https://forum.juce.com/t/glitchy-resizing-in-logic-pro-on-macos-tahoe/67529>
-- [ ] **Phase 6 — Visual identity sweep**
+- [x] **Phase 6 — Visual identity sweep**
   - Visual identity sweep — fix any remaining UTF-8 / glyph fallback
     issues (Theme palette and typography already established in Phase 5)
   - (Live onboarding overlay, Live Track Template, and Standalone polish
     items previously planned here are withdrawn per the 2026-05-05
     revision — Live = m4l only, Standalone = dev convenience.)
-- [ ] **Phase 7 — Manual host smoke + ship**
+- [x] **Phase 7 — Manual host smoke + ship**
   - [x] Cubase host compatibility fix (per 2026-05-07 revision):
     [vst/CMakeLists.txt](../../../vst/CMakeLists.txt) — add `IS_SYNTH TRUE`
     to `juce_add_plugin` alongside the existing `IS_MIDI_EFFECT TRUE`;
@@ -654,7 +661,7 @@ Each phase ends with `make test` green.
     Reaper / Studio One not yet verified — best-effort, not ship blockers.
   - [x] Manual lattice interaction feel pass with the device in a real DAW
     (primary: Logic; secondary: Cubase trial)
-  - [ ] Merge `vst-bootstrap` → `main`
+  - [x] Merge `vst-bootstrap` → `main`
 
 Phase done = playable (per memory): each phase ends with the device usable in
 the host for the scope of that phase, not "compiled and tests pass."
