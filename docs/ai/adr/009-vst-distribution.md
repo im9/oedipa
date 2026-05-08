@@ -455,9 +455,9 @@ pipeline fails loudly when any step regresses.
   --verbose=2` on each bundle returns 0; `spctl --assess --type
   install` returns 0 (locally verified, "Notarized Developer ID"
   in §Phase 3 output).
-- [ ] Document the env var contract in a header comment in the
-  script and in `README.md` §Building from source. (script header
-  done; README §Building from source still pending in Phase 6)
+- [x] Document the env var contract in a header comment in the
+  script and in `README.md` §Distribution → §VST3 / AU. (script
+  header at PR #4; README documentation via Phase 6 restructure.)
 
 ### Phase 3 — Notarize + staple
 
@@ -466,11 +466,10 @@ pipeline fails loudly when any step regresses.
   `.pkg`, or `.dmg`); submit with `xcrun notarytool submit --wait
   --keychain-profile <profile>`; on success run `xcrun stapler
   staple` against the original bundle (not the zip). (PR #4)
-- [ ] Author one-time setup instructions for `xcrun notarytool
+- [x] Author one-time setup instructions for `xcrun notarytool
   store-credentials <profile> --apple-id <id> --team-id <team>
-  --password <app-specific>`. Lives in `README.md` §Building from
-  source (developer-only section). (deferred to Phase 6 README
-  rework)
+  --password <app-specific>`. Lives in `README.md` §Distribution →
+  §VST3 / AU (developer-facing). (Phase 6 README restructure.)
 - [x] Verification gate: `xcrun stapler validate` returns 0 on each
   bundle; `spctl --assess` reports `accepted, source=Notarized
   Developer ID`. (locally verified)
@@ -529,8 +528,6 @@ pipeline fails loudly when any step regresses.
   developer-facing, references this ADR). Existing sections
   (Status / Targets / DAW support / Origin / Design docs / License)
   are not touched.
-- [ ] Flip §Targets / §Status from Pre-release to Released once the
-  first GitHub Release is published (Phase 8).
 - [x] Author dmg-bundled reference document `vst/scripts/README.txt`:
   feature summary (adapted from `docs/ai/concept.md`), parameter
   list (canonical surface from concept.md §Parameter surface),
@@ -564,6 +561,10 @@ pipeline fails loudly when any step regresses.
 - [ ] `gh release create v0.1.0` (or appropriate version) with
   `dist/Oedipa.dmg` and `dist/Oedipa.amxd` attached. Release notes
   describe v1 vst/ AU + VST3 alongside the existing m4l device.
+- [ ] Update root `README.md`: flip §Targets `vst/` rows
+  (Audio Unit / VST3) from Pre-release to Released, and rewrite
+  §Status to drop the "first GitHub Release is being prepared"
+  sentence (now released).
 - [ ] Wire `vst-release.yml` GitHub Actions workflow for future
   releases:
   - Trigger on `release: published` events.
