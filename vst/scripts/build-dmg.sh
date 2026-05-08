@@ -20,6 +20,7 @@ ARTEFACTS_DIR="$SCRIPT_DIR/../build/Oedipa_artefacts/Release"
 DIST_DIR="$SCRIPT_DIR/../../dist"
 DMG_PATH="$DIST_DIR/Oedipa.dmg"
 INSTALL_TXT="$SCRIPT_DIR/INSTALL.txt"
+README_TXT="$SCRIPT_DIR/README.txt"
 
 AU_BUNDLE="$ARTEFACTS_DIR/AU/Oedipa.component"
 VST3_BUNDLE="$ARTEFACTS_DIR/VST3/Oedipa.vst3"
@@ -32,10 +33,12 @@ for bundle in "$AU_BUNDLE" "$VST3_BUNDLE"; do
   fi
 done
 
-if [[ ! -f "$INSTALL_TXT" ]]; then
-  echo "error: INSTALL.txt not found at $INSTALL_TXT" >&2
-  exit 1
-fi
+for txt in "$INSTALL_TXT" "$README_TXT"; do
+  if [[ ! -f "$txt" ]]; then
+    echo "error: $(basename "$txt") not found at $txt" >&2
+    exit 1
+  fi
+done
 
 mkdir -p "$DIST_DIR"
 
@@ -46,6 +49,7 @@ echo "Staging dmg contents in $STAGING"
 cp -R "$AU_BUNDLE" "$STAGING/"
 cp -R "$VST3_BUNDLE" "$STAGING/"
 cp "$INSTALL_TXT" "$STAGING/"
+cp "$README_TXT" "$STAGING/"
 
 echo "Creating $DMG_PATH (HFS+, UDZO compressed)"
 rm -f "$DMG_PATH"

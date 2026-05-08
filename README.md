@@ -45,13 +45,36 @@ compatibility matrix. The first GitHub Release is being prepared.
 
 `app/` (iOS) is planned — see [Targets](#targets).
 
-## Use (Max for Live)
+## Install
+
+### Max for Live (m4l)
 
 Download `Oedipa.amxd` from the latest [release](../../releases), drag
 it onto a MIDI track in Ableton Live, and put an instrument after it.
 Click a triangle on the lattice to set the starting chord; press play.
 
-Building from source is only needed if you want to modify the device —
+### VST3 / AU (vst)
+
+Download `Oedipa.dmg` from the latest [release](../../releases) and
+mount it. Drag the bundles into:
+
+- `Oedipa.component` → `~/Library/Audio/Plug-Ins/Components/`
+- `Oedipa.vst3` → `~/Library/Audio/Plug-Ins/VST3/`
+
+Either folder may need to be created if you have no other plug-ins
+installed there.
+
+**Logic Pro** — load on a software-instrument track in the *AU MIDI
+FX* slot, then route the track through a synth or sampler.
+
+**Bitwig Studio** — load as a *VST3 MIDI fx* in front of an
+instrument.
+
+See [DAW support](#daw-support) for per-host compatibility. Reaper /
+Studio One are best-effort; Ableton Live uses the [Max for Live
+target](m4l/) instead.
+
+Building from source is only needed if you want to modify Oedipa —
 see [Build](#build) below.
 
 ## Targets
@@ -107,17 +130,44 @@ Per-target build commands:
 Per-target dev docs:
 - [`m4l/engine/README.md`](m4l/engine/README.md)
 
-### Release (m4l)
+## Distribution
 
-`make release` from the repo root builds the engine + host packages and
-bakes a dev `m4l/Oedipa.amxd`. To produce the distributable file, open
-that `.amxd` in Max → click the **snowflake (Freeze)** button in the
+Developer-facing — only needed when cutting a new release. `make
+release` from the repo root chains `make release-m4l` and `make
+release-vst`; the per-target subsections below cover each in detail.
+
+### Max for Live (m4l)
+
+`make release-m4l` builds the engine + host packages and bakes a dev
+`m4l/Oedipa.amxd`. To produce the distributable file, open that
+`.amxd` in Max → click the **snowflake (Freeze)** button in the
 patcher toolbar → *File → Save As* `dist/Oedipa.amxd`. The frozen
-`.amxd` inlines every referenced JS file and runs on any Live install.
+`.amxd` inlines every referenced JS file and runs on any Live
+install.
 
 Freeze is a manual step in Max — there is no CLI equivalent. See
 [ADR 007](docs/ai/adr/archive/007-m4l-distribution.md) for the full
 distribution path conventions and the freeze rationale.
+
+### VST3 / AU (vst)
+
+`make release-vst` builds the AU + VST3 bundles in Release mode,
+signs them with the Developer ID, submits to Apple notarization,
+staples the tickets, packages both bundles + a `README.txt` + an
+`INSTALL.txt` into `dist/Oedipa.dmg`, and signs + notarizes + staples
+the dmg itself.
+
+Required environment:
+
+- `DEVELOPER_TEAM_ID` — Apple Developer Team ID
+- `NOTARY_PROFILE` — keychain profile name (default `oedipa-notary`)
+
+One-time setup: run `xcrun notarytool store-credentials oedipa-notary
+--apple-id <id> --team-id <team> --password <app-specific>` to register
+the notarization credentials in the keychain.
+
+See [ADR 009](docs/ai/adr/009-vst-distribution.md) for the full
+distribution path.
 
 ## Design docs
 
