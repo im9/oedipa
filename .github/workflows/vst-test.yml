@@ -1,0 +1,25 @@
+name: VST Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'vst/**'
+      - '.github/workflows/vst-test.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'vst/**'
+      - '.github/workflows/vst-test.yml'
+
+jobs:
+  vst:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: vst
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - run: make test
