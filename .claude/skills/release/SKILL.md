@@ -27,7 +27,7 @@ The release asset is target-specific:
   [ADR 007](../../../docs/ai/adr/archive/007-m4l-distribution.md).
 - **vst** → `dist/Oedipa.dmg` — signed / notarized / stapled dmg
   built via `make release-vst`. See
-  [ADR 009](../../../docs/ai/adr/009-vst-distribution.md).
+  [ADR 009](../../../docs/ai/adr/archive/009-vst-distribution.md).
 
 ## Pre-flight checks (do these BEFORE creating the tag)
 

@@ -35,13 +35,13 @@ Full musical model: [`docs/ai/concept.md`](docs/ai/concept.md).
 ## Status
 
 `m4l/` is feature-complete for v1 and packaged for distribution. The
-frozen `Oedipa.amxd` ships via [GitHub Releases](../../releases) and
-runs on any Live 12 install with Max for Live.
+frozen `Oedipa.amxd` ships via [GitHub Releases](../../releases?q=m4l)
+and runs on any Live 12 install with Max for Live.
 
-`vst/` AU + VST3 are packaged for distribution as a signed and notarized
-macOS `.dmg`. Primary hosts: Logic Pro (AU MIDI FX) and Bitwig Studio
-(VST3 MIDI fx). See [DAW support](#daw-support) below for the host
-compatibility matrix. The first GitHub Release is being prepared.
+`vst/` AU + VST3 ship as a signed and notarized macOS `.dmg` via
+[GitHub Releases](../../releases?q=vst). Primary hosts: Logic Pro (AU
+MIDI FX) and Bitwig Studio (VST3 MIDI fx). See [DAW
+support](#daw-support) below for the host compatibility matrix.
 
 `app/` (iOS) is planned — see [Targets](#targets).
 
@@ -49,13 +49,13 @@ compatibility matrix. The first GitHub Release is being prepared.
 
 ### Max for Live (m4l)
 
-Download `Oedipa.amxd` from the latest [release](../../releases), drag
+Download `Oedipa.amxd` from the latest [release](../../releases?q=m4l), drag
 it onto a MIDI track in Ableton Live, and put an instrument after it.
 Click a triangle on the lattice to set the starting chord; press play.
 
 ### VST3 / AU (vst)
 
-Download `Oedipa.dmg` from the latest [release](../../releases) and
+Download `Oedipa.dmg` from the latest [release](../../releases?q=vst) and
 mount it. Drag the bundles into:
 
 - `Oedipa.component` → `~/Library/Audio/Plug-Ins/Components/`
@@ -85,8 +85,8 @@ musical concept but differ in UI and integration.
 | Target | Status | Notes |
 |---|---|---|
 | [Max for Live](m4l/) | Released | Max for Live device. Current primary target. |
-| [Audio Unit](vst/) | Pre-release | macOS, bundled in the vst/ `.dmg`. C++17 / JUCE. |
-| [VST3](vst/) | Pre-release | macOS, bundled in the vst/ `.dmg`. Same codebase as the AU. |
+| [Audio Unit](vst/) | Released | macOS, bundled in the vst/ `.dmg`. C++17 / JUCE. |
+| [VST3](vst/) | Released | macOS, bundled in the vst/ `.dmg`. Same codebase as the AU. |
 | [iOS](app/) | Planned | AUv3 + standalone, JUCE. Touch-based exploration. |
 
 Musical logic is shared as a specification, not as code. Each target is a
@@ -166,8 +166,8 @@ One-time setup: run `xcrun notarytool store-credentials oedipa-notary
 --apple-id <id> --team-id <team> --password <app-specific>` to register
 the notarization credentials in the keychain.
 
-See [ADR 009](docs/ai/adr/009-vst-distribution.md) for the full
-distribution path.
+See [ADR 009](docs/ai/adr/archive/009-vst-distribution.md) for the
+full distribution path.
 
 ## Design docs
 
