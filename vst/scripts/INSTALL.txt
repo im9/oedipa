@@ -1,0 +1,37 @@
+Oedipa — Tonnetz-based chord exploration MIDI effect
+im9 / Free distribution
+
+
+Installation
+------------
+
+Drag Oedipa.component into:
+  ~/Library/Audio/Plug-Ins/Components/
+
+Drag Oedipa.vst3 into:
+  ~/Library/Audio/Plug-Ins/VST3/
+
+Both folders may need to be created manually if you have no other
+plug-ins installed there.
+
+
+Hosting
+-------
+
+Logic Pro          AU MIDI FX slot on a software-instrument track.
+
+Cubase Pro         Load as a VST Instrument and route MIDI out to a
+                   downstream software-instrument track. Cubase's MIDI
+                   Inserts slot does not accept third-party VST3 by
+                   Steinberg policy; the VST3 bundle is categorised as
+                   an instrument so it loads on the Instrument track,
+                   and the MIDI it emits is routed externally.
+
+Bitwig / Reaper /  AU or VST3 in the host's MIDI fx slot. Best-effort,
+Studio One         not formally tested for v1.
+
+
+License
+-------
+
+MIT — https://github.com/im9/oedipa/blob/main/LICENSE

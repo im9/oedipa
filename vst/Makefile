@@ -1,18 +1,15 @@
-.PHONY: build configure release debug clean open kill test
+.PHONY: build debug clean open kill test
 
-build: configure release
-
-configure:
+build:
 	cmake -B build -DCMAKE_BUILD_TYPE=Release
-
-release:
 	cmake --build build --config Release -j8
 
 debug:
 	cmake -B build -DCMAKE_BUILD_TYPE=Debug
 	cmake --build build --config Debug -j8
 
-test: configure
+test:
+	cmake -B build -DCMAKE_BUILD_TYPE=Release
 	cmake --build build --target oedipa_tests -j8
 	./build/oedipa_tests
 
