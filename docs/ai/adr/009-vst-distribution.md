@@ -3,6 +3,9 @@
 ## Status: Proposed
 
 **Created**: 2026-05-08
+**Revised**: 2026-05-08 — Phase 5 scope expanded to cover broader
+Makefile reorganization (root + `vst/Makefile` target-name overlap
+and per-file responsibility), beyond just adding `release-vst`.
 
 ## Context
 
@@ -476,10 +479,19 @@ pipeline fails loudly when any step regresses.
 - [ ] Modify `release` to depend on `release-m4l release-vst`. m4l
   freeze instructions still echo at the end (unchanged from ADR
   007); vst/ build runs fully automated.
+- [ ] Resolve Makefile naming overlap and per-file responsibility:
+  root `Makefile` and `vst/Makefile` both define `release` with
+  different semantics today (root chains across targets,
+  `vst/Makefile`'s is a cmake-build internal step). Rename /
+  consolidate so root is unambiguous as cross-target orchestrator
+  and `vst/Makefile` covers vst-only build commands only. Specific
+  target renames settled during the reorg work, not pre-locked here.
 - [ ] Verification gate: `make release-vst` on a clean working
   tree produces `dist/Oedipa.dmg` whose `xcrun stapler validate`
   passes and whose mounted contents open in Logic Pro and Cubase
-  Pro without any Gatekeeper dialog.
+  Pro without any Gatekeeper dialog. Also: `make test` and
+  `cd vst && make test` both still work after the Makefile reorg
+  (no broken target chains).
 
 ### Phase 6 — README en/ja split + restructure
 
