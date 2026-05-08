@@ -652,7 +652,7 @@ Each phase ends with `make test` green.
     click-free 2026-05-08** (incidental observation during the AU click
     investigation, ahead of the planned author-acquires-on-sale schedule).
     Reaper / Studio One not yet verified — best-effort, not ship blockers.
-  - [ ] Manual lattice interaction feel pass with the device in a real DAW
+  - [x] Manual lattice interaction feel pass with the device in a real DAW
     (primary: Logic; secondary: Cubase trial)
   - [ ] Merge `vst-bootstrap` → `main`
 
