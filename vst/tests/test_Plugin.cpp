@@ -896,3 +896,31 @@ TEST_CASE("APVTS per-cell velocity — scales the output noteOn velocity", "[plu
     CHECK(v050 > v010);
     CHECK(v010 >= 1);  // velocity 0 is conventionally a noteOff; clamp to ≥ 1.
 }
+
+TEST_CASE("Bus config — stub stereo output + isMidiEffect intact (ADR 008 2026-05-07)",
+          "[plugin][bus]")
+{
+    // Pin both halves of the Cubase-compat fix:
+    //
+    //   1. The stub stereo output bus is declared. VST3 hosts (Cubase
+    //      especially) mute / under-process plugins with zero audio
+    //      busses; the bus exists for host bookkeeping even though we
+    //      never write into it. Asserting bus count + default layout
+    //      catches an accidental revert to `BusesProperties()` (no
+    //      busses) which would silently break Cubase loading.
+    //
+    //   2. isMidiEffect() still returns true. ADR 008's revision pairs
+    //      IS_SYNTH=TRUE with IS_MIDI_EFFECT=TRUE; the AU type (`aumi`)
+    //      is driven by IS_MIDI_EFFECT, and a regression that flipped
+    //      this would silently break the Logic MIDI FX slot.
+    OedipaProcessor p;
+
+    REQUIRE(p.getBusCount(false) >= 1);
+    auto* bus = p.getBus(false, 0);
+    REQUIRE(bus != nullptr);
+    CHECK(bus->getDefaultLayout() == juce::AudioChannelSet::stereo());
+
+    CHECK(p.isMidiEffect()  == true);
+    CHECK(p.acceptsMidi()   == true);
+    CHECK(p.producesMidi()  == true);
+}

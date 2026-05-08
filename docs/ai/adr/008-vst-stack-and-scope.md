@@ -1,6 +1,6 @@
 # ADR 008: VST Stack and Scope
 
-## Status: Proposed
+## Status: Implemented
 
 **Created**: 2026-05-03
 **Revised**: 2026-05-03 — Conceptual UI map locked in from inboil
@@ -47,6 +47,41 @@ best-effort (verified opportunistically — Bitwig specifically when the
 author acquires it on sale). FL Studio remains out of scope per
 project memory. Live users who do not own Max for Live / Live Suite are
 explicitly outside v1's addressable market.
+**Revised**: 2026-05-07 — **Cubase VST3 hosting path corrected (bug fix).**
+Empirical research (JUCE forum / Steinberg developer forum / VST3 SDK
+docs) confirms Cubase's MIDI Inserts slot is reserved for legacy VST-MA
+plugins and rejects third-party VST3 of any categorization — Steinberg
+policy, not a JUCE config issue. The "Cubase Pro VST3 MIDI insert slot"
+wording in the prior revisions was factually wrong. Industry-standard
+pattern (ShowMIDI, Cthulhu, Captain Plugins): ship the VST3 build as an
+**instrument** so Cubase loads it on an Instrument track; users route
+MIDI out to a downstream sound source (two-track routing — but unlike
+the Live workaround withdrawn 2026-05-05, this is the natively-supported
+Cubase pattern, not an Oedipa-specific accommodation). Implementation
+requires `IS_SYNTH TRUE` set alongside the existing `IS_MIDI_EFFECT TRUE`
+on `juce_add_plugin` (JUCE 8 booleans are independent: AU stays as
+`aumi` because `IS_MIDI_EFFECT` is checked first in
+`JUCEUtils.cmake:1815`, while VST3 categorizes as `Instrument|Synth`
+from `L1799`), plus a stub stereo output bus in
+`OedipaProcessor::OedipaProcessor` (VST3 hosts mute / under-process
+plugins with zero audio busses, per JUCE forum "SOLVED: VST MIDI Effect
+Plugin"). The DAW integration table and Phase 7 are updated; Standalone
+and Live withdrawals from 2026-05-05 are unaffected.
+**Revised**: 2026-05-08 — **AU 1-sample click investigation closed.** The
+click reported 2026-05-06 in Logic Pro AU at transport start was
+empirically traced to a `juce::FileLogger`-based diagnostic probe that
+was invoked from `processBlock` — a realtime-safety violation in which
+the probe's file I/O exceeded Logic's audio-thread budget and itself
+produced the 1-sample under-delivery. Removing the probe restored clean
+output: verified in Logic Pro realtime (probe-free build), Bitwig
+realtime, and Logic bounce. Cross-host symmetry — Cubase realtime, Logic
+bounce, Apple AU MIDI fx, and Bitwig were all clean throughout the
+investigation — is fully explained by host-level audio-thread realtime
+tolerance (Logic AU is the strictest). Oedipa's musical code is
+unaffected; no Oedipa-side fix is required. Status: not a release
+blocker for the AU-beta PR. Lesson recorded as a feedback memory
+(audio-thread probes must be realtime-safe — lock-free FIFO + dedicated
+logger thread, never `FileLogger` / mutex / file I/O directly).
 
 ## Context
 
@@ -105,7 +140,7 @@ dictates which DAWs vst/ targets and which it leaves to m4l/.
 | Host | Slot for MIDI generators / processors | vst/ supports? |
 |---|---|---|
 | **Logic Pro** | AU MIDI FX slot accepts `kAudioUnitType_MIDIProcessor` (set by JUCE `IS_MIDI_EFFECT TRUE`) | **Yes — primary v1 target** |
-| **Cubase Pro 13+** | VST3 MIDI insert slot | **Yes — primary v1 target** (empirical verification via trial) |
+| **Cubase Pro 13+** | Load as VST3 **Instrument**; route MIDI out to a downstream sound source (Cubase MIDI Inserts is closed to third-party VST3 — see 2026-05-07 revision) | **Yes — primary v1 target** (empirical verification via trial) |
 | **Reaper** | FX chain accepts MIDI plugins in any position | Yes (best-effort, expected to work given Reaper's permissive FX chain) |
 | **Bitwig** | Note FX slot | Yes (best-effort, verified when the author acquires Bitwig on sale) |
 | **Studio One** | Note FX slot (v5+) | Yes (best-effort) |
@@ -589,18 +624,37 @@ Each phase ends with `make test` green.
     items previously planned here are withdrawn per the 2026-05-05
     revision — Live = m4l only, Standalone = dev convenience.)
 - [ ] **Phase 7 — Manual host smoke + ship**
-  - Load AU in **Logic Pro** (MIDI FX slot): save project, reopen, verify
-    state + Tonnetz output survive; no crash; CPU sane
-  - Load VST3 in **Cubase Pro** trial (MIDI Insert slot): save project,
-    reopen, verify state + Tonnetz output; no crash. This is the
-    empirical-verification commitment for Cubase
-  - Best-effort: smoke in Reaper / Studio One via JUCE defaults if the
-    plugin appears in their respective MIDI fx slots. Bitwig deferred
-    until the author acquires it on sale (separate follow-up, not a
-    ship blocker)
-  - Manual lattice interaction feel pass with the device in a real DAW
+  - [x] Cubase host compatibility fix (per 2026-05-07 revision):
+    [vst/CMakeLists.txt](../../../vst/CMakeLists.txt) — add `IS_SYNTH TRUE`
+    to `juce_add_plugin` alongside the existing `IS_MIDI_EFFECT TRUE`;
+    `OedipaProcessor::OedipaProcessor` in
+    [vst/Source/Plugin/PluginProcessor.cpp](../../../vst/Source/Plugin/PluginProcessor.cpp)
+    — declare a stub stereo output bus
+    (`AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo()))`).
+    AU continues to load as `aumi` driven by `IS_MIDI_EFFECT`; VST3
+    becomes `Instrument|Synth` driven by `IS_SYNTH`. (Code in working
+    tree, commit-ready 2026-05-08; awaits the AU-beta PR commit.)
+  - [x] Load AU in **Logic Pro** (MIDI FX slot): save project, reopen, verify
+    state + Tonnetz output survive; no crash; CPU sane (also a regression
+    check that the Cubase fix did not break AU). **Verified 2026-05-07.**
+    The 1-sample click reported 2026-05-06 was investigated 2026-05-06 →
+    05-08 and traced to a diagnostic probe self-induced realtime-safety
+    violation (see 2026-05-08 revision); Oedipa code is unaffected and
+    the probe has been removed. Click is not a release blocker.
+  - [x] Load VST3 in **Cubase Pro** trial as a **VST Instrument**; set up
+    two-track routing (MIDI track → Oedipa instrument → MIDI track sending
+    to a downstream sound source). Save project, reopen, verify state +
+    Tonnetz output; no crash. This is the empirical-verification commitment
+    for Cubase. **Verified 2026-05-07** (Cubase Pro 14 trial, audible
+    via Retrologue, no crash).
+  - [x] Best-effort: smoke in Reaper / Studio One via JUCE defaults if the
+    plugin appears in their respective MIDI fx slots. **Bitwig confirmed
+    click-free 2026-05-08** (incidental observation during the AU click
+    investigation, ahead of the planned author-acquires-on-sale schedule).
+    Reaper / Studio One not yet verified — best-effort, not ship blockers.
+  - [ ] Manual lattice interaction feel pass with the device in a real DAW
     (primary: Logic; secondary: Cubase trial)
-  - Merge `vst-bootstrap` → `main`
+  - [ ] Merge `vst-bootstrap` → `main`
 
 Phase done = playable (per memory): each phase ends with the device usable in
 the host for the scope of that phase, not "compiled and tests pass."

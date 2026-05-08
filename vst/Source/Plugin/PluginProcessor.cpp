@@ -63,7 +63,13 @@ constexpr const char* kAnchorTag     = "Anchor";
 }  // namespace
 
 OedipaProcessor::OedipaProcessor()
-    : AudioProcessor(BusesProperties()),
+    // Stub stereo output bus per ADR 008 §2026-05-07 revision: VST3 hosts
+    // (Cubase, etc.) mute / under-process plugins with zero audio busses
+    // even when the plugin is a MIDI effect. We never write into this
+    // buffer (see processBlock's juce::ignoreUnused(audio) below). AU is
+    // unaffected — it still loads as `aumi` driven by IS_MIDI_EFFECT.
+    : AudioProcessor(BusesProperties()
+                       .withOutput("Output", juce::AudioChannelSet::stereo())),
       apvts(*this, nullptr, "OedipaParams", makeParameterLayout())
 {
     // Default program: P, L, R, Hold (the canonical "Mixed" preset shape).
@@ -303,15 +309,17 @@ void OedipaProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBu
 {
     juce::ScopedNoDenormals noDenormals;
 
-    // MIDI effect: do NOT clear `audio`. Even though `IS_MIDI_EFFECT TRUE`
-    // means the host should pass zero audio channels, some hosts (Logic
-    // among them) defensively hand us a buffer with channels carrying
-    // residual samples — clearing those to zero introduces a sample-step
-    // discontinuity that the downstream synth path renders as a click on
-    // transport-start (and at any sub-step where we'd otherwise be
-    // silent under e.g. rhythm='offbeat'). User report 2026-05-06.
-    // The buffer is left untouched; we only emit MIDI.
-    juce::ignoreUnused(audio);
+    // Instrument-disguise contract (ADR 008 §2026-05-07 revision): we
+    // declare a stub stereo output bus to be hostable as VST3 Instrument
+    // by Cubase (Cubase does not expose third-party VST3 in MIDI Inserts).
+    // Hosts loading us as instrument hand us an audio buffer expecting
+    // silence — we don't generate audio, so we clear it explicitly so
+    // residual samples from the host's buffer pool aren't audible. In
+    // Logic AU the buffer has 0 channels and `clear()` is a no-op. The
+    // unrelated Logic-AU 1-sample click reported 2026-05-06 is independent
+    // of clear() — empirically verified by re-adding clear() and observing
+    // the click unchanged (memory project_au_click_noise.md hypothesis A).
+    audio.clear();
 
     // Drop region / keyboard NOTES so the walker is the sole note source
     // (ADR 004 keyboard-driven startChord ships later — letting region
