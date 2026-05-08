@@ -54,13 +54,14 @@ TEST_CASE("APVTS layout — m4l parity parameters present with correct types & d
     auto& apvts = p.getApvts();
 
     SECTION("numeric / int params") {
-        // stepsPerTransform: int 1..32, default 4
+        // stepsPerTransform: int 1..64, default 4
         auto* spt = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter(pid::stepsPerTransform));
         REQUIRE(spt != nullptr);
         // m4l semantics: 1 sub-step = 1 fire; 4 = quarter note at 16th grid.
-        // Range 1..32 covers single-16th up to 2-bar transforms.
+        // Range 1..64 matches m4l (bridge.ts:233) and inboil's RATE slider —
+        // covers single-16th up to 4-bar transforms.
         CHECK(spt->getRange().getStart() == 1);
-        CHECK(spt->getRange().getEnd() == 32);
+        CHECK(spt->getRange().getEnd() == 64);
         CHECK((int)*apvts.getRawParameterValue(pid::stepsPerTransform) == defaults::stepsPerTransform);
 
         // jitter: float 0..1, default 0

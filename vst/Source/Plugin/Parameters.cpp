@@ -18,7 +18,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameterLayout()
 
     layout.add(std::make_unique<API>(
         PID{pid::stepsPerTransform, kParamVersion}, "Steps Per Transform",
-        1, 32, defaults::stepsPerTransform));
+        1, 64, defaults::stepsPerTransform));
 
     layout.add(std::make_unique<APC>(
         PID{pid::voicing, kParamVersion}, "Voicing",
