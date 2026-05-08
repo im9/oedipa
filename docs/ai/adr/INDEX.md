@@ -44,6 +44,7 @@ only when relevant to the current task.
 | #   | Title | Status | Notes |
 |-----|-------|--------|-------|
 | 008 | [VST Stack and Scope](archive/008-vst-stack-and-scope.md) | Implemented | VST3+AU+Standalone (macOS, Win deferred); C++17 engine via shared test vectors; APVTS+ValueTree state; interactive Tonnetz lattice as primary UI; `Source/Engine/` JUCE-free for iOS + future standalone-suite reuse. MIDI instrument only (no internal sound, no plugin hosting); vst/ primary hosts = Logic + Cubase, Live = m4l target only, Standalone is dev convenience. AU beta in Logic; VST3 verified in Cubase Pro. |
+| 009 | [VST Distribution — Signing, Notarization, and Release Flow](009-vst-distribution.md) | Proposed | Developer ID signing + hardened runtime; notarize via `xcrun notarytool` (app-specific password local, API key for CI); staple bundles + `.dmg`; `dist/Oedipa.dmg` drag-install with `.component` + `.vst3` + `INSTALL.txt`; GitHub Release as v1 source of truth; `macos-latest` CI for `vst/**` push/PR + release-tag build/notarize workflow; README en + ja split. |
 
 ## iOS
 
