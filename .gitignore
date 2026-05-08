@@ -22,3 +22,11 @@ m4l/Oedipa Project/
 
 # Release artifacts (frozen .amxd, future VST builds, etc.)
 /dist/
+
+# Apple Developer signing artefacts — must never be committed
+# (per ADR 009 §Security).
+*.p12
+*.p8
+*.cer
+*.mobileprovision
+*.keychain
