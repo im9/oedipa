@@ -11,8 +11,9 @@ platform. Each target lives in its own directory and has its own build system.
 
 - `m4l/` — **Max for Live** device (current primary target). Ableton Live MIDI
   effect. Fastest prototyping path, matches the author's own DAW workflow.
-- `vst/` — **VST3/AU** plugin (C++17/JUCE). DAW-native, cross-platform. Future
-  target once the M4L version validates the concept.
+- `vst/` — **VST3/AU** plugin (C++17/JUCE). AU in beta on Logic Pro for macOS;
+  VST3 verified in Cubase Pro. The `Source/Engine/` subdirectory is JUCE-free
+  (iOS reuse target, see ADR 008).
 - `app/` — **iOS** app (AUv3 + standalone, JUCE-based). Future target for
   touch-based Tonnetz exploration. Not yet created.
 
@@ -46,9 +47,10 @@ m4l/                 — Max for Live device
     dist/tonnetz.js  — compiled ESM output (consumed by the host bundle)
     tsconfig.json, package.json
 vst/                 — VST3/AU plugin (C++17/JUCE)
-  Source/            — Plugin source
-    PluginProcessor.*  — MIDI processing, Tonnetz engine
-    PluginEditor.*     — GUI (Tonnetz lattice visualization)
+  Source/
+    Engine/          — pure C++17 engine (no JUCE includes — iOS reuse target)
+    Plugin/          — JUCE AudioProcessor, APVTS, MIDI / state I/O
+    Editor/          — JUCE AudioProcessorEditor, lattice renderer, widgets
   JUCE/              — JUCE framework (git submodule)
   tests/             — Catch2 unit tests
   CMakeLists.txt, Makefile
@@ -202,6 +204,28 @@ All tests must pass. Do not proceed with failing tests.
 
 **Never commit or push without explicit user approval.** Even after `/commit`,
 confirm before creating a commit.
+
+## Audio plugin discipline (vst/, future app/)
+
+Realtime audio thread paths (`processBlock`, AU/VST3 callbacks) must be
+realtime-safe. The following are **forbidden** in those code paths — including
+diagnostic / instrumentation code:
+
+- File I/O of any kind (`juce::FileLogger`, `juce::Logger::writeToLog`,
+  `printf`, `std::cout`, `std::ofstream`, raw file handles)
+- Mutex / `std::mutex::lock` / blocking synchronization
+- Heap allocation (`new`, `delete`, `malloc`, `free`, container resize)
+- Direct calls into `juce::MessageManager` (use `MessageManager::callAsync`
+  only after confirming it is non-blocking on your JUCE version, or prefer
+  the FIFO path below)
+
+To get diagnostic data out of the audio thread, push samples / events into a
+**lock-free SPSC FIFO** (`juce::AbstractFifo` + a plain ring buffer) and let
+the message thread or a dedicated logger thread read and flush. Probes that
+are realtime-unsafe can themselves produce the bug under investigation —
+which is exactly how the AU click investigation (2026-05-06 → 05-08) burned
+two days before the cause was traced to a `juce::FileLogger` call inside
+`processBlock` (recorded in ADR 008 §2026-05-08 revision).
 
 ## Conventions
 
