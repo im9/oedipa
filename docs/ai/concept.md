@@ -286,7 +286,7 @@ The minimum parameter set each target must expose:
 | `cells`             | `Cell[]`                             | ordered cell sequence (4 by default)        |
 | `jitter`            | float 0..1                           | per-step random-substitute probability      |
 | `seed`              | int                                  | RNG seed for reproducibility                |
-| `cellLength`        | int (bars; 1 / 2 / 4 / 8)            | cell duration in bars (default 1)           |
+| `cellLength`        | int (16th-note steps; 1..64)         | cell duration; default 4 (= 1 quarter note) |
 | `voicing`           | `close \| spread \| drop2`           | output voicing                              |
 | `seventh`           | bool                                 | add 7th extension                           |
 

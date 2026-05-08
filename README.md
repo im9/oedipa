@@ -39,8 +39,8 @@ frozen `Oedipa.amxd` ships via [GitHub Releases](../../releases) and
 runs on any Live 12 install with Max for Live.
 
 `vst/` Audio Unit (AU) is in beta on Logic Pro for macOS. The VST3 bundle
-builds from the same codebase but is not yet host-verified. Neither is
-packaged for distribution yet.
+loads in Cubase Pro as an Instrument with two-track MIDI-out routing.
+Neither is packaged for distribution yet.
 
 `app/` (iOS) is planned — see [Targets](#targets).
 
@@ -62,7 +62,7 @@ musical concept but differ in UI and integration.
 |---|---|---|
 | [Max for Live](m4l/) | Released | Max for Live device. Current primary target. |
 | [Audio Unit](vst/) | Beta | Logic Pro on macOS. C++17 / JUCE. |
-| [VST3](vst/) | Build-only | Same codebase as the AU. Not yet host-verified. |
+| [VST3](vst/) | Build-only | Same codebase as the AU. Verified in Cubase Pro; not packaged for distribution. |
 | [iOS](app/) | Planned | AUv3 + standalone, JUCE. Touch-based exploration. |
 
 Musical logic is shared as a specification, not as code. Each target is a

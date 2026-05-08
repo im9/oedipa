@@ -11,8 +11,9 @@ platform. Each target lives in its own directory and has its own build system.
 
 - `m4l/` — **Max for Live** device (current primary target). Ableton Live MIDI
   effect. Fastest prototyping path, matches the author's own DAW workflow.
-- `vst/` — **VST3/AU** plugin (C++17/JUCE). DAW-native, cross-platform. Future
-  target once the M4L version validates the concept.
+- `vst/` — **VST3/AU** plugin (C++17/JUCE). AU in beta on Logic Pro for macOS;
+  VST3 verified in Cubase Pro. The `Source/Engine/` subdirectory is JUCE-free
+  (iOS reuse target, see ADR 008).
 - `app/` — **iOS** app (AUv3 + standalone, JUCE-based). Future target for
   touch-based Tonnetz exploration. Not yet created.
 
@@ -46,9 +47,10 @@ m4l/                 — Max for Live device
     dist/tonnetz.js  — compiled ESM output (consumed by the host bundle)
     tsconfig.json, package.json
 vst/                 — VST3/AU plugin (C++17/JUCE)
-  Source/            — Plugin source
-    PluginProcessor.*  — MIDI processing, Tonnetz engine
-    PluginEditor.*     — GUI (Tonnetz lattice visualization)
+  Source/
+    Engine/          — pure C++17 engine (no JUCE includes — iOS reuse target)
+    Plugin/          — JUCE AudioProcessor, APVTS, MIDI / state I/O
+    Editor/          — JUCE AudioProcessorEditor, lattice renderer, widgets
   JUCE/              — JUCE framework (git submodule)
   tests/             — Catch2 unit tests
   CMakeLists.txt, Makefile
