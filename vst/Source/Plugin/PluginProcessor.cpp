@@ -63,13 +63,12 @@ constexpr const char* kAnchorTag     = "Anchor";
 }  // namespace
 
 OedipaProcessor::OedipaProcessor()
-    // Stub stereo output bus per ADR 008 §2026-05-07 revision: VST3 hosts
-    // (Cubase, etc.) mute / under-process plugins with zero audio busses
-    // even when the plugin is a MIDI effect. We never write into this
-    // buffer (see processBlock's juce::ignoreUnused(audio) below). AU is
-    // unaffected — it still loads as `aumi` driven by IS_MIDI_EFFECT.
-    : AudioProcessor(BusesProperties()
-                       .withOutput("Output", juce::AudioChannelSet::stereo())),
+    // Pure MIDI fx — no audio buses on input or output. JUCE's default
+    // AudioProcessor() applies a stereo-in/stereo-out template; we override
+    // with an empty BusesProperties so the VST3 categorises as a MIDI fx
+    // rather than a synth or instrument (ADR 009 §Revised 2026-05-08, which
+    // rolled back the ADR 008 §2026-05-07 instrument-disguise topology).
+    : AudioProcessor(BusesProperties()),
       apvts(*this, nullptr, "OedipaParams", makeParameterLayout())
 {
     // Default program: P, L, R, Hold (the canonical "Mixed" preset shape).
@@ -374,18 +373,7 @@ void OedipaProcessor::emitChord(juce::MidiBuffer& midi,
 void OedipaProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
-
-    // Instrument-disguise contract (ADR 008 §2026-05-07 revision): we
-    // declare a stub stereo output bus to be hostable as VST3 Instrument
-    // by Cubase (Cubase does not expose third-party VST3 in MIDI Inserts).
-    // Hosts loading us as instrument hand us an audio buffer expecting
-    // silence — we don't generate audio, so we clear it explicitly so
-    // residual samples from the host's buffer pool aren't audible. In
-    // Logic AU the buffer has 0 channels and `clear()` is a no-op. The
-    // unrelated Logic-AU 1-sample click reported 2026-05-06 is independent
-    // of clear() — empirically verified by re-adding clear() and observing
-    // the click unchanged (memory project_au_click_noise.md hypothesis A).
-    audio.clear();
+    juce::ignoreUnused(audio);
 
     // Drop region / keyboard NOTES so the walker is the sole note source
     // (ADR 004 keyboard-driven startChord ships later — letting region

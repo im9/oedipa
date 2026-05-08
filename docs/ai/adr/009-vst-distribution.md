@@ -6,6 +6,23 @@
 **Revised**: 2026-05-08 — Phase 5 scope expanded to cover broader
 Makefile reorganization (root + `vst/Makefile` target-name overlap
 and per-file responsibility), beyond just adding `release-vst`.
+**Revised**: 2026-05-08 — **Cubase / Nuendo removed from v1 scope.**
+ADR 008 §2026-05-07 added `IS_SYNTH TRUE` so VST3 would load on a
+Cubase Instrument track (MIDI Inserts being closed to third-party
+VST3 by Steinberg policy). Empirical play-through worked, but the
+instrument-disguise topology conflicts with Oedipa's "MIDI fx, not
+synth" identity (ADR 008 §Identity); on hosts with explicit MIDI fx
+categories (Bitwig, Reaper, Studio One) it also miscategorises the
+plug-in as an Instrument. v1 drops Cubase and removes `IS_SYNTH TRUE`,
+returning the VST3 to a clean MIDI fx categorisation. Primary hosts
+become Logic Pro (AU) and Bitwig Studio (VST3); Reaper / Studio One
+stay best-effort. Re-evaluate Cubase only if Steinberg opens MIDI
+Inserts to third-party VST3.
+**Revised**: 2026-05-08 — README §DAW support table (host × format
+× status with non-support reasons) advanced from Phase 6 into the
+PR that removes Cubase, so the support state on `main` is consistent
+with the Cubase-scope decision. Phase 6's `README.ja.md` mirror and
+§Install rework remain in their original phase.
 
 ## Context
 
@@ -20,7 +37,7 @@ distribution story: AU and VST3 bundles exist only in
 `COPY_PLUGIN_AFTER_BUILD TRUE` deposits them on every build).
 
 A macOS user cannot today download Oedipa, drag two files into their
-plug-ins folders, and have Logic Pro or Cubase Pro load them. The
+plug-ins folders, and have Logic Pro or Bitwig Studio load them. The
 musical experience for vst/ is therefore single-machine, exactly the
 condition ADR 007 was written to remove for m4l.
 
@@ -32,7 +49,7 @@ The shape of macOS plug-in distribution is also non-trivial. macOS
 Catalina (10.15) and later add the `com.apple.quarantine` extended
 attribute to anything downloaded via a browser. Gatekeeper then refuses
 to load unsigned, un-notarized binaries from quarantined locations, and
-the failure mode in Logic / Cubase is silent — the host scans, drops
+the failure mode in Logic / Bitwig is silent — the host scans, drops
 the bundle, and the user sees a missing plug-in with no diagnostic.
 Free indie plug-ins routinely ship with a "right-click → Open" or
 `xattr -d com.apple.quarantine` workaround, but this surfaces friction
@@ -52,7 +69,7 @@ AU (`Oedipa.component`) and VST3 (`Oedipa.vst3`) bundles are signed
 with the author's `Developer ID Application` certificate. Hardened
 runtime is enabled — required for notarization. Plug-in bundles need
 the `com.apple.security.cs.disable-library-validation` entitlement so
-arbitrary hosts (Logic / Cubase / Bitwig) can load the bundle without
+arbitrary hosts (Logic / Bitwig / Reaper) can load the bundle without
 their own signature satisfying library validation. No JIT or
 `allow-unsigned-executable-memory` entitlement is needed; Oedipa has
 no runtime code generation.
@@ -187,8 +204,9 @@ not contributors. New `Install` section covers:
 - First-run Gatekeeper note (no warning expected for signed +
   notarized + stapled bundles, but a fallback `xattr -d` line for
   edge cases like AirDrop transfers that strip notarization)
-- Per-host load location: Logic AU MIDI FX slot, Cubase Instrument
-  track with MIDI-out routing (per ADR 008)
+- Per-host load location: Logic AU MIDI FX slot, Bitwig VST3 MIDI fx
+  slot in front of an instrument; Cubase / FL Studio / Live referenced
+  in §DAW support as out-of-scope with reasons
 
 `README.ja.md` mirrors the structure in Japanese. Both files cross-link
 at the top (`English | 日本語`). All other docs (`docs/ai/`) remain
@@ -376,9 +394,15 @@ manually; no automated layout test.
   different surface from a macOS plug-in `.dmg`. Separate ADR when
   `app/` exists.
 - Windows / Linux distribution. ADR 008 deferred non-macOS targets;
-  the primary plug-in hosts in scope (Logic, Cubase, Bitwig, Reaper,
-  Studio One) all have macOS counterparts that already host Oedipa.
-  Reach onto Windows is a future scope expansion, not a v1 omission.
+  the primary plug-in hosts in scope (Logic AU, Bitwig VST3) and the
+  best-effort hosts (Reaper, Studio One) all have macOS counterparts
+  that already host Oedipa. Reach onto Windows is a future scope
+  expansion, not a v1 omission.
+- Cubase / Nuendo. Removed from v1 scope per the 2026-05-08 revision
+  above; instrument-disguise topology was incompatible with the "MIDI
+  fx, not synth" identity and miscategorised the plug-in on
+  category-aware hosts. Re-evaluate only if Steinberg opens MIDI
+  Inserts to third-party VST3.
 - Mac App Store distribution. Sandbox model is incompatible with
   audio plug-in install paths (see §"Why not other approaches").
 - Standalone `.app` distribution. ADR 008 maintains "Standalone is
@@ -460,9 +484,11 @@ pipeline fails loudly when any step regresses.
   `Oedipa.vst3`, `INSTALL.txt` into a temp dir; build a read-only
   compressed `.dmg`; sign and notarize the `.dmg` itself; staple
   the `.dmg`.
-- [ ] Author `vst/scripts/INSTALL.txt` content (~15 lines): drag
+- [ ] Author `vst/scripts/INSTALL.txt` content (~25 lines): drag
   instructions for `~/Library/Audio/Plug-Ins/{Components,VST3}`,
-  Logic / Cubase host notes, license line.
+  per-host load notes (Logic AU MIDI FX / Bitwig VST3 MIDI fx /
+  Reaper / Studio One best-effort / Live → m4l target / Cubase
+  out-of-scope with reason), license line.
 - [ ] Verification gate: `hdiutil verify dist/Oedipa.dmg` returns
   0; `spctl --assess --type open --context context:primary-signature`
   returns 0; mounting the `.dmg`, copying both bundles to
@@ -488,18 +514,23 @@ pipeline fails loudly when any step regresses.
   target renames settled during the reorg work, not pre-locked here.
 - [ ] Verification gate: `make release-vst` on a clean working
   tree produces `dist/Oedipa.dmg` whose `xcrun stapler validate`
-  passes and whose mounted contents open in Logic Pro and Cubase
-  Pro without any Gatekeeper dialog. Also: `make test` and
+  passes and whose mounted contents open in Logic Pro and Bitwig
+  Studio without any Gatekeeper dialog. Also: `make test` and
   `cd vst && make test` both still work after the Makefile reorg
   (no broken target chains).
 
 ### Phase 6 — README en/ja split + restructure
 
+- [x] §DAW support table (host × format × status, with reasons for
+  out-of-scope) advanced into the Cubase-removal PR so the support
+  state on `main` is consistent. Also updated §Status and §Targets
+  there to mark vst/ AU + VST3 as Pre-release.
 - [ ] Restructure `README.md` so `## Install` precedes `## Build`.
-  Add §Install with download / drag-install / Logic / Cubase setup.
+  Add §Install with download / drag-install / Logic / Bitwig setup.
   Add §Distribution covering the `make release-vst` flow (developer-
   facing, references this ADR).
-- [ ] Update §Status and §Targets table: vst/ AU and VST3 → Released.
+- [ ] Flip §Targets / §Status from Pre-release to Released once the
+  first GitHub Release is published (Phase 8a).
 - [ ] Author `README.ja.md` mirroring the structure in Japanese.
   Both files cross-link at the top.
 - [ ] Verification gate: link checker (manual or `markdown-link-check`)
@@ -512,9 +543,9 @@ pipeline fails loudly when any step regresses.
 
 - [ ] Mount `dist/Oedipa.dmg` on the author's machine; copy
   `.component` and `.vst3` to `~/Library/Audio/Plug-Ins/...`. Verify
-  Logic Pro loads the AU MIDI FX, Cubase Pro loads the VST3
-  Instrument, Bitwig loads either format. No Gatekeeper warning, no
-  AU validation failure.
+  Logic Pro loads the AU MIDI FX and Bitwig Studio loads the VST3
+  MIDI fx. No Gatekeeper warning, no AU validation failure. Reaper /
+  Studio One smoke is best-effort (run if convenient).
 - [ ] If a second machine is available (clean macOS user account or
   fresh user partition), repeat the install. Confirms the "Free
   distribution" mandate end-to-end: an arbitrary macOS user
