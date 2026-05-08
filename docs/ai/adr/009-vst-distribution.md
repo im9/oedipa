@@ -428,124 +428,126 @@ pipeline fails loudly when any step regresses.
 
 ### Phase 1 — macOS-runner CI for vst/ test
 
-- [ ] Add `.github/workflows/vst-test.yml` with `runs-on:
+- [x] Add `.github/workflows/vst-test.yml` with `runs-on:
   macos-latest`, `submodules: recursive` checkout, `paths:` filter
   on `vst/**` and the workflow file itself, run `cd vst && make
-  test`.
-- [ ] First push of the workflow file is itself the verification:
+  test`. (PR #3, `7a9cbb4`, 2026-05-08)
+- [x] First push of the workflow file is itself the verification:
   workflow runs green on `macos-latest`, all 1682 Catch2 assertions
-  pass on the runner (matches local `make test`).
-- [ ] No change to `test.yml` (m4l ubuntu job stays as-is).
+  pass on the runner (matches local `make test`). (verified PR #3)
+- [x] No change to `test.yml` (m4l ubuntu job stays as-is).
 
 ### Phase 2 — Local sign + hardened runtime
 
-- [ ] Add cert / key extensions to `.gitignore`: `*.p12`, `*.p8`,
+- [x] Add cert / key extensions to `.gitignore`: `*.p12`, `*.p8`,
   `*.cer`, `*.mobileprovision`, `*.keychain` (per §Security). Done
   before any cert handling so the patterns are in place from the
-  first signing experiment.
-- [ ] Author `vst/scripts/codesign.sh` (or inline in root `Makefile`,
-  whichever is shorter for two bundles). Reads `DEVELOPER_ID` env
-  var; signs `vst/build/Oedipa_artefacts/Release/AU/Oedipa.component`
+  first signing experiment. (PR #4, `2ae7ff2`, 2026-05-08)
+- [x] Author `vst/scripts/codesign.sh` (or inline in root `Makefile`,
+  whichever is shorter for two bundles). Reads `DEVELOPER_TEAM_ID`
+  env var; signs `vst/build/Oedipa_artefacts/Release/AU/Oedipa.component`
   and `.../VST3/Oedipa.vst3` with `--options runtime --entitlements
   vst/scripts/entitlements.plist`. No `set -x`, no env-var dumps on
   error (per §Security script discipline).
-- [ ] Author `vst/scripts/entitlements.plist` containing only
+- [x] Author `vst/scripts/entitlements.plist` containing only
   `com.apple.security.cs.disable-library-validation` (true).
-- [ ] Verification gate: `codesign --verify --deep --strict
+- [x] Verification gate: `codesign --verify --deep --strict
   --verbose=2` on each bundle returns 0; `spctl --assess --type
-  install` returns 0 (Gatekeeper accepts the locally-signed bundle
-  before notarization — pre-flight only, not the final state).
-- [ ] Document the env var contract in a header comment in the
-  script and in `README.md` §Building from source.
+  install` returns 0 (locally verified, "Notarized Developer ID"
+  in §Phase 3 output).
+- [x] Document the env var contract in a header comment in the
+  script and in `README.md` §Distribution → §VST3 / AU. (script
+  header at PR #4; README documentation via Phase 6 restructure.)
 
 ### Phase 3 — Notarize + staple
 
-- [ ] Author `vst/scripts/notarize.sh`. For each bundle: zip into a
+- [x] Author `vst/scripts/notarize.sh`. For each bundle: zip into a
   notarization-friendly archive (notarytool requires `.zip`,
   `.pkg`, or `.dmg`); submit with `xcrun notarytool submit --wait
   --keychain-profile <profile>`; on success run `xcrun stapler
-  staple` against the original bundle (not the zip).
-- [ ] Author one-time setup instructions for `xcrun notarytool
+  staple` against the original bundle (not the zip). (PR #4)
+- [x] Author one-time setup instructions for `xcrun notarytool
   store-credentials <profile> --apple-id <id> --team-id <team>
-  --password <app-specific>`. Lives in `README.md` §Building from
-  source (developer-only section).
-- [ ] Verification gate: `xcrun stapler validate` returns 0 on each
-  bundle; `spctl --assess --type install` returns 0 with
-  `--verbose=4` reporting `accepted, source=Notarized Developer
-  ID`.
+  --password <app-specific>`. Lives in `README.md` §Distribution →
+  §VST3 / AU (developer-facing). (Phase 6 README restructure.)
+- [x] Verification gate: `xcrun stapler validate` returns 0 on each
+  bundle; `spctl --assess` reports `accepted, source=Notarized
+  Developer ID`. (locally verified)
 
 ### Phase 4 — `.dmg` assembly
 
-- [ ] Pick `create-dmg` (Homebrew) or `hdiutil` based on whether a
-  custom layout is wanted in v1. Default expectation: `hdiutil`
-  produces a functional `.dmg` with no extra dependency; pick that
-  unless layout proves too clunky.
-- [ ] Author `vst/scripts/build-dmg.sh`: stage `Oedipa.component`,
+- [x] Pick `create-dmg` (Homebrew) or `hdiutil` based on whether a
+  custom layout is wanted in v1. Picked `hdiutil` (HFS+/UDZO, no
+  extra dependency). (PR #5, `e97f5e2`, 2026-05-08)
+- [x] Author `vst/scripts/build-dmg.sh`: stage `Oedipa.component`,
   `Oedipa.vst3`, `INSTALL.txt` into a temp dir; build a read-only
   compressed `.dmg`; sign and notarize the `.dmg` itself; staple
   the `.dmg`.
-- [ ] Author `vst/scripts/INSTALL.txt` content (~25 lines): drag
-  instructions for `~/Library/Audio/Plug-Ins/{Components,VST3}`,
-  per-host load notes (Logic AU MIDI FX / Bitwig VST3 MIDI fx /
-  Reaper / Studio One best-effort / Live → m4l target / Cubase
-  out-of-scope with reason), license line.
-- [ ] Verification gate: `hdiutil verify dist/Oedipa.dmg` returns
-  0; `spctl --assess --type open --context context:primary-signature`
-  returns 0; mounting the `.dmg`, copying both bundles to
-  `~/Library/Audio/Plug-Ins/...`, and launching Logic confirms the
-  AU loads without a Gatekeeper dialog.
+- [x] Author `vst/scripts/INSTALL.txt`: drag instructions for
+  `~/Library/Audio/Plug-Ins/{Components,VST3}`, per-host load
+  notes (Logic AU MIDI FX / Bitwig VST3 MIDI fx / Reaper / Studio
+  One best-effort / Live → m4l target / Cubase out-of-scope with
+  reason), license line.
+- [x] Verification gate: `hdiutil verify dist/Oedipa.dmg` returns
+  0; `xcrun stapler validate` returns "The validate action worked!";
+  mounted contents open in Logic Pro AU MIDI FX and Bitwig Studio
+  VST3 MIDI fx without a Gatekeeper dialog. (locally verified)
 
 ### Phase 5 — Root Makefile `release-vst` + reorganize `release`
 
-- [ ] Add `release-vst` target chaining `cd vst && make build` →
+- [x] Add `release-vst` target chaining `cd vst && make build` →
   Phase 2 codesign script → Phase 3 notarize script → Phase 4
-  build-dmg script. Output: `dist/Oedipa.dmg`. Reads required env
-  vars, errors with a one-line "missing DEVELOPER_ID" message if
-  unset.
-- [ ] Modify `release` to depend on `release-m4l release-vst`. m4l
+  build-dmg script. Output: `dist/Oedipa.dmg`. (PR #5)
+- [x] Modify `release` to depend on `release-m4l release-vst`. m4l
   freeze instructions still echo at the end (unchanged from ADR
   007); vst/ build runs fully automated.
-- [ ] Resolve Makefile naming overlap and per-file responsibility:
-  root `Makefile` and `vst/Makefile` both define `release` with
-  different semantics today (root chains across targets,
-  `vst/Makefile`'s is a cmake-build internal step). Rename /
-  consolidate so root is unambiguous as cross-target orchestrator
-  and `vst/Makefile` covers vst-only build commands only. Specific
-  target renames settled during the reorg work, not pre-locked here.
-- [ ] Verification gate: `make release-vst` on a clean working
+- [x] Resolve Makefile naming overlap and per-file responsibility:
+  root `Makefile` is the cross-target orchestrator (`release` /
+  `release-m4l` / `release-vst`); `vst/Makefile` drops `configure`
+  and `release` helpers (the latter shared a name with the root
+  target with different semantics) and inlines cmake configure into
+  the public targets `build` / `debug` / `test` / `clean` / `open`
+  / `kill`.
+- [x] Verification gate: `make release-vst` on a clean working
   tree produces `dist/Oedipa.dmg` whose `xcrun stapler validate`
   passes and whose mounted contents open in Logic Pro and Bitwig
-  Studio without any Gatekeeper dialog. Also: `make test` and
-  `cd vst && make test` both still work after the Makefile reorg
-  (no broken target chains).
+  Studio without any Gatekeeper dialog. `make test` and `cd vst &&
+  make test` both still work after the Makefile reorg. (1681
+  assertions / 112 cases green post-reorg; bus-config test
+  rewritten in the same PR.)
 
-### Phase 6 — README en/ja split + restructure
+### Phase 6 — README §Install + dmg-bundled reference doc
 
 - [x] §DAW support table (host × format × status, with reasons for
   out-of-scope) advanced into the Cubase-removal PR so the support
   state on `main` is consistent. Also updated §Status and §Targets
   there to mark vst/ AU + VST3 as Pre-release.
-- [ ] Restructure `README.md` so `## Install` precedes `## Build`.
-  Add §Install with download / drag-install / Logic / Bitwig setup.
-  Add §Distribution covering the `make release-vst` flow (developer-
-  facing, references this ADR).
-- [ ] Flip §Targets / §Status from Pre-release to Released once the
-  first GitHub Release is published (Phase 8a).
-- [ ] Author `README.ja.md` mirroring the structure in Japanese.
-  Both files cross-link at the top.
-- [ ] Verification gate: link checker (manual or `markdown-link-check`)
-  confirms all internal links resolve in both files, including the
-  ADR cross-reference path conventions (this ADR moves to
-  `archive/009-...` once Implemented; READMEs reference both forms
-  acceptably or update at archive time).
+- [x] Restructure root `README.md`: move `## Install` before `## Build`,
+  add §Install (download / drag-install / Logic AU MIDI FX / Bitwig
+  VST3 MIDI fx setup) and §Distribution (`make release-vst` flow,
+  developer-facing, references this ADR). Existing sections
+  (Status / Targets / DAW support / Origin / Design docs / License)
+  are not touched.
+- [x] Author dmg-bundled reference document `vst/scripts/README.txt`:
+  feature summary (adapted from `docs/ai/concept.md`), parameter
+  list (canonical surface from concept.md §Parameter surface),
+  changelog stub (`v0.1.0 — Initial release`). Plain text matching
+  INSTALL.txt format. Add to `build-dmg.sh` staging next to
+  INSTALL.txt.
+- [x] Verification gate: link checker (manual or `markdown-link-check`)
+  confirms internal links in root README.md resolve. Mounting
+  `dist/Oedipa.dmg` shows both INSTALL.txt and README.txt at the
+  root. ADR cross-reference path conventions hold (this ADR moves to
+  `archive/009-...` once Implemented).
 
 ### Phase 7 — Manual cross-machine smoke
 
-- [ ] Mount `dist/Oedipa.dmg` on the author's machine; copy
+- [x] Mount `dist/Oedipa.dmg` on the author's machine; copy
   `.component` and `.vst3` to `~/Library/Audio/Plug-Ins/...`. Verify
   Logic Pro loads the AU MIDI FX and Bitwig Studio loads the VST3
   MIDI fx. No Gatekeeper warning, no AU validation failure. Reaper /
-  Studio One smoke is best-effort (run if convenient).
+  Studio One smoke is best-effort (run if convenient). (verified
+  pre-PR-#5-merge, 2026-05-08)
 - [ ] If a second machine is available (clean macOS user account or
   fresh user partition), repeat the install. Confirms the "Free
   distribution" mandate end-to-end: an arbitrary macOS user
@@ -559,6 +561,10 @@ pipeline fails loudly when any step regresses.
 - [ ] `gh release create v0.1.0` (or appropriate version) with
   `dist/Oedipa.dmg` and `dist/Oedipa.amxd` attached. Release notes
   describe v1 vst/ AU + VST3 alongside the existing m4l device.
+- [ ] Update root `README.md`: flip §Targets `vst/` rows
+  (Audio Unit / VST3) from Pre-release to Released, and rewrite
+  §Status to drop the "first GitHub Release is being prepared"
+  sentence (now released).
 - [ ] Wire `vst-release.yml` GitHub Actions workflow for future
   releases:
   - Trigger on `release: published` events.
