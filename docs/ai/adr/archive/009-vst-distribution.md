@@ -1,6 +1,6 @@
 # ADR 009: VST Distribution — Signing, Notarization, and Release Flow
 
-## Status: Proposed
+## Status: Implemented
 
 **Created**: 2026-05-08
 **Revised**: 2026-05-08 — Phase 5 scope expanded to cover broader
@@ -565,17 +565,17 @@ pipeline fails loudly when any step regresses.
 
 ### Phase 8 — First GitHub Release
 
-- [ ] `gh release create vst-v0.1.0` with `dist/Oedipa.dmg` attached
+- [x] `gh release create vst-v0.1.0` with `dist/Oedipa.dmg` attached
   (asset only — no `Oedipa.amxd`; m4l unchanged from `v0.1.0`).
   Release notes describe v1 vst/ AU + VST3. Tag scheme is
   per-target prefixed `<target>-vX.Y.Z` (decided 2026-05-08); the
   legacy `v0.1.0` tag (m4l-only, pre-vst introduction) is retained
   as historical and not bumped. The `/release` skill encodes this
-  scheme.
-- [ ] Update root `README.md`: flip §Targets `vst/` rows
+  scheme. (released 2026-05-08, tag `vst-v0.1.0`)
+- [x] Update root `README.md`: flip §Targets `vst/` rows
   (Audio Unit / VST3) from Pre-release to Released, and rewrite
   §Status to drop the "first GitHub Release is being prepared"
-  sentence (now released).
+  sentence (now released). (this PR)
 - [x] Wire `vst-release.yml` GitHub Actions workflow for future
   releases:
   - Trigger on `release: published` events.
