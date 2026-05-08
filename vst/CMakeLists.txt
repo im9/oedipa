@@ -56,12 +56,6 @@ target_compile_features(oedipa_engine PUBLIC cxx_std_17)
 juce_add_plugin(Oedipa
     COMPANY_NAME "im9"
     BUNDLE_ID "com.im9.oedipa"
-    # IS_SYNTH=TRUE alongside IS_MIDI_EFFECT=TRUE per ADR 008 §2026-05-07
-    # revision: AU continues to load as `aumi` (IS_MIDI_EFFECT is checked
-    # first in JUCEUtils.cmake:1815, Logic MIDI FX slot unaffected); VST3
-    # categorizes as `Instrument|Synth` so Cubase loads it on an Instrument
-    # track (Cubase's MIDI Inserts is closed to third-party VST3).
-    IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
     IS_MIDI_EFFECT TRUE

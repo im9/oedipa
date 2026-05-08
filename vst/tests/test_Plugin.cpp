@@ -8,8 +8,9 @@
 //      fresh instance reproduces every APVTS param + every non-APVTS field
 //      (cells, slots, anchors, startChord) and stamps version=1 on the
 //      OedipaState child.
-//   3. Bus layout — Live host workaround (stub stereo output) only kicks in
-//      under Ableton; every other host stays MIDI-only.
+//   3. Bus layout — pure MIDI fx with no audio buses (regression guard
+//      against re-introducing the instrument-disguise topology that ADR
+//      009 §Revised 2026-05-08 rolled back).
 //   4. Phase 3 input contract — input MIDI is dropped (Phase 3 doesn't
 //      wire ADR 004 yet; passing input through would defeat the engine
 //      test and turn the device into a monitor).
@@ -951,28 +952,26 @@ TEST_CASE("APVTS per-cell velocity — scales the output noteOn velocity", "[plu
     CHECK(v010 >= 1);  // velocity 0 is conventionally a noteOff; clamp to ≥ 1.
 }
 
-TEST_CASE("Bus config — stub stereo output + isMidiEffect intact (ADR 008 2026-05-07)",
+TEST_CASE("Bus config — pure MIDI fx, no audio buses (ADR 009 2026-05-08)",
           "[plugin][bus]")
 {
-    // Pin both halves of the Cubase-compat fix:
+    // Regression guard against re-introducing the Cubase instrument-disguise
+    // topology (stub stereo output bus + IS_SYNTH=TRUE) that ADR 008
+    // §2026-05-07 added and ADR 009 §Revised 2026-05-08 rolled back. Pin
+    // the clean MIDI fx shape:
     //
-    //   1. The stub stereo output bus is declared. VST3 hosts (Cubase
-    //      especially) mute / under-process plugins with zero audio
-    //      busses; the bus exists for host bookkeeping even though we
-    //      never write into it. Asserting bus count + default layout
-    //      catches an accidental revert to `BusesProperties()` (no
-    //      busses) which would silently break Cubase loading.
+    //   1. No audio buses on input or output. JUCE's default-constructed
+    //      AudioProcessor (no BusesProperties argument) has zero buses,
+    //      which is the correct shape for a MIDI fx with NEEDS_MIDI_INPUT
+    //      / NEEDS_MIDI_OUTPUT / IS_MIDI_EFFECT.
     //
-    //   2. isMidiEffect() still returns true. ADR 008's revision pairs
-    //      IS_SYNTH=TRUE with IS_MIDI_EFFECT=TRUE; the AU type (`aumi`)
-    //      is driven by IS_MIDI_EFFECT, and a regression that flipped
-    //      this would silently break the Logic MIDI FX slot.
+    //   2. MIDI flags: isMidiEffect / acceptsMidi / producesMidi all true.
+    //      The AU type (`aumi`) is driven by IS_MIDI_EFFECT; flipping it
+    //      would silently break the Logic MIDI FX slot.
     OedipaProcessor p;
 
-    REQUIRE(p.getBusCount(false) >= 1);
-    auto* bus = p.getBus(false, 0);
-    REQUIRE(bus != nullptr);
-    CHECK(bus->getDefaultLayout() == juce::AudioChannelSet::stereo());
+    CHECK(p.getBusCount(false) == 0);
+    CHECK(p.getBusCount(true)  == 0);
 
     CHECK(p.isMidiEffect()  == true);
     CHECK(p.acceptsMidi()   == true);

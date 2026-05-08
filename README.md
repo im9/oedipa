@@ -38,9 +38,10 @@ Full musical model: [`docs/ai/concept.md`](docs/ai/concept.md).
 frozen `Oedipa.amxd` ships via [GitHub Releases](../../releases) and
 runs on any Live 12 install with Max for Live.
 
-`vst/` Audio Unit (AU) is in beta on Logic Pro for macOS. The VST3 bundle
-loads in Cubase Pro as an Instrument with two-track MIDI-out routing.
-Neither is packaged for distribution yet.
+`vst/` AU + VST3 are packaged for distribution as a signed and notarized
+macOS `.dmg`. Primary hosts: Logic Pro (AU MIDI FX) and Bitwig Studio
+(VST3 MIDI fx). See [DAW support](#daw-support) below for the host
+compatibility matrix. The first GitHub Release is being prepared.
 
 `app/` (iOS) is planned — see [Targets](#targets).
 
@@ -61,13 +62,29 @@ musical concept but differ in UI and integration.
 | Target | Status | Notes |
 |---|---|---|
 | [Max for Live](m4l/) | Released | Max for Live device. Current primary target. |
-| [Audio Unit](vst/) | Beta | Logic Pro on macOS. C++17 / JUCE. |
-| [VST3](vst/) | Build-only | Same codebase as the AU. Verified in Cubase Pro; not packaged for distribution. |
+| [Audio Unit](vst/) | Pre-release | macOS, bundled in the vst/ `.dmg`. C++17 / JUCE. |
+| [VST3](vst/) | Pre-release | macOS, bundled in the vst/ `.dmg`. Same codebase as the AU. |
 | [iOS](app/) | Planned | AUv3 + standalone, JUCE. Touch-based exploration. |
 
 Musical logic is shared as a specification, not as code. Each target is a
 native implementation in its own stack. Cross-target conformance is verified
 against [`docs/ai/tonnetz-test-vectors.json`](docs/ai/tonnetz-test-vectors.json).
+
+## DAW support
+
+macOS only for v1 (per ADR 008). Windows / Linux distribution is
+deferred. The vst/ `.dmg` ships AU and VST3 bundles together; the table
+below covers per-host compatibility on macOS.
+
+| DAW | Format | Status | Notes |
+|---|---|---|---|
+| Logic Pro | AU | ✅ Primary | AU MIDI FX slot on a software-instrument track. |
+| Bitwig Studio | VST3 | ✅ Primary | VST3 MIDI fx slot in front of an instrument. Verified click-free 2026-05-08. |
+| Reaper | VST3 | ⚠️ Best-effort | VST3 in any FX chain. Not formally tested for v1. |
+| Studio One | VST3 | ⚠️ Best-effort | VST3 in MIDI fx slot. Not formally tested for v1. |
+| Ableton Live | — | Use m4l/ | Live does not accept third-party VST3 / AU plug-ins in its MIDI Effect rack (host design, not a format limitation). The [Max for Live device](m4l/) is the supported path. |
+| Cubase / Nuendo | — | ❌ Out of scope | The VST3 spec has no "MIDI Effect" sub-category and Cubase rejects third-party VST3 in its MIDI Inserts slot (Steinberg policy). Loading Oedipa as an Instrument with two-track MIDI-out routing works mechanically, but conflicts with the "MIDI fx, not synth" identity Oedipa is built on. The instrument-disguise topology was rejected for v1; revisit only if the Cubase ecosystem opens its MIDI Inserts to third-party VST3. |
+| FL Studio | — | ❌ Out of scope | Not targeted for v1; CLAP wrapping deferred (see ADR 008). |
 
 ## Origin
 
