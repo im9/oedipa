@@ -548,24 +548,35 @@ pipeline fails loudly when any step regresses.
   MIDI fx. No Gatekeeper warning, no AU validation failure. Reaper /
   Studio One smoke is best-effort (run if convenient). (verified
   pre-PR-#5-merge, 2026-05-08)
-- [ ] If a second machine is available (clean macOS user account or
+- [x] If a second machine is available (clean macOS user account or
   fresh user partition), repeat the install. Confirms the "Free
   distribution" mandate end-to-end: an arbitrary macOS user
   receiving the `.dmg` from a download URL successfully installs
-  and plays.
-- [ ] Document any host-specific issues observed (e.g., AU
+  and plays. (Folded into single-machine smoke for v1: no second
+  machine / clean user account available at release time; author-
+  machine smoke + signed / notarized / stapled dmg accepted by
+  Logic and Bitwig is treated as sufficient v1 evidence. Revisit
+  if a user reports an install issue post-release.)
+- [x] Document any host-specific issues observed (e.g., AU
   validation cache requiring a clear) in §Install troubleshooting.
+  (No host-specific issues surfaced during single-machine smoke;
+  §Install troubleshooting deferred to post-release issue tracking
+  — added if/when a user reports a host-side install problem.)
 
 ### Phase 8 — First GitHub Release
 
-- [ ] `gh release create v0.1.0` (or appropriate version) with
-  `dist/Oedipa.dmg` and `dist/Oedipa.amxd` attached. Release notes
-  describe v1 vst/ AU + VST3 alongside the existing m4l device.
+- [ ] `gh release create vst-v0.1.0` with `dist/Oedipa.dmg` attached
+  (asset only — no `Oedipa.amxd`; m4l unchanged from `v0.1.0`).
+  Release notes describe v1 vst/ AU + VST3. Tag scheme is
+  per-target prefixed `<target>-vX.Y.Z` (decided 2026-05-08); the
+  legacy `v0.1.0` tag (m4l-only, pre-vst introduction) is retained
+  as historical and not bumped. The `/release` skill encodes this
+  scheme.
 - [ ] Update root `README.md`: flip §Targets `vst/` rows
   (Audio Unit / VST3) from Pre-release to Released, and rewrite
   §Status to drop the "first GitHub Release is being prepared"
   sentence (now released).
-- [ ] Wire `vst-release.yml` GitHub Actions workflow for future
+- [x] Wire `vst-release.yml` GitHub Actions workflow for future
   releases:
   - Trigger on `release: published` events.
   - Import `MACOS_CERT` (base64'd `.p12`) + `MACOS_CERT_PASSWORD`
@@ -574,11 +585,19 @@ pipeline fails loudly when any step regresses.
     `APPLE_API_ISSUER_ID` secrets) for notarization — no 2FA in CI.
   - Build, sign, notarize, staple, dmg, attach to the in-flight
     Release via `gh release upload`.
-- [ ] Verification: a subsequent tag push triggers the workflow and
+
+  (Skipped for v1 per ADR text "v1 may skip CI wiring if manual
+  release is acceptable" — author judgment 2026-05-08, manual
+  `make release-vst` + `gh release create` flow via `/release skill`
+  is the v1 release path. Revisit when release cadence warrants
+  automation or when secrets management becomes a bottleneck.)
+- [x] Verification: a subsequent tag push triggers the workflow and
   produces an attachment matching the manual artefact's hash modulo
   notarization timestamp differences. (v1 may skip CI wiring if
   manual release is acceptable; the secrets configuration is
   in-scope but its activation is at the author's discretion.)
+  (Skipped — depends on §Wire `vst-release.yml` above, also
+  v1-skipped.)
 
 ## Per-target notes
 
