@@ -366,6 +366,59 @@ TEST_CASE("State round-trip — empty anchors round-trip cleanly", "[plugin][sta
     CHECK(sink.getAnchors().empty());
 }
 
+// Audio-thread anchor snapshot sync. addAnchorAtNextStep / setAnchors /
+// setStateInformation all run on the message thread; the audio thread
+// consumes anchors via an atomically-published shared_ptr snapshot
+// (lock-free read in handleWalkerMidi, no realloc race against editor
+// push_back). Each writer must publish the snapshot or the audio thread
+// reads stale data. This test pins all three publish paths.
+TEST_CASE("Anchors — audio-thread snapshot syncs with editor mutations",
+          "[plugin][anchors][threading]")
+{
+    using oedipa::engine::Quality;
+
+    SECTION("addAnchorAtNextStep publishes to audio snapshot") {
+        OedipaProcessor p;
+        REQUIRE(p.getAnchors().empty());
+        REQUIRE(p.getAudioAnchorsForTest().empty());
+
+        p.addAnchorAtNextStep(7, Quality::Minor);  // G minor
+
+        REQUIRE(p.getAnchors().size() == 1);
+        REQUIRE(p.getAudioAnchorsForTest().size() == 1);
+        const auto& snap = p.getAudioAnchorsForTest();
+        CHECK(snap[0].rootPc == 7);
+        CHECK(snap[0].quality == Quality::Minor);
+        CHECK(snap[0].step == p.getAnchors()[0].step);
+    }
+
+    SECTION("setAnchors publishes to audio snapshot") {
+        OedipaProcessor p;
+        p.setAnchors({{0, 0, Quality::Major}, {16, 7, Quality::Minor}});
+        REQUIRE(p.getAudioAnchorsForTest().size() == 2);
+        CHECK(p.getAudioAnchorsForTest()[0].rootPc == 0);
+        CHECK(p.getAudioAnchorsForTest()[1].rootPc == 7);
+
+        p.setAnchors({});
+        CHECK(p.getAudioAnchorsForTest().empty());
+    }
+
+    SECTION("setStateInformation publishes restored anchors") {
+        OedipaProcessor source;
+        source.setAnchors({{8, 4, Quality::Major}});
+        juce::MemoryBlock data;
+        source.getStateInformation(data);
+
+        OedipaProcessor sink;
+        REQUIRE(sink.getAudioAnchorsForTest().empty());
+        sink.setStateInformation(data.getData(), (int) data.getSize());
+
+        REQUIRE(sink.getAudioAnchorsForTest().size() == 1);
+        CHECK(sink.getAudioAnchorsForTest()[0].step == 8);
+        CHECK(sink.getAudioAnchorsForTest()[0].rootPc == 4);
+    }
+}
+
 TEST_CASE("Phase 3 input contract — notes & sysex dropped, CC pass through", "[plugin][midi]")
 {
     // Phase 3 owns note emission via the walker; ADR 004 (keyboard-driven

@@ -29,6 +29,7 @@
 
 #include <array>
 #include <atomic>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -116,13 +117,28 @@ public:
     // Public so the editor can call it explicitly after composite edits.
     void syncActiveSlot();
 
+    // anchors API is message-thread (editor + tests). Audio thread reads
+    // the lock-free shared_ptr snapshot via populateAudioWalkState — see
+    // §"Audio plugin discipline" in CLAUDE.md and the audioAnchorsPtr
+    // member below.
     const std::vector<engine::Anchor>& getAnchors() const { return anchors; }
-    void setAnchors(std::vector<engine::Anchor> value) { anchors = std::move(value); }
+    void setAnchors(std::vector<engine::Anchor> value);
+
+    // Test-only accessor for the audio-thread anchor snapshot. Asserts
+    // that mutator calls (setAnchors / addAnchorAtNextStep / setStateInformation)
+    // publish to the audio side. Returns by const-ref to the underlying
+    // vector held by the current shared_ptr; the snapshot lives at least
+    // until the next publish, so the reference is safe within the same
+    // test scope.
+    const std::vector<engine::Anchor>& getAudioAnchorsForTest() const;
 
     // Editor-facing snapshot of the current walk inputs (startChord, cells,
     // anchors, etc. flattened from APVTS). Lets the lattice view compute the
     // walk path for trail rendering without re-reading APVTS itself.
-    engine::WalkState makeWalkStateSnapshot() const { return makeWalkState(); }
+    // Message-thread only — allocates a fresh WalkState, which is fine off
+    // the audio thread. The audio thread uses populateAudioWalkState
+    // (no-alloc after prepareToPlay).
+    engine::WalkState makeWalkStateSnapshot() const;
 
     // Highest sub-step pos already emitted by the walker; -1 = transport
     // stopped (no chord is "playing"). Editor reads this to render the
@@ -165,6 +181,16 @@ private:
     engine::SlotBank bank{};
     std::vector<engine::Anchor> anchors{};
 
+    // Lock-free anchor snapshot for the audio thread. Editor mutations
+    // (setAnchors / addAnchorAtNextStep / setStateInformation) update
+    // `anchors` and then `publishAnchors()` swaps a fresh shared_ptr<const
+    // vector<Anchor>> here via std::atomic_store. populateAudioWalkState
+    // reads it via std::atomic_load — no realloc race against editor
+    // push_back, no mutex on the audio thread (CLAUDE.md §"Audio plugin
+    // discipline"). The shared_ptr keeps the snapshot alive for the
+    // lifetime of any in-flight load.
+    std::shared_ptr<const std::vector<engine::Anchor>> audioAnchorsPtr;
+
     // Defangs auto-save recursion during applySlot / setStateInformation:
     // listener fires from APVTS writes are no-ops while this is true.
     bool suppressAutoSave = false;
@@ -181,6 +207,13 @@ private:
     //   held: (channel, midiNote) currently sounding from walker output.
     std::atomic<int> lastSubStep{-1};
     std::vector<std::pair<int, int>> held;
+
+    // Audio-thread scratch WalkState. populateAudioWalkState mutates this
+    // in place each block (clear() + push_back), avoiding the per-block
+    // heap allocation a by-value WalkState would incur. prepareToPlay
+    // reserves capacity for cells (kCellCount) and anchors so steady-state
+    // populates are no-alloc — see CLAUDE.md §"Audio plugin discipline".
+    mutable engine::WalkState audioWalkState_;
 
     // Sub-step rhythm/arp state (mirrors m4l host.ts:140-156). The walker
     // computes a fresh chord at every cell boundary; rhythm gating decides
@@ -223,7 +256,23 @@ private:
     int previewSamplesUntilOff = 0;
     std::vector<std::pair<int, int>> previewHeld;
 
-    engine::WalkState makeWalkState() const;
+    // Field-by-field WalkState population shared by makeWalkStateSnapshot
+    // (editor, allocates a fresh value) and populateAudioWalkState (audio
+    // thread, mutates audioWalkState_ in place). Anchors are NOT touched
+    // by this helper — each caller plugs them in from the appropriate
+    // source (editor: `anchors` directly; audio: shared_ptr snapshot).
+    void populateWalkStateCommon(engine::WalkState& w) const;
+
+    // Audio-thread WalkState refresh. Reads anchors via atomic_load on
+    // audioAnchorsPtr (lock-free). After warmup (prepareToPlay reserves
+    // capacity), no heap allocation per block.
+    void populateAudioWalkState();
+
+    // Publish a fresh shared_ptr snapshot of `anchors` to audioAnchorsPtr
+    // via std::atomic_store. Called from every message-thread anchors
+    // mutator (setAnchors, addAnchorAtNextStep, setStateInformation).
+    void publishAnchors();
+
     void emitPanic(juce::MidiBuffer&, int sampleOffset);
     void emitChord(juce::MidiBuffer&,
                    const engine::Triad&,

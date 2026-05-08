@@ -106,6 +106,24 @@ OedipaProcessor::OedipaProcessor()
     turingState       = engine::makeTuringState(tLen0, (std::uint32_t) tSed0);
     lastTuringLength  = tLen0;
     lastTuringSeed    = tSed0;
+
+    // Audio-thread anchor snapshot starts empty; subsequent mutations on
+    // `anchors` republish via publishAnchors().
+    publishAnchors();
+
+    // Reserve audio-thread vector capacity up front so steady-state
+    // populates / emits inside processBlock don't reallocate. CLAUDE.md
+    // §"Audio plugin discipline" forbids heap allocation on the audio
+    // thread; the reserves move that cost to construction.
+    //   audioWalkState_.cells   : kCellCount = 8 (active cells slice)
+    //   audioWalkState_.anchors : 32 = generous user-anchor budget; if
+    //                             exceeded, push_back will grow once and
+    //                             stabilize.
+    //   held / previewHeld      : 8 = max chord with 7th + breathing room
+    audioWalkState_.cells.reserve(kCellCount);
+    audioWalkState_.anchors.reserve(32);
+    held.reserve(8);
+    previewHeld.reserve(8);
 }
 
 OedipaProcessor::~OedipaProcessor()
@@ -251,9 +269,8 @@ void OedipaProcessor::prepareToPlay(double newSampleRate, int)
 
 void OedipaProcessor::releaseResources() {}
 
-engine::WalkState OedipaProcessor::makeWalkState() const
+void OedipaProcessor::populateWalkStateCommon(engine::WalkState& w) const
 {
-    engine::WalkState w;
     w.startChord = startChord;
     w.stepsPerTransform = (int) *apvts.getRawParameterValue(pid::stepsPerTransform);
     w.jitter = *apvts.getRawParameterValue(pid::jitter);
@@ -263,11 +280,60 @@ engine::WalkState OedipaProcessor::makeWalkState() const
     // Active cell count = `length` parameter (1..8). Trailing cells are
     // ignored by the walker — matches m4l Phase 7 cell-length semantics.
     const int len = std::clamp((int) *apvts.getRawParameterValue(pid::length), 1, kCellCount);
-    w.cells.reserve((std::size_t) len);
+    w.cells.clear();
     for (int i = 0; i < len; ++i) w.cells.push_back(cells[(std::size_t) i]);
+}
 
+engine::WalkState OedipaProcessor::makeWalkStateSnapshot() const
+{
+    // Editor-side: builds a fresh WalkState by value. Allocation is fine
+    // here — message thread only.
+    engine::WalkState w;
+    populateWalkStateCommon(w);
     w.anchors = anchors;
     return w;
+}
+
+void OedipaProcessor::populateAudioWalkState()
+{
+    // Audio-thread: refreshes the reused audioWalkState_ scratch in place.
+    // After prepareToPlay's reserves, push_back loops below do not
+    // reallocate (capacity ≥ kCellCount cells, ≥ 32 anchors). The
+    // anchors source is the lock-free shared_ptr snapshot — atomic_load
+    // is wait-free on every supported platform.
+    populateWalkStateCommon(audioWalkState_);
+
+    auto snap = std::atomic_load(&audioAnchorsPtr);
+    audioWalkState_.anchors.clear();
+    if (snap) {
+        for (const auto& a : *snap) audioWalkState_.anchors.push_back(a);
+    }
+}
+
+void OedipaProcessor::publishAnchors()
+{
+    // Atomic-store a fresh shared_ptr<const vector> snapshot. The audio
+    // thread's atomic_load in populateAudioWalkState picks it up on the
+    // next block. Old snapshots stay alive while the audio thread holds
+    // a reference, so there's no race on the underlying vector.
+    auto fresh = std::make_shared<const std::vector<engine::Anchor>>(anchors);
+    std::atomic_store(&audioAnchorsPtr, fresh);
+}
+
+void OedipaProcessor::setAnchors(std::vector<engine::Anchor> value)
+{
+    anchors = std::move(value);
+    publishAnchors();
+}
+
+const std::vector<engine::Anchor>& OedipaProcessor::getAudioAnchorsForTest() const
+{
+    // Returns a reference into the currently-loaded shared_ptr's vector.
+    // Safe within the test scope: until publishAnchors() runs again, the
+    // shared_ptr is alive; the pointed-to vector is `const` so no mutation.
+    auto snap = std::atomic_load(&audioAnchorsPtr);
+    static const std::vector<engine::Anchor> kEmpty;
+    return snap ? *snap : kEmpty;
 }
 
 void OedipaProcessor::emitPanic(juce::MidiBuffer& midi, int sampleOffset)
@@ -461,7 +527,10 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
 
     if (currentSubStep == lastSubStep) return;  // no boundaries crossed
 
-    const auto state    = makeWalkState();
+    // Refresh the reused scratch (no per-block heap alloc after warmup)
+    // and bind a const reference for the boundary loop below.
+    populateAudioWalkState();
+    const auto& state = audioWalkState_;
     const int  channel  = (int) *apvts.getRawParameterValue(pid::channel);
     const auto voicing  = (engine::Voicing) (int) *apvts.getRawParameterValue(pid::voicing);
     const bool seventh  = ((int) *apvts.getRawParameterValue(pid::chordQuality)) == 1;
@@ -610,6 +679,7 @@ void OedipaProcessor::addAnchorAtNextStep(engine::PitchClass rootPc, engine::Qua
     const int newStep = lastStep + spt * 4;
 
     anchors.push_back(engine::Anchor{newStep, rootPc, quality});
+    publishAnchors();
 
     // Long-press also auditions the anchored chord (per inboil).
     requestPreview(engine::buildTriad(rootPc, quality, startChord[0]));
@@ -761,6 +831,9 @@ void OedipaProcessor::setStateInformation(const void* data, int sizeInBytes)
             anchors.push_back(a);
         }
     }
+    // Publish the restored anchors to the audio-thread snapshot, even if
+    // empty (host may restore mid-playback).
+    publishAnchors();
 
     suppressAutoSave = false;
 }
