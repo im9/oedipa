@@ -11,9 +11,9 @@ platform. Each target lives in its own directory and has its own build system.
 
 - `m4l/` — **Max for Live** device (current primary target). Ableton Live MIDI
   effect. Fastest prototyping path, matches the author's own DAW workflow.
-- `vst/` — **VST3/AU** plugin (C++17/JUCE). AU in beta on Logic Pro for macOS;
-  VST3 verified in Cubase Pro. The `Source/Engine/` subdirectory is JUCE-free
-  (iOS reuse target, see ADR 008).
+- `vst/` — **VST3 / AU / CLAP** plug-in (C++17/JUCE). Primary hosts: Logic Pro
+  (AU MIDI FX) and Bitwig Studio (CLAP / VST3 MIDI fx). The `Source/Engine/`
+  subdirectory is JUCE-free (iOS reuse target, see ADR 008).
 - `app/` — **iOS** app (AUv3 + standalone, JUCE-based). Future target for
   touch-based Tonnetz exploration. Not yet created.
 
@@ -46,7 +46,7 @@ m4l/                 — Max for Live device
     tonnetz.test.ts  — node:test suite
     dist/tonnetz.js  — compiled ESM output (consumed by the host bundle)
     tsconfig.json, package.json
-vst/                 — VST3/AU plugin (C++17/JUCE)
+vst/                 — VST3/AU/CLAP plugin (C++17/JUCE)
   Source/
     Engine/          — pure C++17 engine (no JUCE includes — iOS reuse target)
     Plugin/          — JUCE AudioProcessor, APVTS, MIDI / state I/O
@@ -178,7 +178,7 @@ What stays manual (not covered by Gate 1 tests):
 
 - Visual quality — does the lattice look right, does the animation feel good
 - Interaction feel — tap / drag / pinch in the real host
-- Host compatibility — load in Ableton (m4l, vst), load in Logic (vst/app),
+- Host compatibility — load in Ableton (m4l), Logic (vst/app), Bitwig (vst),
   edit, save, reopen, verify no crash
 
 These manual checks are part of pre-release verification, not optional polish.
