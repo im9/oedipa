@@ -1,8 +1,14 @@
 # ADR 010: VST CLAP Support
 
-## Status: Proposed
+## Status: Implemented
 
 **Created**: 2026-05-09
+**Implemented**: 2026-05-09 — `vst-v0.1.1` shipped with `Oedipa.clap`
+in the dmg alongside AU + VST3, signed / notarized / stapled. Bitwig
+CLAP and Reaper CLAP host loads verified by user; FL Studio empirical
+negative (host-limit, out of scope per Phase 5). Phase 8 (KVR formats
+line) deferred to follow-up — KVR submission still in review at close
+time, tracked in `project_distribution_channels_status` memory.
 
 ## Context
 
@@ -205,13 +211,19 @@ implementation, then build/test.
   (`vst/` ships ...) and Targets table CLAP row are deferred to
   Phase 9 (flip to "Released" after the v0.1.1 tag is cut,
   mirroring the ADR 009 Phase-9 pattern).
-- [ ] **Phase 8 — KVR formats line.** Add CLAP to the formats line
-  in the in-review KVR submission (currently pending per
-  `project_distribution_channels_status`).
-- [ ] **Phase 9 — Release.** Tag `vst-v0.1.1` per the per-target
-  tag scheme established in ADR 009. Draft GitHub Release notes
-  from the CLAP-related commit log (focus: "what users gain" — CLAP
-  build, host coverage outcome).
+- **Phase 8 — KVR formats line.** *Deferred to follow-up.* KVR
+  submission still in review at the time of v0.1.1 ship; the formats
+  line will be updated to add CLAP once the listing goes live.
+  Tracked in `project_distribution_channels_status` memory rather
+  than in this (now archived) ADR.
+- [x] **Phase 9 — Release.** Tagged `vst-v0.1.1` 2026-05-09 per the
+  per-target tag scheme (ADR 009). GitHub Release published at
+  https://github.com/im9/oedipa/releases/tag/vst-v0.1.1 with
+  `Oedipa.dmg` (11.21 MB; AU + VST3 + CLAP, signed / notarized /
+  stapled). Release notes lead with the CLAP addition + host
+  coverage; FL Studio out-of-scope rationale linked back to Phase 5.
+  Post-release housekeeping (README Status / Targets table CLAP
+  flip) shipped alongside this ADR's archive move.
 
 ## Per-target notes
 

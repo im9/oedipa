@@ -38,9 +38,9 @@ Full musical model: [`docs/ai/concept.md`](docs/ai/concept.md).
 frozen `Oedipa.amxd` ships via [GitHub Releases](../../releases?q=m4l)
 and runs on any Live 12 install with Max for Live.
 
-`vst/` AU + VST3 ship as a signed and notarized macOS `.dmg` via
-[GitHub Releases](../../releases?q=vst). Primary hosts: Logic Pro (AU
-MIDI FX) and Bitwig Studio (VST3 MIDI fx). See [DAW
+`vst/` AU + VST3 + CLAP ship as a signed and notarized macOS `.dmg`
+via [GitHub Releases](../../releases?q=vst). Primary hosts: Logic Pro
+(AU MIDI FX) and Bitwig Studio (CLAP / VST3 MIDI fx). See [DAW
 support](#daw-support) below for the host compatibility matrix.
 
 `app/` (iOS) is planned — see [Targets](#targets).
@@ -126,7 +126,7 @@ Per-target build commands:
 | Target | First time | Build | Test |
 |---|---|---|---|
 | `m4l/` (workspace) | `cd m4l && pnpm install` | `pnpm -r build` | `pnpm -r test` |
-| `vst/` (AU + VST3) | `git submodule update --init --recursive` | `make build` | `make test` |
+| `vst/` (AU + VST3 + CLAP) | `git submodule update --init --recursive` | `make build` | `make test` |
 
 Per-target dev docs:
 - [`m4l/engine/README.md`](m4l/engine/README.md)
