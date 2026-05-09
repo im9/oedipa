@@ -4,8 +4,8 @@ Oedipa is a Tonnetz-based chord exploration MIDI tool. On each clock tick a
 **walker** traverses a neo-Riemannian lattice, driven by a short repeating
 **cell sequence** of P / L / R / hold / rest operations carrying per-cell
 expression (velocity, gate, probability, timing), an optional **jitter**
-randomness layer, and a global rhythmic layer (swing, subdivision, step
-direction, humanize) on top.
+randomness layer, and a small global layer (step direction, output level) on
+top.
 
 This document describes the **musical model** — the parts that are shared across
 all targets (`m4l/`, `vst/`, `app/`). Target-specific UI and interaction design
@@ -25,15 +25,11 @@ On each step of the host transport, Oedipa:
    deterministic across playback restarts).
 4. Applies the op (or holds the cursor for `hold`/`rest`).
 5. Emits the resulting triad as MIDI notes, scaled by per-cell `velocity`,
-   sustained for per-cell `gate`, offset by per-cell `timing` (and the global
-   swing offset on off-beat subdivision steps), and optionally perturbed by the
-   global humanize layer (velocity / gate / timing / probability — opt-in,
-   default 0).
+   sustained for per-cell `gate`, and pushed later by per-cell `timing`.
 
-The user shapes the output by writing the cells (the "program"), tuning jitter
-and humanize, and choosing voicing. Each cell field is independently
-host-automatable — the live steering layer replaces the static authoring of
-long P/L/R lists.
+The user shapes the output by writing the cells (the "program"), tuning jitter,
+and choosing voicing. Each cell field is independently host-automatable — the
+live steering layer replaces the static authoring of long P/L/R lists.
 
 ## Musical model
 
@@ -89,8 +85,11 @@ The walk is driven by a small array of **cells**, each a record
 - `probability` (0..1) is the chance the step plays this visit; on fail, the
   chord cursor still applies the transform for P/L/R (silent-advance), keeping
   rhythmic position deterministic across playback restarts
-- `timing` (-0.5..+0.5) is a step-length-fraction offset; composes additively
-  with the global swing offset
+- `timing` (0..+0.5) is a forward step-length-fraction offset that pushes the
+  emit later within its cell. The host scheduling path is forward-only on every
+  target (M4L's `[pipe]` delay, JUCE's `MidiBuffer` sample offset within the
+  current block), so anticipation (negative offset) would require look-ahead
+  scheduling not present in v1.
 
 At each transform boundary (every `stepsPerTransform` host ticks), the walker
 consumes one cell. Two pieces of state advance at different rates:
@@ -114,9 +113,8 @@ values give a "loosely follows the program" feel.
 
 The sequence is short by design (target convention: 4 cells). The motion comes
 from the loop *plus* every cell field being independently host-automatable —
-the user either authors a static program and lets jitter and humanize colour
-it, or animates one cell field via host automation to evolve the walk over
-time. This is the design's replacement for both inboil's variable-length
+the user either authors a static program and lets jitter colour it, or
+animates one cell field via host automation to evolve the walk over time. This is the design's replacement for both inboil's variable-length
 sequence editor and the discarded attractor model.
 
 **Rate**: `cellLength` controls how long one cell holds, in **16th-note
@@ -148,9 +146,10 @@ sustain.
 The user-facing `cellLength` value passes through directly to the
 engine's `stepsPerTransform` (1:1, no derivation); the bridge translates
 raw host ticks to engine-pos units via a fixed `ticksPerStep`
-corresponding to one 16th-note at PPQN=24. Subdivision (see §Rhythm) is
-a feel axis only — changing it affects the swing / timing-offset grid,
-not cell rate.
+corresponding to one 16th-note at PPQN=24. The 16th-note grid is fixed in
+v1 — selectable subdivisions (8th / 32nd / triplets) and a global swing
+shift were considered (ADR 006) and dropped before ship; revisiting them
+would belong in a future ADR.
 
 ## Output model
 
@@ -167,45 +166,21 @@ Further extensions (9/11/13) are out of scope for v1.
 
 ### Rhythm
 
-Rhythm splits into two layers — the per-cell expression that lives inside
-each cell record (§Traversal) and a small global layer that frames the grid
-the cells fire against:
+Rhythm splits into the per-cell expression that lives inside each cell record
+(§Traversal) and a small global layer:
 
-- **subdivision** — the unit step length the walker advances by. Five options:
-  `8th`, `16th` (default), `32nd`, `8T` (eighth triplet), `16T` (sixteenth
-  triplet). Implemented host-side as a tick multiplier over a fixed PPQN=24
-  feed, which leaves room for ratchet and polyrhythm extensions later.
-- **swing** — pushes off-beat subdivision steps later. `0.5` is straight,
-  `0.75` is heavy swing. Composes additively with each cell's `timing`
-  offset.
 - **stepDirection** — `forward` (default), `reverse`, `pingpong` (traverse
   without replaying endpoints), or `random` (each step picks the next cell
   uniformly from the seeded PRNG; consecutive same-cell picks allowed).
-- **humanize** — opt-in non-authored variation. Three independent axes:
-  `humanizeVelocity`, `humanizeGate`, `humanizeTiming`, each `0..1`. Per
-  output event, each axis applies signed uniform noise of amplitude
-  `(amount × ±1)` to the corresponding per-cell field, then clamps per the
-  field's range. Defaults are 0 — authored phrasing is the primary expression
-  source; humanize is the layer that takes the edge off the grid.
-- **humanizeDrift** — global EMA factor (`0..1`, default 0) shared across all
-  humanize axes. With `drift = 0` the humanize draws are independent
-  uniforms (default behavior). As drift rises, each axis becomes a smoothed
-  random walk: `v_t = drift × v_{t-1} + (1-drift) × raw_t`. Independent
-  noise sounds jittery; smoothed walks sound like drift / breath — the
-  parameter's job is to swap "jittery humanize" for "breathing humanize"
-  without giving up the seeded determinism contract.
 - **outputLevel** — global multiplier (`0..1`, default 1.0) on the output
   MIDI velocity stack. Composes as
-  `velocity = source × cell.velocity × (1 + signed_humanize) × outputLevel`,
-  applied last. Single dial for "make everything quieter" without touching
-  per-cell automation; useful in particular when no MIDI input is wired
-  (source velocity defaults to 100 with no other quick way to scale the
-  whole output down).
+  `velocity = source × cell.velocity × outputLevel`, applied last. Single
+  dial for "make everything quieter" without touching per-cell automation;
+  useful in particular when no MIDI input is wired (source velocity defaults
+  to 100 with no other quick way to scale the whole output down).
 
-The humanize draws share the same seeded PRNG as `jitter`, per-cell
-`probability`, and `random` step direction — same `seed` reproduces the same
-output bit-for-bit. Drift smoothing is also seeded-deterministic (per-axis
-`prev` state initialized at 0.5 and rebuilt from pos=0 on every walk call).
+`random` step direction shares the same seeded PRNG as `jitter` and per-cell
+`probability` — same `seed` reproduces the same output bit-for-bit.
 
 ### MIDI semantics
 
@@ -219,17 +194,16 @@ restarts from there and continues advancing through the cells. Targets that
 have no notion of MIDI input may omit this.
 
 **Velocity stack** — output velocity per emitted note is
-`source × cell.velocity × (1 + (humanizeVel*2-1) × humanizeVelocity) × outputLevel`,
-clamped to MIDI 1..127. Four layers compose:
+`source × cell.velocity × outputLevel`, clamped to MIDI 1..127. Three layers
+compose:
 
 - **Source velocity** — incoming MIDI note velocity (most recent note-on
   within the held set when input is wired, default 100 otherwise). The
-  player's touch is the primary expression input.
+  player's touch is the primary expression input. Targets without MIDI input
+  pin source velocity at 100.
 - **Per-cell `velocity` (0..1)** — the program's authored shape: cell 0 louder
   than cell 1, cell 3 ducked for breath, etc. Available per cell via host
   automation.
-- **Global `humanizeVelocity` (0..1)** — opt-in signed uniform noise on top.
-  Default 0; the player turns it up when the grid feels too rigid.
 - **Global `outputLevel` (0..1, default 1.0)** — single dial that scales the
   entire stack uniformly. Useful in particular for the "no MIDI input wired"
   use case where source velocity is fixed at 100 and there's no other knob
@@ -298,20 +272,14 @@ The minimum parameter set each target must expose:
 | `velocity`    | float 0..1                              | source-velocity multiplier                           |
 | `gate`        | float 0..1                              | step-length fraction; 1.0 = legato handoff           |
 | `probability` | float 0..1                              | per-visit play chance; fail = silent-advance         |
-| `timing`      | float -0.5..+0.5                        | step-length-fraction offset; composes with swing     |
+| `timing`      | float 0..+0.5                           | forward step-length-fraction offset (push later)     |
 
-**Global rhythmic layer:**
+**Global layer:**
 
-| Parameter              | Type                                                           | Notes                                              |
-|------------------------|----------------------------------------------------------------|----------------------------------------------------|
-| `subdivision`          | `8th \| 16th \| 32nd \| 8T \| 16T`                             | step unit; default 16th                            |
-| `swing`                | float 0.5..0.75                                                | off-beat shift; default 0.5 (straight)             |
-| `stepDirection`        | `forward \| reverse \| pingpong \| random`                     | cell-pointer traversal; default forward            |
-| `humanizeVelocity`     | float 0..1                                                     | signed-noise amplitude on per-cell velocity        |
-| `humanizeGate`         | float 0..1                                                     | signed-noise amplitude on per-cell gate            |
-| `humanizeTiming`       | float 0..1                                                     | signed-noise amplitude on per-cell timing          |
-| `humanizeDrift`        | float 0..1                                                     | EMA smoothing factor for all humanize axes         |
-| `outputLevel`          | float 0..1                                                     | global output velocity multiplier (default 1.0)    |
+| Parameter              | Type                                            | Notes                                              |
+|------------------------|-------------------------------------------------|----------------------------------------------------|
+| `stepDirection`        | `forward \| reverse \| pingpong \| random`      | cell-pointer traversal; default forward            |
+| `outputLevel`          | float 0..1                                      | global output velocity multiplier (default 1.0)    |
 
 Targets may add parameters (MIDI routing, MPE configuration, etc.) but must
 support this core set for conceptual compatibility.
@@ -330,13 +298,13 @@ Oedipa has two ancestors:
   modulation. Automatonnetz uses a 5×5 grid of chord targets perturbed by CV;
   Oedipa uses 4 cells of P/L/R/hold/rest ops with per-cell expression
   (velocity, gate, probability, timing), each field exposed as an
-  independently-automatable host parameter, plus seeded `jitter` and a global
-  humanize layer as the live-randomness equivalent of CV perturbation. The
-  mechanics differ; the design intent (small program + live steering, not
-  long-form authoring) is shared.
+  independently-automatable host parameter, plus seeded `jitter` as the
+  live-randomness equivalent of CV perturbation. The mechanics differ; the
+  design intent (small program + live steering, not long-form authoring) is
+  shared.
 
 Standalone MIDI plugins need to be musically sufficient on their own — the
 "print and post-edit" workflow is part of their utility but not their reason
-for existing. Oedipa's cells + per-cell expression + global rhythmic layer +
-jitter + humanize is the minimum viable program element that satisfies that
-bar without becoming a clip-writer in disguise.
+for existing. Oedipa's cells + per-cell expression + step direction + jitter
+is the minimum viable program element that satisfies that bar without becoming
+a clip-writer in disguise.

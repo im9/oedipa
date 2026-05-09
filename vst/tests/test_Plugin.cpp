@@ -977,3 +977,202 @@ TEST_CASE("Bus config — pure MIDI fx, no audio buses (ADR 009 2026-05-08)",
     CHECK(p.acceptsMidi()   == true);
     CHECK(p.producesMidi()  == true);
 }
+
+// ── Cell timing — forward sample offset (concept.md §Traversal) ──────────
+//
+// Spec: per-cell `timing` is a 0..+0.5 step-length-fraction offset that pushes
+// the cell-head fire later. m4l implements this via `delayPos` → Max [pipe];
+// vst implements it as a within-block `sampleOffset` on the MidiBuffer event,
+// with a one-deep deferred queue for offsets that fall past the current block.
+//
+// Both the legato handoff offs (for the previously-held chord) and the new
+// chord's note-ons share the same offset — they form a single "fire" event
+// whose moment-in-time the user has displaced.
+//
+// Numeric setup (used in the cases below):
+//   sampleRate = 44100, bpm = 120 → samples/quarter = 22050, samples/sub-step
+//   = 5512.5. With stepsPerTransform=1 (cell = 1 sub-step), one cell duration
+//   = 5512.5 samples. timing=0.25 → 1378 samples; timing=0.5 → 2756 samples.
+
+TEST_CASE("Cell timing — within-block offset for small timing values",
+          "[plugin][walker][timing]")
+{
+    OedipaProcessor p;
+    auto& apvts = p.getApvts();
+
+    *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 1;
+    *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 1;
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::voicing)        = 0;
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::chordQuality)   = 0;
+
+    // cells[0] = P with timing=0.25. Cell duration is 5512.5 samples
+    // (spt=1 at 120bpm/44100Hz), so the fire is delayed by 1378 samples
+    // — well within the 4096-sample test block.
+    p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::P, 1.0f, 1.0f, 1.0f, 0.25f});
+
+    FakePlayHead playHead;
+    p.setPlayHead(&playHead);
+    p.prepareToPlay(44100.0, 4096);
+
+    // Block 1 — ppq=0 init head: startChord (C major) fires at offset 0.
+    // The init synthetic event has cellIdx=-1 and no per-cell timing.
+    {
+        juce::AudioBuffer<float> audio(0, 4096);
+        juce::MidiBuffer midi;
+        playHead.ppq = 0.0;
+        p.processBlock(audio, midi);
+        const auto notes = collectNotes(midi);
+        REQUIRE(! notes.empty());
+        for (const auto& e : notes) CHECK(e.sample == 0);
+        CHECK(pcSet(noteSet(notes, true)) == std::set<int>{0, 4, 7});
+    }
+
+    // Block 2 — ppq=0.25 (sub-step 1, cells[0]=P boundary). cells[0].timing
+    // = 0.25 → expected sample offset = round(0.25 × 5512.5) = 1378.
+    // Both the C-major handoff offs and the C-minor note-ons sit at that
+    // offset (the legato handoff is part of the displaced fire).
+    {
+        juce::AudioBuffer<float> audio(0, 4096);
+        juce::MidiBuffer midi;
+        playHead.ppq = 0.25;
+        p.processBlock(audio, midi);
+        const auto notes = collectNotes(midi);
+        REQUIRE(! notes.empty());
+
+        // 0.25 × (44100 × 60 / 120 / 4) = 0.25 × 5512.5 = 1378.125 → 1378.
+        const int expectedOffset = (int) std::round(0.25 * 44100.0 * 15.0 / 120.0);
+        for (const auto& e : notes) CHECK(e.sample == expectedOffset);
+
+        CHECK(pcSet(noteSet(notes, false)) == std::set<int>{0, 4, 7});  // C major off
+        CHECK(pcSet(noteSet(notes, true))  == std::set<int>{0, 3, 7});  // C minor on
+    }
+}
+
+TEST_CASE("Cell timing — large offset defers across blocks",
+          "[plugin][walker][timing]")
+{
+    OedipaProcessor p;
+    auto& apvts = p.getApvts();
+
+    *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 1;
+    *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 1;
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::voicing)        = 0;
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::chordQuality)   = 0;
+
+    p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::P, 1.0f, 1.0f, 1.0f, 0.5f});
+
+    FakePlayHead playHead;
+    p.setPlayHead(&playHead);
+
+    // Block size 512 with timing offset 2756 samples → spans ~5.4 blocks.
+    p.prepareToPlay(44100.0, 512);
+
+    // Block 1 (samples 0..512) — ppq=0 init head: startChord at offset 0.
+    {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        playHead.ppq = 0.0;
+        p.processBlock(audio, midi);
+        REQUIRE(! collectNotes(midi).empty());
+    }
+
+    // Block 2 (samples 512..1024) — ppq=0.25 crosses cells[0]=P boundary.
+    // Fire is queued for absolute sample 512+2756 = 3268 (block 7's range).
+    // Nothing emits in this block.
+    {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        playHead.ppq = 0.25;
+        p.processBlock(audio, midi);
+        CHECK(collectNotes(midi).empty());
+    }
+
+    // Blocks 3..N — keep ppq in [0.25, 0.5) so no new boundary is crossed
+    // while we wait for the deferred queue to drain. One block at 120bpm/
+    // 44100Hz = 512/22050 quarters ≈ 0.02321 ppq.
+    int firedBlockIndex = -1;
+    int fireOffset = -1;
+    std::set<int> firedOns, firedOffs;
+    for (int b = 3; b <= 10; ++b) {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        const double advance = (b - 2) * 512.0 / 22050.0;
+        playHead.ppq = std::min(0.499, 0.25 + advance);
+        p.processBlock(audio, midi);
+        const auto notes = collectNotes(midi);
+        if (! notes.empty()) {
+            firedBlockIndex = b;
+            fireOffset = notes.front().sample;
+            for (const auto& e : notes) CHECK(e.sample == fireOffset);
+            firedOns  = noteSet(notes, true);
+            firedOffs = noteSet(notes, false);
+            break;
+        }
+    }
+
+    // Pending fireSampleAbs = 512 + 2756 = 3268. Block 7 starts at sample
+    // 3072 (= 6 × 512), so offset within block 7 = 3268 - 3072 = 196.
+    CHECK(firedBlockIndex == 7);
+    CHECK(fireOffset == 196);
+    CHECK(pcSet(firedOffs) == std::set<int>{0, 4, 7});  // C major handoff
+    CHECK(pcSet(firedOns)  == std::set<int>{0, 3, 7});  // C minor
+}
+
+TEST_CASE("Cell timing — transport stop drops the pending fire",
+          "[plugin][walker][timing]")
+{
+    OedipaProcessor p;
+    auto& apvts = p.getApvts();
+
+    *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 1;
+    *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 1;
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::voicing)        = 0;
+    *paramAs<juce::AudioParameterChoice>(apvts, pid::chordQuality)   = 0;
+
+    p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::P, 1.0f, 1.0f, 1.0f, 0.5f});
+
+    FakePlayHead playHead;
+    p.setPlayHead(&playHead);
+    p.prepareToPlay(44100.0, 512);
+
+    // Block 1: init fires C major.
+    {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        playHead.ppq = 0.0;
+        p.processBlock(audio, midi);
+        REQUIRE(! collectNotes(midi).empty());
+    }
+
+    // Block 2: queue P fire (deferred, no emit).
+    {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        playHead.ppq = 0.25;
+        p.processBlock(audio, midi);
+        REQUIRE(collectNotes(midi).empty());
+    }
+
+    // Block 3: transport stop. Held = C major (init); pending = C minor.
+    // Expected: panic emits noteOff for C major (currently sounding); the
+    // pending C minor noteOns are dropped (never sounded).
+    {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        playHead.playing = false;
+        p.processBlock(audio, midi);
+        const auto notes = collectNotes(midi);
+        const auto ons  = noteSet(notes, true);
+        const auto offs = noteSet(notes, false);
+        CHECK(ons.empty());
+        CHECK(pcSet(offs) == std::set<int>{0, 4, 7});
+    }
+
+    // Block 4: still stopped, no orphan fire from the dropped queue.
+    {
+        juce::AudioBuffer<float> audio(0, 512);
+        juce::MidiBuffer midi;
+        p.processBlock(audio, midi);
+        CHECK(collectNotes(midi).empty());
+    }
+}

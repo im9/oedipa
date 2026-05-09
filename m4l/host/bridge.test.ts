@@ -515,7 +515,6 @@ describe('Bridge slots — ADR 006 Phase 3 (TS half)', () => {
       const b = makeBridge(h.deps)
       h.outlets.length = 0
       b.setParams('voicing', 'spread')
-      b.setParams('humanizeVelocity', 0.5)
       b.setParams('outputLevel', 0.7)
       assert.equal(byChannel(slotOutlets(h), 'slot-store').length, 0)
     })

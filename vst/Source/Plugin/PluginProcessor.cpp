@@ -256,14 +256,26 @@ void OedipaProcessor::prepareToPlay(double newSampleRate, int)
     lastSubStep = -1;
     held.clear();
 
-    // Sample rate is captured for the preview release timing only — walker
-    // emission stays sample-rate agnostic (it works in ppq from the
-    // playhead). Preview length is musical-time (300 ms) so it needs sr.
+    // Sample rate is captured for cell.timing forward-offset computation
+    // (samples per cell = spt × sampleRate × 60 / bpm / 4) and the preview
+    // release timer (musical-time 300 ms). The walker step boundary itself
+    // stays sample-rate agnostic — it advances in ppq from the playhead.
     sampleRate = newSampleRate;
     // Drain any in-flight preview held notes; they're stale if the host
     // is restarting the transport graph.
     previewHeld.clear();
     previewSamplesUntilOff = 0;
+
+    // Reserve generous buffer for the deferred-fire MidiBuffer so addEvent
+    // calls inside handleWalkerMidi don't realloc on the audio thread.
+    // Worst case per pending fire: 8 handoff offs + 8 ons (triad + 7th
+    // doubled across handoff and new chord) ≈ 64 bytes per event.
+    pendingMidi_.clear();
+    pendingMidi_.ensureSize(2048);
+    pendingHeld_.clear();
+    pendingHeld_.reserve(8);
+    pendingFireSampleAbs_ = -1;
+    audioBlockStartSample_ = 0;
 }
 
 void OedipaProcessor::releaseResources() {}
@@ -399,7 +411,16 @@ void OedipaProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBu
     }
 
     handlePreviewMidi(midi, audio.getNumSamples());
-    handleWalkerMidi(midi);
+    handleWalkerMidi(midi, audio.getNumSamples());
+
+    // Advance the block counter unconditionally — even on blocks where the
+    // walker early-returns (no boundary crossed). The pending-fire queue's
+    // absolute sample reference depends on every block bumping the counter
+    // by exactly its sample count; skipping any block would drift the
+    // queue's sense of "where in the timeline" the pending fire belongs.
+    // cancelPending() resets the counter to 0 so the bump that follows
+    // makes the *next* block's start correspond to "samples since reset".
+    audioBlockStartSample_ += (juce::int64) audio.getNumSamples();
 }
 
 void OedipaProcessor::handlePreviewMidi(juce::MidiBuffer& midi, int blockSamples)
@@ -445,8 +466,18 @@ void OedipaProcessor::handlePreviewMidi(juce::MidiBuffer& midi, int blockSamples
     }
 }
 
-void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
+void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi, int blockSamples)
 {
+    // Helper for the panic paths below — wipes any deferred cell-timing
+    // fire alongside the held-note panic so a stop / scrub / no-playhead
+    // event can't leave an orphan note-on queued for a future block.
+    const auto cancelPending = [this]() {
+        pendingMidi_.clear();
+        pendingHeld_.clear();
+        pendingFireSampleAbs_ = -1;
+        audioBlockStartSample_ = 0;
+    };
+
     auto* playHead = getPlayHead();
     auto position = (playHead != nullptr) ? playHead->getPosition() : juce::Optional<juce::AudioPlayHead::PositionInfo>{};
 
@@ -456,6 +487,7 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
         // offline render contexts): drain held output notes so the host
         // doesn't see dangling MIDI, then idle.
         if (! held.empty()) emitPanic(midi, 0);
+        cancelPending();
         lastSubStep = -1;
         // Clear sub-step state so the next start re-runs the init path.
         currentCellEvent.reset();
@@ -466,6 +498,7 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
     const auto ppqOpt = position->getPpqPosition();
     if (! ppqOpt.hasValue()) {
         if (! held.empty()) emitPanic(midi, 0);
+        cancelPending();
         lastSubStep = -1;
         currentCellEvent.reset();
         fireIdxThisCell = 0;
@@ -483,14 +516,39 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
         // notes held from before would dangle until the next attack.
         // Panic + reset rhythm/arp/turing state so the catch-up loop fires
         // from the new pos with a fresh stochastic stream (matches m4l's
-        // pendingPosReset path in host.ts:435-446).
+        // pendingPosReset path in host.ts:435-446). Also drop any queued
+        // cell-timing fire — its absolute sample reference belongs to the
+        // pre-jump timeline.
         emitPanic(midi, 0);
+        cancelPending();
         lastSubStep = currentSubStep - 1;
         currentCellEvent.reset();
         fireIdxThisCell = 0;
         const int seedNow = (int) *apvts.getRawParameterValue(pid::seed);
         arpRng = engine::Mulberry32{(std::uint32_t) seedNow};
         turingState = engine::makeTuringState(lastTuringLength, (std::uint32_t) lastTuringSeed);
+    }
+
+    // Drain a queued cell-timing fire whose absolute sample falls inside
+    // this block. Sits BEFORE the early-return on "no boundary crossed"
+    // so a pending fire from a prior block emits even when no new
+    // boundary is hit this block. Stale entries (sample < block start —
+    // shouldn't happen in steady state) are dropped silently.
+    if (pendingFireSampleAbs_ >= 0) {
+        const juce::int64 blockEnd = audioBlockStartSample_ + (juce::int64) blockSamples;
+        if (pendingFireSampleAbs_ < blockEnd) {
+            if (pendingFireSampleAbs_ >= audioBlockStartSample_) {
+                const int offset = (int) (pendingFireSampleAbs_ - audioBlockStartSample_);
+                midi.addEvents(pendingMidi_, 0, -1, offset);
+                // Pending drained: the queued chord is now sounding —
+                // adopt the queued held set and release the prior one
+                // (its note-offs were embedded in pendingMidi_).
+                held.swap(pendingHeld_);
+            }
+            pendingMidi_.clear();
+            pendingHeld_.clear();
+            pendingFireSampleAbs_ = -1;
+        }
     }
 
     // Honour a RATE change made via parameterChanged: drop the cached
@@ -527,6 +585,23 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
     const auto rhythm   = (engine::RhythmPreset) (int) *apvts.getRawParameterValue(pid::rhythm);
     const auto arp      = (engine::ArpMode)      (int) *apvts.getRawParameterValue(pid::arp);
     const float tLock   = *apvts.getRawParameterValue(pid::turingLock);
+
+    // Multi-head catchup safeguard. The cell.timing path uses
+    // audioBlockStartSample_ as its time reference rather than each step's
+    // block-relative sample position, so multiple cell heads in a single
+    // catchup loop would all queue from the same anchor — collapsing
+    // their intended firing order. This is a rare degenerate case (block
+    // size > cell duration, or first-block-after-discontinuity) and the
+    // user accepts offset=0 emission for it. The skip-ahead in the
+    // `lastSubStep == -1 && currentSubStep > 0` path above already
+    // collapses startup catchup to a single head.
+    int cellHeadsInCatchup = 0;
+    for (int step = lastSubStep + 1; step <= currentSubStep; ++step) {
+        if (step == 0 || (step % spt) == 0) {
+            if (++cellHeadsInCatchup > 1) break;
+        }
+    }
+    const bool disableTiming = cellHeadsInCatchup > 1;
 
     for (int step = lastSubStep + 1; step <= currentSubStep; ++step) {
         // Init synthetic event at step==0 — same shape as m4l's pos=0 path
@@ -567,6 +642,20 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
         }
         if (! fires || ! currentCellEvent->played) continue;
 
+        // Drain any in-flight deferred fire before emitting this one. If
+        // we don't, a sub-step refire (rhythm preset) or a subsequent
+        // cell head can emit ahead of the queued chord, swapping the
+        // intended order. Drain at offset 0 — the queued fire fires
+        // slightly early relative to its target sample, which is a
+        // graceful degradation; emitting out of order is not.
+        if (pendingFireSampleAbs_ >= 0) {
+            midi.addEvents(pendingMidi_, 0, -1, 0);
+            held.swap(pendingHeld_);
+            pendingMidi_.clear();
+            pendingHeld_.clear();
+            pendingFireSampleAbs_ = -1;
+        }
+
         // Per-cell expression. cells[ev->cellIdx] is the source of truth
         // for vel/gate/prob/timing; for the init synthetic event the
         // cellIdx is -1, fall back to defaults (gate=1.0, vel=1.0).
@@ -589,23 +678,77 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi)
         const float velNorm = std::clamp(cellVel * outLvl, 0.0f, 1.0f);
         const auto vel = (juce::uint8) std::clamp((int) std::round(velNorm * 127.0f), 1, 127);
 
-        // Emit handoff note-offs first (legato handoff: prior notes off at
-        // the same sample offset as the new noteOns).
-        for (const auto& [ch, note] : held) {
-            midi.addEvent(juce::MidiMessage::noteOff(ch, note), 0);
-        }
-        held.clear();
-
-        if (pickIdx) {
-            const int n = std::clamp(voiced[(std::size_t) *pickIdx], 0, 127);
-            midi.addEvent(juce::MidiMessage::noteOn(channel, n, vel), 0);
-            held.emplace_back(channel, n);
-        } else {
-            for (int n : voiced) {
-                const int clamped = std::clamp(n, 0, 127);
-                midi.addEvent(juce::MidiMessage::noteOn(channel, clamped, vel), 0);
-                held.emplace_back(channel, clamped);
+        // cell.timing — concept §Traversal: 0..+0.5 forward step-length
+        // fraction. Applies only at the cell head, not at sub-step refires
+        // within a cell (matches m4l host.ts:569-570). Init event
+        // (cellIdx=-1) has no per-cell timing.
+        const bool isCellHead = (subStepIdxInCell == 0);
+        const float rawTiming = (isInit || ! isCellHead || disableTiming)
+                                    ? 0.0f
+                                    : cells[(std::size_t) cIdx].timing;
+        const float clampedTiming = std::clamp(rawTiming, 0.0f, 0.5f);
+        int timingOffsetSamples = 0;
+        if (clampedTiming > 0.0f) {
+            const auto bpmOpt = position->getBpm();
+            const double bpm = bpmOpt.hasValue() ? *bpmOpt : 0.0;
+            if (bpm > 0.0 && sampleRate > 0.0) {
+                // cellSamples = spt × samplesPerSubStep
+                //             = spt × sampleRate × (60 / bpm) / 4
+                const double cellSamples = (double) spt * sampleRate * 15.0 / bpm;
+                timingOffsetSamples = (int) std::round((double) clampedTiming * cellSamples);
             }
+        }
+
+        // Build a small helper that lays the handoff offs and the new
+        // chord ons into a target buffer at a single offset. The legato
+        // handoff means both share the same moment-in-time — the one the
+        // user displaced via cell.timing.
+        const auto emitFire = [&](juce::MidiBuffer& target,
+                                  std::vector<std::pair<int, int>>& heldTarget,
+                                  const std::vector<std::pair<int, int>>& heldSource,
+                                  int offset) {
+            for (const auto& [ch, note] : heldSource) {
+                target.addEvent(juce::MidiMessage::noteOff(ch, note), offset);
+            }
+            heldTarget.clear();
+            if (pickIdx) {
+                const int n = std::clamp(voiced[(std::size_t) *pickIdx], 0, 127);
+                target.addEvent(juce::MidiMessage::noteOn(channel, n, vel), offset);
+                heldTarget.emplace_back(channel, n);
+            } else {
+                for (int n : voiced) {
+                    const int clamped = std::clamp(n, 0, 127);
+                    target.addEvent(juce::MidiMessage::noteOn(channel, clamped, vel), offset);
+                    heldTarget.emplace_back(channel, clamped);
+                }
+            }
+        };
+
+        if (timingOffsetSamples == 0) {
+            // Baseline path — fire at block start (existing behavior).
+            emitFire(midi, held, held, 0);
+        } else if (timingOffsetSamples < blockSamples) {
+            // Within-block delay — fire at the offset directly. `held`
+            // updates immediately because by the end of this block the
+            // new chord is sounding.
+            emitFire(midi, held, held, timingOffsetSamples);
+        } else if (pendingFireSampleAbs_ < 0) {
+            // Cross-block deferral — stash the fire (offs + ons) into the
+            // pending buffer at offset 0 (the drain code reapplies the
+            // block-relative offset at emission time). Leave `held`
+            // untouched so an interim panic still note-offs what is
+            // currently sounding; held adopts pendingHeld_ when the
+            // queue drains.
+            pendingMidi_.clear();
+            pendingHeld_.clear();
+            emitFire(pendingMidi_, pendingHeld_, held, 0);
+            pendingFireSampleAbs_ = audioBlockStartSample_ + (juce::int64) timingOffsetSamples;
+        } else {
+            // Defensive: pending is already in flight (shouldn't reach
+            // here in normal operation — timing ≤ 0.5 cell duration <
+            // cell duration, so the queued fire always drains before
+            // the next cell head). Collapse to immediate fire.
+            emitFire(midi, held, held, 0);
         }
         ++fireIdxThisCell;
     }
