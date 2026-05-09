@@ -11,35 +11,51 @@ Drag Oedipa.component into:
 Drag Oedipa.vst3 into:
   ~/Library/Audio/Plug-Ins/VST3/
 
-Both folders may need to be created manually if you have no other
-plug-ins installed there.
+Drag Oedipa.clap into:
+  ~/Library/Audio/Plug-Ins/CLAP/
+
+Any of these folders may need to be created manually if you have no
+other plug-ins of that format installed there.
 
 
 Hosting
 -------
 
 Logic Pro          AU MIDI FX slot on a software-instrument track.
-                   Primary supported host.
+                   Primary supported host. (Logic does not host
+                   CLAP; use the AU build.)
 
-Bitwig Studio      VST3 MIDI fx slot (in front of an instrument).
-                   Verified click-free on macOS 2026-05-08.
+Bitwig Studio      CLAP or VST3 MIDI fx slot, in front of an
+                   instrument. CLAP is Bitwig's native plug-in
+                   format. VST3 verified click-free on macOS
+                   2026-05-08; CLAP load verified 2026-05-09.
 
-Reaper             VST3 in any FX chain. Best-effort, not formally
-                   tested for v1.
+Reaper             VST3 in any FX chain, or CLAP via the FX chain
+                   (CLAP load verified 2026-05-09). Best-effort,
+                   not formally tested for v1.
 
 Studio One         VST3 in MIDI fx slot. Best-effort, not formally
-                   tested for v1.
+                   tested for v1. The CLAP build is also produced
+                   but has not been verified in Studio One.
 
 Ableton Live       Use the Max for Live device (m4l target) instead.
-                   Live does not accept third-party VST3 / AU plug-ins
-                   in its MIDI Effect rack.
+                   Live does not accept third-party VST3 / AU plug-
+                   ins in its MIDI Effect rack and does not host
+                   CLAP.
 
-Cubase / Nuendo    Not supported in v1. The VST3 spec has no MIDI
-                   Effect category, and Cubase rejects third-party
-                   VST3 in its MIDI Inserts slot. Loading Oedipa as
-                   an Instrument with two-track MIDI-out routing
-                   works mechanically but conflicts with the
-                   "MIDI fx, not synth" identity Oedipa is built on.
+Cubase / Nuendo    Not supported. The VST3 spec has no MIDI Effect
+                   category, and Cubase rejects third-party VST3 in
+                   its MIDI Inserts slot. Loading Oedipa as an
+                   Instrument with two-track MIDI-out routing works
+                   mechanically but conflicts with the "MIDI fx,
+                   not synth" identity Oedipa is built on.
+
+FL Studio          Not supported. FL has no MIDI fx routing on any
+                   plug-in surface: VST3 is rejected categorically
+                   (no MIDI fx slot in either channel or mixer),
+                   and the CLAP build loads but FL's CLAP host does
+                   not bridge note-effect plug-ins to FL's internal
+                   note bus. Verified empirically 2026-05-09.
 
 
 License

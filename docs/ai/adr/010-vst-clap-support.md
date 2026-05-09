@@ -74,11 +74,13 @@ the host's native plug-in format.
 
 - **Primary smoke target**: Bitwig Studio (author's declared CLAP
   host per `project_live_no_vst3_midi_fx`).
-- **Empirical research target**: FL Studio. Verify whether FL's CLAP
-  host accepts `note-effect` plug-ins on a routing path that lets a
-  generated MIDI stream reach a downstream instrument. Outcome
-  determines whether FL is promoted from out-of-scope to a primary
-  host (memory `project_oedipa_fl_studio_scope` updated accordingly).
+- **FL Studio**: empirically tested 2026-05-09 and **out of scope**
+  (Phase 5). FL's CLAP host does not bridge `note-effect` plug-ins'
+  MIDI in/out to FL's internal note bus on any tested surface
+  (Patcher green pins, channel-level routing). The VST3 build is
+  rejected categorically by FL (no MIDI fx slot in channel or
+  mixer). Promotion to primary host is not feasible without
+  instrument-disguise, which is rejected per ADR 008/009 identity.
 - **Best-effort**: Reaper, Studio One. Loaded once, sanity-checked,
   no ongoing test commitment (mirrors ADR 009 best-effort posture).
 
@@ -157,28 +159,52 @@ implementation, then build/test.
   `CLAP_SUPPORT_URL` pointing to the GitHub repo + issues page.
   Vendor name inherited from JUCE `COMPANY_NAME "im9"`. (The VST3 /
   AU build has no equivalent URL metadata; this is CLAP-specific.)
-- [ ] **Phase 4 — Bitwig smoke (primary).** Install CLAP build, load
-  in Bitwig Studio. Verify: appears in Note FX category, chord
-  output reaches downstream instrument, parameter automation reads
-  + writes, project save → reopen restores state, lattice UI
-  renders.
-- [ ] **Phase 5 — FL Studio empirical.** Install CLAP build in FL
-  Studio. Verify whether FL's CLAP host accepts `note-effect`
-  plug-ins on a routing path that delivers MIDI to a downstream
-  generator. Document outcome in this row (working / not-working +
-  why). If working → promote FL to primary host (update this ADR's
-  Decision §Host scope and `project_oedipa_fl_studio_scope` memory);
-  if not → FL stays out of scope, document the host limitation
-  here for the record.
-- [ ] **Phase 6 — Reaper / Studio One best-effort.** Single load
-  test in each. Document outcome (working / not-working + why) in
-  this row. No ongoing test commitment.
-- [ ] **Phase 7 — Distribution wiring.** Update root and `vst/`
-  Makefile `release-vst` target to include `Oedipa.clap` in
-  `dist/Oedipa.dmg`. Update `INSTALL.txt` template with CLAP install
-  path. Update `vst/README.md` install section + DAW support table
-  (CLAP column for hosts that support it). Update `vst-test.yml` if
-  it enumerates formats.
+- [x] **Phase 4 — Bitwig smoke (primary).** Bitwig Studio smoke
+  verified by user 2026-05-09.
+- [x] **Phase 5 — FL Studio empirical.** Tested 2026-05-09. Result:
+  **negative** — FL stays out of scope. The CLAP build loads in
+  Patcher (lattice editor renders), but MIDI in does not reach the
+  plug-in (lattice unresponsive to keyboard) and MIDI out does not
+  flow to downstream synths — tested with both FLEX (FL native) and
+  Serum (VST instrument), same result, ruling out a synth-side
+  cause. FL's CLAP host does not bridge a `note-effect` plug-in's
+  note in/out to FL's internal note bus on any surface tried
+  (Patcher green pins, channel-level MIDI port — FL native channels
+  do not expose a wrapper Settings page for MIDI port at all). The
+  VST3 build, tested for completeness, was rejected categorically
+  by FL ("open in mixer instead" → "problem opening": channel slot
+  refuses MIDI fx, mixer hosts only audio fx). The
+  instrument-disguise workaround remains rejected per ADR 008/009
+  identity. Re-evaluate only if FL adds a native MIDI fx track
+  concept or CLAP `note-effect` routing in its host bridge.
+  `project_oedipa_fl_studio_scope` memory updated to correct the
+  "user doesn't use FL" line (user does own FL) and to record this
+  empirical.
+- [x] **Phase 6 — Reaper / Studio One best-effort.** Reaper: CLAP
+  load verified by user 2026-05-09 (initial "not visible" was a UI
+  filter — searching with VST3 only hid the CLAP entry; clearing the
+  format filter surfaced Oedipa.clap normally). Studio One: not
+  exercised — no ongoing test commitment.
+- [x] **Phase 7 — Distribution wiring.** Mirrored the AU + VST3
+  signing / notarization / dmg pipeline to CLAP:
+  `vst/scripts/codesign.sh` and `vst/scripts/notarize.sh` now
+  process `Oedipa.clap` alongside the AU / VST3 bundles;
+  `vst/scripts/build-dmg.sh` adds it to the dmg staging directory;
+  `vst/scripts/INSTALL.txt` adds the `~/Library/Audio/Plug-Ins/CLAP/`
+  install row plus host-specific notes (Bitwig CLAP, Reaper CLAP,
+  Studio One CLAP not verified, Ableton Live no CLAP, Cubase no
+  CLAP, FL Studio host-limit out of scope). Top-level `README.md`:
+  install heading "VST3 / AU" → "VST3 / AU / CLAP", install paths
+  add the CLAP row, Bitwig host example mentions CLAP, DAW support
+  table updated with CLAP info per host, Distribution §
+  "AU + VST3" → "AU + VST3 + CLAP". Root and `vst/Makefile`
+  unchanged — `make build` already produces CLAP via the wrapper
+  integration (Phase 2), and the artefact presence check (Phase 1)
+  already covers CLAP. `vst-test.yml` unchanged — it runs
+  `make test` only and does not enumerate formats. Status block
+  (`vst/` ships ...) and Targets table CLAP row are deferred to
+  Phase 9 (flip to "Released" after the v0.1.1 tag is cut,
+  mirroring the ADR 009 Phase-9 pattern).
 - [ ] **Phase 8 — KVR formats line.** Add CLAP to the formats line
   in the in-review KVR submission (currently pending per
   `project_distribution_channels_status`).

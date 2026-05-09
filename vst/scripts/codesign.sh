@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Sign AU + VST3 bundles with Developer ID Application + hardened runtime.
-# ADR 009 Phase 2.
+# Sign AU + VST3 + CLAP bundles with Developer ID Application + hardened
+# runtime. ADR 009 Phase 2; CLAP added in ADR 010 Phase 7.
 
 set -euo pipefail
 
@@ -34,5 +34,6 @@ sign_bundle() {
 
 sign_bundle "$ARTEFACTS_DIR/AU/Oedipa.component"
 sign_bundle "$ARTEFACTS_DIR/VST3/Oedipa.vst3"
+sign_bundle "$ARTEFACTS_DIR/CLAP/Oedipa.clap"
 
-echo "Signed and verified: AU + VST3"
+echo "Signed and verified: AU + VST3 + CLAP"

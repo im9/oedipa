@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build dist/Oedipa.dmg from already-signed-and-stapled AU + VST3 bundles.
-# ADR 009 Phase 4. Run after codesign.sh + notarize.sh.
+# Build dist/Oedipa.dmg from already-signed-and-stapled AU + VST3 + CLAP
+# bundles. ADR 009 Phase 4; CLAP added in ADR 010 Phase 7. Run after
+# codesign.sh + notarize.sh.
 #
 # The dmg itself is also signed, notarized, and stapled — belt-and-braces
 # so users who extract bundles before Gatekeeper checks the dmg still get
@@ -24,8 +25,9 @@ README_TXT="$SCRIPT_DIR/README.txt"
 
 AU_BUNDLE="$ARTEFACTS_DIR/AU/Oedipa.component"
 VST3_BUNDLE="$ARTEFACTS_DIR/VST3/Oedipa.vst3"
+CLAP_BUNDLE="$ARTEFACTS_DIR/CLAP/Oedipa.clap"
 
-for bundle in "$AU_BUNDLE" "$VST3_BUNDLE"; do
+for bundle in "$AU_BUNDLE" "$VST3_BUNDLE" "$CLAP_BUNDLE"; do
   if [[ ! -e "$bundle" ]]; then
     echo "error: bundle not found at $bundle" >&2
     echo "  hint: run \`make build && ./scripts/codesign.sh && ./scripts/notarize.sh\` first" >&2
@@ -48,6 +50,7 @@ trap 'rm -rf "$STAGING"' EXIT
 echo "Staging dmg contents in $STAGING"
 cp -R "$AU_BUNDLE" "$STAGING/"
 cp -R "$VST3_BUNDLE" "$STAGING/"
+cp -R "$CLAP_BUNDLE" "$STAGING/"
 cp "$INSTALL_TXT" "$STAGING/"
 cp "$README_TXT" "$STAGING/"
 

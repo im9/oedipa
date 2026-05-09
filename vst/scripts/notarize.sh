@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Notarize signed AU + VST3 bundles via xcrun notarytool, then staple.
-# ADR 009 Phase 3. Requires bundles to be signed first (codesign.sh).
+# Notarize signed AU + VST3 + CLAP bundles via xcrun notarytool, then
+# staple. ADR 009 Phase 3; CLAP added in ADR 010 Phase 7. Requires
+# bundles to be signed first (codesign.sh).
 
 set -euo pipefail
 
@@ -39,5 +40,6 @@ notarize_bundle() {
 
 notarize_bundle "$ARTEFACTS_DIR/AU/Oedipa.component"
 notarize_bundle "$ARTEFACTS_DIR/VST3/Oedipa.vst3"
+notarize_bundle "$ARTEFACTS_DIR/CLAP/Oedipa.clap"
 
-echo "Notarized and stapled: AU + VST3"
+echo "Notarized and stapled: AU + VST3 + CLAP"
