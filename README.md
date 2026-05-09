@@ -53,22 +53,23 @@ Download `Oedipa.amxd` from the latest [release](../../releases?q=m4l), drag
 it onto a MIDI track in Ableton Live, and put an instrument after it.
 Click a triangle on the lattice to set the starting chord; press play.
 
-### VST3 / AU (vst)
+### VST3 / AU / CLAP (vst)
 
 Download `Oedipa.dmg` from the latest [release](../../releases?q=vst) and
 mount it. Drag the bundles into:
 
 - `Oedipa.component` → `~/Library/Audio/Plug-Ins/Components/`
 - `Oedipa.vst3` → `~/Library/Audio/Plug-Ins/VST3/`
+- `Oedipa.clap` → `~/Library/Audio/Plug-Ins/CLAP/`
 
-Either folder may need to be created if you have no other plug-ins
-installed there.
+Any of these folders may need to be created if you have no other
+plug-ins of that format installed there.
 
 **Logic Pro** — load on a software-instrument track in the *AU MIDI
 FX* slot, then route the track through a synth or sampler.
 
-**Bitwig Studio** — load as a *VST3 MIDI fx* in front of an
-instrument.
+**Bitwig Studio** — load as a *CLAP* or *VST3* note effect in front
+of an instrument. CLAP is Bitwig's native plug-in format.
 
 See [DAW support](#daw-support) for per-host compatibility. Reaper /
 Studio One are best-effort; Ableton Live uses the [Max for Live
@@ -101,13 +102,13 @@ below covers per-host compatibility on macOS.
 
 | DAW | Format | Status | Notes |
 |---|---|---|---|
-| Logic Pro | AU | ✅ Primary | AU MIDI FX slot on a software-instrument track. |
-| Bitwig Studio | VST3 | ✅ Primary | VST3 MIDI fx slot in front of an instrument. Verified click-free 2026-05-08. |
-| Reaper | VST3 | ⚠️ Best-effort | VST3 in any FX chain. Not formally tested for v1. |
-| Studio One | VST3 | ⚠️ Best-effort | VST3 in MIDI fx slot. Not formally tested for v1. |
-| Ableton Live | — | Use m4l/ | Live does not accept third-party VST3 / AU plug-ins in its MIDI Effect rack (host design, not a format limitation). The [Max for Live device](m4l/) is the supported path. |
+| Logic Pro | AU | ✅ Primary | AU MIDI FX slot on a software-instrument track. (Logic does not host CLAP.) |
+| Bitwig Studio | VST3 / CLAP | ✅ Primary | Note FX slot in front of an instrument. CLAP is Bitwig's native plug-in format. VST3 verified click-free 2026-05-08; CLAP load verified 2026-05-09. |
+| Reaper | VST3 / CLAP | ⚠️ Best-effort | VST3 in any FX chain; CLAP load verified 2026-05-09. Not formally tested for v1. |
+| Studio One | VST3 | ⚠️ Best-effort | VST3 in MIDI fx slot. Not formally tested for v1. CLAP build is also produced but has not been verified in Studio One. |
+| Ableton Live | — | Use m4l/ | Live does not accept third-party VST3 / AU plug-ins in its MIDI Effect rack (host design, not a format limitation) and does not host CLAP. The [Max for Live device](m4l/) is the supported path. |
 | Cubase / Nuendo | — | ❌ Out of scope | The VST3 spec has no "MIDI Effect" sub-category and Cubase rejects third-party VST3 in its MIDI Inserts slot (Steinberg policy). Loading Oedipa as an Instrument with two-track MIDI-out routing works mechanically, but conflicts with the "MIDI fx, not synth" identity Oedipa is built on. The instrument-disguise topology was rejected for v1; revisit only if the Cubase ecosystem opens its MIDI Inserts to third-party VST3. |
-| FL Studio | — | ❌ Out of scope | Not targeted for v1; CLAP wrapping deferred (see ADR 008). |
+| FL Studio | — | ❌ Out of scope | FL has no MIDI fx routing on any plug-in surface: VST3 is rejected categorically (channel slot accepts only instruments, mixer hosts only audio fx, no MIDI fx slot exists), and the CLAP build loads but FL's CLAP host does not bridge `note-effect` plug-ins to FL's internal note bus (verified empirically 2026-05-09, ADR 010 Phase 5). Reconsider only if FL adds a native MIDI fx track concept or CLAP `note-effect` routing in its host bridge. |
 
 ## Origin
 
@@ -151,11 +152,11 @@ distribution path conventions and the freeze rationale.
 
 ### VST3 / AU (vst)
 
-`make release-vst` builds the AU + VST3 bundles in Release mode,
-signs them with the Developer ID, submits to Apple notarization,
-staples the tickets, packages both bundles + a `README.txt` + an
-`INSTALL.txt` into `dist/Oedipa.dmg`, and signs + notarizes + staples
-the dmg itself.
+`make release-vst` builds the AU + VST3 + CLAP bundles in Release
+mode, signs them with the Developer ID, submits to Apple
+notarization, staples the tickets, packages all three bundles +
+a `README.txt` + an `INSTALL.txt` into `dist/Oedipa.dmg`, and signs
++ notarizes + staples the dmg itself.
 
 Required environment:
 
