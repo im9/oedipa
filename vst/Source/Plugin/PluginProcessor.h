@@ -282,7 +282,28 @@ private:
                    float velocity,
                    int sampleOffset);
     void handlePreviewMidi(juce::MidiBuffer&, int blockSamples);
-    void handleWalkerMidi(juce::MidiBuffer&);
+    void handleWalkerMidi(juce::MidiBuffer&, int blockSamples);
+
+    // One-deep deferred fire queue for cell.timing offsets that fall past
+    // the current block. Concept §Traversal: timing is 0..+0.5 of the cell
+    // duration (e.g. timing=0.5 at spt=1 / 120 bpm / 44100 Hz → 2756 sample
+    // delay, far past a typical 256–2048 sample block). Each pending fire
+    // bundles the legato handoff offs + the new chord ons so the displaced
+    // moment-in-time is atomic. `pendingFireSampleAbs_ < 0` means inactive.
+    //
+    // `audioBlockStartSample_` is a host-clock-agnostic running sample
+    // counter incremented by `blockSamples` each processBlock; reset to 0
+    // alongside any panic path (transport stop, no-playhead, backward
+    // scrub) so the pending queue's absolute sample positions stay
+    // coherent inside one play session.
+    juce::MidiBuffer pendingMidi_;
+    juce::int64      pendingFireSampleAbs_{-1};
+    juce::int64      audioBlockStartSample_{0};
+    // Companion to pendingMidi_: the held set the queued fire WILL leave
+    // sounding once it drains. `held` itself is left alone while pending
+    // is in flight so an interim panic (transport stop, scrub) sends
+    // note-offs for what is *currently sounding*, not what will sound.
+    std::vector<std::pair<int, int>> pendingHeld_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OedipaProcessor)
 };
