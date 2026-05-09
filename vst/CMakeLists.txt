@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_subdirectory(JUCE)
+add_subdirectory(clap-juce-extensions EXCLUDE_FROM_ALL)
 
 # --- Test dependencies (ADR 008 §"Test infrastructure") -----------------------
 # Catch2 v3 + nlohmann/json v3 fetched at configure time. Both are header-only-
@@ -113,6 +114,14 @@ target_compile_definitions(Oedipa PRIVATE
     JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1
     JUCE_USE_CURL=0
     JUCE_WEB_BROWSER=0
+)
+
+# --- CLAP wrapper (ADR 010) ---------------------------------------------------
+# clap-juce-extensions creates the Oedipa_CLAP target from the existing
+# Oedipa plugin target, producing Oedipa.clap alongside VST3 / AU / Standalone.
+clap_juce_extensions_plugin(TARGET Oedipa
+    CLAP_ID "com.im9.oedipa"
+    CLAP_FEATURES note-effect utility
 )
 
 # --- Plugin core static library (state I/O surface used by tests) -------------

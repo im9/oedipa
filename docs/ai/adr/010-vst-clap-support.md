@@ -29,10 +29,10 @@ oriented around — a CLAP build is the most direct path between the
 plug-in and that user. FL Studio's CLAP host is the second motivator:
 FL has historically been out of scope (no native MIDI effect track
 concept; instrument-disguise rejected in ADR 009) but FL added CLAP
-support in 2024, and CLAP's `note_effect` plug-in feature is the only
+support in 2024, and CLAP's `note-effect` plug-in feature is the only
 mechanism by which a MIDI generator can present itself to FL without
 the instrument-disguise problem. Whether FL's CLAP host actually
-honours `note_effect` for routing is empirically unverified at the
+honours `note-effect` for routing is empirically unverified at the
 time of writing — this ADR treats it as a research question, not a
 guarantee.
 
@@ -50,7 +50,7 @@ wrapper. Ship it as an additional artefact alongside `.vst3` and
 `.component` from a single CMake configure.
 
 **Minimal scope (this ADR).** CLAP format only — the plug-in is
-exposed as a CLAP plug-in with `note_effect` feature, full polyphony,
+exposed as a CLAP plug-in with `note-effect` feature, full polyphony,
 parameter automation, and state save/restore via the existing
 APVTS / `ValueTree` path. CLAP-specific extensions (note expressions,
 polyphonic modulation) are deferred (see Scope). Minimal-scope CLAP
@@ -62,7 +62,7 @@ the host's native plug-in format.
 
 - CLAP id: `com.im9.oedipa` (reverse-DNS, matches existing
   manufacturer convention).
-- `clap_plugin_features`: `note_effect`, `utility`.
+- `clap_plugin_features`: `note-effect`, `utility`.
 - Vendor / manual / support URLs: mirror VST3 metadata.
 
 **Host scope.**
@@ -70,7 +70,7 @@ the host's native plug-in format.
 - **Primary smoke target**: Bitwig Studio (author's declared CLAP
   host per `project_live_no_vst3_midi_fx`).
 - **Empirical research target**: FL Studio. Verify whether FL's CLAP
-  host accepts `note_effect` plug-ins on a routing path that lets a
+  host accepts `note-effect` plug-ins on a routing path that lets a
   generated MIDI stream reach a downstream instrument. Outcome
   determines whether FL is promoted from out-of-scope to a primary
   host (memory `project_oedipa_fl_studio_scope` updated accordingly).
@@ -102,7 +102,7 @@ host-agnostic and render identically across formats.
 - `clap-juce-extensions` submodule + CMake integration in
   `vst/CMakeLists.txt`.
 - `Oedipa.clap` artefact produced by `make build` / `make release`.
-- CLAP plug-in metadata (id, `note_effect` feature, URLs).
+- CLAP plug-in metadata (id, `note-effect` feature, URLs).
 - Bitwig smoke verification (load → MIDI fx category → chord output
   → automation → save/restore).
 - FL Studio empirical verification (load + routing + outcome
@@ -147,7 +147,7 @@ implementation, then build/test.
   call after `juce_add_plugin`). Confirm clean build of all three
   formats (VST3 + AU + CLAP) on `make build`.
 - [ ] **Phase 3 — Plug-in metadata.** Set CLAP id, features =
-  `note_effect, utility`, vendor / manual / support URLs to mirror
+  `note-effect, utility`, vendor / manual / support URLs to mirror
   VST3 metadata.
 - [ ] **Phase 4 — Bitwig smoke (primary).** Install CLAP build, load
   in Bitwig Studio. Verify: appears in Note FX category, chord
@@ -155,7 +155,7 @@ implementation, then build/test.
   + writes, project save → reopen restores state, lattice UI
   renders.
 - [ ] **Phase 5 — FL Studio empirical.** Install CLAP build in FL
-  Studio. Verify whether FL's CLAP host accepts `note_effect`
+  Studio. Verify whether FL's CLAP host accepts `note-effect`
   plug-ins on a routing path that delivers MIDI to a downstream
   generator. Document outcome in this row (working / not-working +
   why). If working → promote FL to primary host (update this ADR's
