@@ -45,6 +45,7 @@ only when relevant to the current task.
 |-----|-------|--------|-------|
 | 008 | [VST Stack and Scope](archive/008-vst-stack-and-scope.md) | Implemented | VST3+AU+Standalone (macOS, Win deferred); C++17 engine via shared test vectors; APVTS+ValueTree state; interactive Tonnetz lattice as primary UI; `Source/Engine/` JUCE-free for iOS + future standalone-suite reuse. MIDI instrument only (no internal sound, no plugin hosting); vst/ primary hosts = Logic + Cubase, Live = m4l target only, Standalone is dev convenience. AU beta in Logic; VST3 verified in Cubase Pro. |
 | 009 | [VST Distribution — Signing, Notarization, and Release Flow](archive/009-vst-distribution.md) | Implemented | Developer ID signing + hardened runtime; `xcrun notarytool` (app-specific password local; API-key CI workflow deferred for v1); staple bundles + `.dmg`; `dist/Oedipa.dmg` drag-install with `.component` + `.vst3` + `INSTALL.txt` + `README.txt`; per-target tag scheme `<target>-vX.Y.Z` (legacy `v0.1.0` retained); `macos-latest` `vst-test.yml` on `vst/**` push/PR; root Makefile orchestrates `release-vst`. First release `vst-v0.1.0` shipped 2026-05-08. |
+| 010 | [VST CLAP Support](010-vst-clap-support.md) | Proposed | `clap-juce-extensions` wrapper → `Oedipa.clap` alongside VST3/AU; `note_effect` feature; minimal scope (no note expressions / poly mod); Bitwig primary smoke, FL Studio empirical (promotion to primary iff working), Reaper / Studio One best-effort; `.clap` joins `dist/Oedipa.dmg` + GitHub Releases + KVR formats line; target tag `vst-v0.1.1`. |
 
 ## iOS
 
