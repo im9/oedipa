@@ -122,6 +122,8 @@ target_compile_definitions(Oedipa PRIVATE
 clap_juce_extensions_plugin(TARGET Oedipa
     CLAP_ID "com.im9.oedipa"
     CLAP_FEATURES note-effect utility
+    CLAP_MANUAL_URL "https://github.com/im9/oedipa"
+    CLAP_SUPPORT_URL "https://github.com/im9/oedipa/issues"
 )
 
 # --- Plugin core static library (state I/O surface used by tests) -------------

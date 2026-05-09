@@ -63,7 +63,12 @@ the host's native plug-in format.
 - CLAP id: `com.im9.oedipa` (reverse-DNS, matches existing
   manufacturer convention).
 - `clap_plugin_features`: `note-effect`, `utility`.
-- Vendor / manual / support URLs: mirror VST3 metadata.
+- Vendor: `im9` (inherited from the JUCE plugin's `COMPANY_NAME`).
+- Manual URL: `https://github.com/im9/oedipa` (repo home; GitHub
+  renders the README). Support URL:
+  `https://github.com/im9/oedipa/issues`. (The VST3 / AU build does
+  not currently set equivalent URL metadata; CLAP exposes them where
+  the format supports it.)
 
 **Host scope.**
 
@@ -137,18 +142,21 @@ host-agnostic and render identically across formats.
 Per CLAUDE.md TDD gates: tests (or empirical-test rigs) first, then
 implementation, then build/test.
 
-- [ ] **Phase 1 — Build-system test.** Add a CMake/Make assertion (or
-  CI test) that the CLAP artefact is produced when `make build` runs.
-  Mirrors any existing VST3/AU artefact assertions; if none exist,
-  add a minimal "expected output files present" check.
-- [ ] **Phase 2 — Wrapper integration.** Add `clap-juce-extensions`
-  as a git submodule under `vst/clap-juce-extensions/`. Update
-  `vst/CMakeLists.txt` per wrapper docs (`clap_juce_extensions_plugin`
-  call after `juce_add_plugin`). Confirm clean build of all three
-  formats (VST3 + AU + CLAP) on `make build`.
-- [ ] **Phase 3 — Plug-in metadata.** Set CLAP id, features =
-  `note-effect, utility`, vendor / manual / support URLs to mirror
-  VST3 metadata.
+- [x] **Phase 1 — Build-system test.** `vst/scripts/check-artefacts.sh`
+  asserts VST3 / AU / Standalone / CLAP bundles all exist under
+  `build/Oedipa_artefacts/<config>/`; wired into `make build` and
+  exposed as `make verify-artefacts`. Shipped 50d0338.
+- [x] **Phase 2 — Wrapper integration.** `vst/clap-juce-extensions`
+  submodule (pinned to `e8de9e8`, with nested `clap` + `clap-helpers`
+  recursively initialised) + `add_subdirectory(... EXCLUDE_FROM_ALL)`
+  + `clap_juce_extensions_plugin(TARGET Oedipa ...)` after the JUCE
+  plugin block. `make build` produces `Oedipa.clap` alongside VST3 /
+  AU / Standalone; the Phase 1 check turns green. Shipped 1e02800.
+- [x] **Phase 3 — Plug-in metadata.** `CLAP_ID "com.im9.oedipa"`,
+  `CLAP_FEATURES note-effect utility`, `CLAP_MANUAL_URL` and
+  `CLAP_SUPPORT_URL` pointing to the GitHub repo + issues page.
+  Vendor name inherited from JUCE `COMPANY_NAME "im9"`. (The VST3 /
+  AU build has no equivalent URL metadata; this is CLAP-specific.)
 - [ ] **Phase 4 — Bitwig smoke (primary).** Install CLAP build, load
   in Bitwig Studio. Verify: appears in Note FX category, chord
   output reaches downstream instrument, parameter automation reads
