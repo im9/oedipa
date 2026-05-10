@@ -58,7 +58,13 @@ const bridge = new Bridge({
   emitNote: (pitch, velocity, channel) => Max.outlet('note', pitch, velocity, channel),
   emitOutlet: (channel, ...args) => Max.outlet(channel, ...args),
   now: () => Date.now(),
+  // setTimeout returns an opaque handle; the bridge tracks it so panic
+  // can cancel pending gate-end note-offs scheduled under the prior
+  // msPerPos. Without cancelScheduled, a stale note-off from before
+  // transport stop would fire on resume and silence a freshly-emitted
+  // chord (audit Critical #2, 2026-05-10).
   scheduleAfter: (ms, cb) => setTimeout(cb, ms),
+  cancelScheduled: (handle) => clearTimeout(handle),
 })
 
 Max.addHandler('step', (pos) => bridge.step(Number(pos)))

@@ -112,7 +112,19 @@ function applySetCells(args) {
 }
 
 function setLength(n) {
+  var prevLength = length_
   length_ = clampLength(n)
+  // Default newly-visible cells (idx in [prevLength, length_)) to 'hold'
+  // — matches the host's pad-with-'hold' behaviour on length grow and
+  // prevents stale cell ops from a prior slot leaking through during a
+  // slot switch where the bridge's slot-cell-op events for those indices
+  // get dropped or mis-routed (audit High #5, 2026-05-10). The bridge's
+  // own invariant emits slot-length BEFORE slot-cell-op during rehydrate,
+  // so setCellOp calls that follow this setLength still overwrite these
+  // defaults with real slot data.
+  for (var i = prevLength; i < length_; i++) {
+    cells[i] = 'hold'
+  }
   // Auto-close popup if its source cell is now hidden.
   if (popupCellIdx >= length_) popupCellIdx = -1
   mgraphics.redraw()

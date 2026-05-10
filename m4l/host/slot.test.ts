@@ -112,8 +112,11 @@ describe('serializeSlot / parseSlot', () => {
   test('round-trip for a grid of valid slots', () => {
     // Sample across each axis: cells variety, both qualities, jitter
     // boundaries, seed boundaries (uint32 max — mulberry32 reads via >>>0).
+    // The previous `cells: ''` entry was removed (audit High #7,
+    // 2026-05-10): an empty cells token is no longer a valid slot
+    // because engine.activeCells() returns [] and the device goes
+    // silent with no diagnostic. parseSlot now rejects such strings.
     const slots: Slot[] = [
-      { cells: '', startChord: { root: 0, quality: 'maj' }, jitter: 0, seed: 0 },
       { cells: 'P', startChord: { root: 0, quality: 'maj' }, jitter: 0, seed: 0 },
       { cells: 'PLR_-', startChord: { root: 11, quality: 'min' }, jitter: 1, seed: 4294967295 },
       { cells: '____', startChord: { root: 7, quality: 'maj' }, jitter: 0.5, seed: 12345 },
@@ -180,6 +183,11 @@ describe('serializeSlot / parseSlot', () => {
       'PLR-|s=0|j=1.5|c=C', // jitter above 1
       'XYZ|s=0|j=0|c=C', // invalid cell chars
       'PLR-|sj=0|c=C', // malformed pair (no =)
+      // Audit High #7 (2026-05-10): empty cells token loads a "valid"
+      // slot whose engine.activeCells() is [] → device silently mutes.
+      // Reject so a clipboard paste of a malformed program string can't
+      // produce that state.
+      '|s=0|j=0|c=C',
     ]
     for (const s of malformed) {
       assert.doesNotThrow(() => parseSlot(s))

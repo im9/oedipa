@@ -28,9 +28,17 @@ export interface BridgeDeps {
   emitOutlet: (channel: string, ...args: Array<number | string>) => void
   // Time provider — Date.now() in production, mock in tests.
   now: () => number
-  // Schedule a callback `ms` milliseconds in the future. setTimeout in
-  // production; tests pass a synchronous fake that records (ms, cb).
-  scheduleAfter: (ms: number, cb: () => void) => void
+  // Schedule a callback `ms` milliseconds in the future. Production wires
+  // this to setTimeout (returning a Timeout handle); tests pass a fake
+  // that records (ms, cb) and returns a unique handle. The returned
+  // value MUST be passable to cancelScheduled below — the bridge tracks
+  // pending handles and cancels them on panic so prior-playback
+  // note-offs don't fire mid-resume and silence a freshly-emitted note.
+  scheduleAfter: (ms: number, cb: () => void) => unknown
+  // Cancel a previously-scheduled callback. Production wires this to
+  // clearTimeout. Idempotent — calling with a stale or already-fired
+  // handle is a no-op.
+  cancelScheduled: (handle: unknown) => void
 }
 
 export interface BridgeOptions {
@@ -114,6 +122,12 @@ export class Bridge {
   // inboil-aligned 1-quarter chord-hold. Range 1..64 matches inboil's
   // RATE slider (TonnetzSheet.svelte:617).
   private cellLengthSteps = 4
+  // Tracks scheduled-callback handles so panic() can cancel pending
+  // note-offs queued under the prior msPerPos. Without this, a
+  // setTimeout-queued note-off from before stop fires after the user
+  // resumes, potentially silencing a freshly-emitted note that happens
+  // to share the same pitch (audit Critical #2, 2026-05-10).
+  private pendingTimers = new Set<unknown>()
 
   constructor(deps: BridgeDeps, options: BridgeOptions = {}) {
     const hostOpts = options.ticksPerStep !== undefined ? { ticksPerStep: options.ticksPerStep } : {}
@@ -135,6 +149,14 @@ export class Bridge {
   }
 
   panic(): void {
+    // Cancel any in-flight scheduled note-events FIRST. host.panic()
+    // emits immediate offs for everything currently sounding; if we let
+    // pre-panic setTimeouts fire after, they'd send a stale noteOff
+    // for a pitch that — after the user resumes — could be sounding
+    // again from the freshly-emitted chord. Symptom: a note that briefly
+    // attacks then silences mid-cycle on rapid stop/start.
+    for (const handle of this.pendingTimers) this.deps.cancelScheduled(handle)
+    this.pendingTimers.clear()
     for (const ev of this.host.panic()) this.dispatch(ev)
     this.emitLatticeCurrent()
     this.clearCellIdx()
@@ -268,6 +290,18 @@ export class Bridge {
   }
 
   setCells(ops: Op[]): void {
+    // Validate every op against the canonical wire set. The Max handler
+    // maps incoming atoms via String(op), so a malformed bulk dump (stale
+    // patcher path, typo, undefined atom) would otherwise propagate into
+    // params.cells. Worse — emitSlotStore would then call cellsToString
+    // which returns `undefined` for unknown ops, persisting "PLRundefined"
+    // into the hidden live.numbox layer; on the next reload parseSlot
+    // returns null and the user's saved program is silently replaced
+    // with defaults. Aborting the entire call on any unknown op keeps
+    // the in-memory cells and persistence consistent.
+    for (const op of ops) {
+      if (!OP_CODES.includes(op)) return
+    }
     // setParams cells expects full Cell records; preserve current vel/gate/
     // timing/probability. Op-only updates come from the four [live.tab]
     // (per-cell op) controls in the patcher.
@@ -372,7 +406,15 @@ export class Bridge {
       return
     }
     const ms = dp * this.msPerPos
-    this.deps.scheduleAfter(ms, () => this.emitNoteEvent(ev))
+    // Track the handle so panic() can cancel it. Self-removal on fire
+    // keeps the Set bounded — without it, every scheduled callback that
+    // ever fired would linger as a stale handle reference.
+    let handle: unknown
+    handle = this.deps.scheduleAfter(ms, () => {
+      this.pendingTimers.delete(handle)
+      this.emitNoteEvent(ev)
+    })
+    this.pendingTimers.add(handle)
   }
 
   private emitNoteEvent(ev: NoteEvent): void {
@@ -385,8 +427,21 @@ export class Bridge {
     if (this.lastStepTime !== null && this.lastStepPos !== null) {
       const dt = now - this.lastStepTime
       const dpos = pos - this.lastStepPos
-      // dpos<=0 = scrub or wrap; dt>=5000 likely means transport stalled.
-      if (dt > 0 && dt < 5000 && dpos > 0) {
+      // Discontinuity guards — the EMA update only runs on a "smooth"
+      // transport interval. Two flavours:
+      //  - Scrub / wrap (dpos > 8 or dpos <= 0): the host jumped position
+      //    by more than ~half a bar (or rewound). The dt/dpos ratio is
+      //    meaningless as a per-pos rate.
+      //  - Transport pause without an explicit panic (dt > 500): Live
+      //    can pause without sending the stop signal that triggers
+      //    panic(). Folding e.g. dt=1500ms into the EMA produced a
+      //    msPerPos that scheduled note-offs ~30× too far in the future
+      //    after resume, audibly hanging notes for seconds.
+      // The 5000ms upper bound below is preserved as a stall guard for
+      // the same scenario without the new lower bound; the new dt > 500
+      // catches real-world pause windows that 5000ms missed.
+      const isDiscontinuity = dpos <= 0 || dpos > 8 || dt > 500
+      if (!isDiscontinuity && dt > 0 && dt < 5000 && dpos > 0) {
         const inst = dt / dpos
         this.msPerPos = this.msPerPos === 0 ? inst : this.msPerPos * 0.7 + inst * 0.3
       }

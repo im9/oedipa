@@ -71,12 +71,18 @@ export const ARP_MODES: readonly ArpMode[] = [
 // per step.
 const SYNCOPATED_PATTERN: readonly boolean[] = [true, false, true, false, false, true, false, true]
 export function gatingFires(mode: Exclude<RhythmPreset, 'turing'>, subStepIdx: number): boolean {
+  // Normalise to non-negative — JS `%` on a negative `subStepIdx` returns a
+  // negative remainder (e.g. `-1 % 4 === -1`, not 3), which would falsify
+  // the `=== 0`/`=== 2` predicates below and miss gates on legitimate
+  // negative inputs. Host doesn't currently call with negative values, but
+  // the engine is JUCE-free / cross-target and a future caller could.
+  const idx = subStepIdx >= 0 ? subStepIdx : ((subStepIdx % 8) + 8) % 8
   switch (mode) {
     case 'all':        return true
-    case 'legato':     return subStepIdx === 0
-    case 'onbeat':     return subStepIdx % 4 === 0
-    case 'offbeat':    return subStepIdx % 4 === 2
-    case 'syncopated': return SYNCOPATED_PATTERN[subStepIdx % SYNCOPATED_PATTERN.length]!
+    case 'legato':     return idx === 0
+    case 'onbeat':     return idx % 4 === 0
+    case 'offbeat':    return idx % 4 === 2
+    case 'syncopated': return SYNCOPATED_PATTERN[idx % SYNCOPATED_PATTERN.length]!
   }
 }
 
@@ -241,8 +247,19 @@ export function identifyTriad(triad: Triad): { rootPc: PitchClass; quality: Qual
 // Inputs are treated as a set: duplicate MIDI values produce undefined
 // behavior. Sorted ascending internally so enumeration order is deterministic
 // regardless of caller input order.
+//
+// Search is O(N³) over `notes.length`. To keep this off the noteIn hot
+// path under sustain-pedal pile-up — where a held arpeggio + pedal can
+// stack 20-30 notes and produce ~27 000 iterations per noteIn — the
+// input is capped at 12 notes. Anything more is rejected as "not a
+// recognisable held chord"; the caller treats the null return as
+// "leave startChord alone, the user is just adding tones to a sustained
+// passage". Triads/septads/extensions all fit under 12 with headroom.
+const MAX_HELD_NOTES_FOR_TRIAD_SEARCH = 12
+
 export function findTriadInHeldNotes(notes: MidiNote[]): Triad | null {
   if (notes.length < 3) return null
+  if (notes.length > MAX_HELD_NOTES_FOR_TRIAD_SEARCH) return null
   const sorted = [...notes].sort((a, b) => a - b)
   let bestRootPc: PitchClass | null = null
   let bestQuality: Quality | null = null

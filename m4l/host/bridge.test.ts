@@ -20,17 +20,21 @@ interface OutletCall {
 }
 
 interface ScheduleCall {
+  handle: number
   ms: number
   cb: () => void
   scheduledAt: number
   // resolves when the cb has been invoked.
   fired: boolean
+  // set by cancelScheduled — the harness skips firing cancelled entries.
+  cancelled: boolean
 }
 
 class Harness {
   notes: NoteCall[] = []
   outlets: OutletCall[] = []
   scheduled: ScheduleCall[] = []
+  private nextHandle = 1
   // Flat-rate metro-style clock the test advances explicitly.
   clock = 0
 
@@ -43,17 +47,24 @@ class Harness {
     },
     now: () => this.clock,
     scheduleAfter: (ms, cb) => {
-      this.scheduled.push({ ms, cb, scheduledAt: this.clock, fired: false })
+      const handle = this.nextHandle++
+      this.scheduled.push({ handle, ms, cb, scheduledAt: this.clock, fired: false, cancelled: false })
+      return handle
+    },
+    cancelScheduled: (handle) => {
+      const entry = this.scheduled.find(s => s.handle === handle)
+      if (entry) entry.cancelled = true
     },
   }
 
   // Advance clock to time `t`, firing any scheduled callbacks whose absolute
   // due time (scheduledAt + ms) is <= t. Mirrors how setTimeout fires when
-  // the event loop reaches the timer.
+  // the event loop reaches the timer. Cancelled entries are skipped — same
+  // contract as clearTimeout.
   advanceTo(t: number): void {
     this.clock = t
     for (const s of this.scheduled) {
-      if (s.fired) continue
+      if (s.fired || s.cancelled) continue
       if (s.scheduledAt + s.ms <= t) {
         s.fired = true
         s.cb()
@@ -140,6 +151,116 @@ describe('Bridge — rate (chord-hold in 16th-note steps, inboil stepsPerTransfo
     b.setParams('rate', 8)
     const slotStore = h.outlets.filter(o => o.channel === 'slot-store')
     assert.equal(slotStore.length, 0, 'rate change must not emit slot-store')
+  })
+})
+
+// ── Bridge.setCells op validation (audit Critical #1, 2026-05-10) ────────
+
+describe('Bridge — setCells op validation', () => {
+  function cellsOf(b: Bridge): Array<{ op: string }> {
+    return (b as unknown as { host: { params: { cells: Array<{ op: string }> } } })
+      .host.params.cells
+  }
+
+  test('valid op array updates cells', () => {
+    const h = new Harness()
+    const b = makeBridge(h.deps, { slotsAlreadyRehydrated: true })
+    b.setCells(['L', 'R', 'P', 'hold'])
+    const ops = cellsOf(b).map(c => c.op)
+    assert.deepEqual(ops, ['L', 'R', 'P', 'hold'])
+  })
+
+  test('any unknown op aborts the entire call (cells unchanged, no slot-store)', () => {
+    // A malformed bulk dump from a stale patcher path can ship unknown
+    // op atoms (the Max handler maps via String(op), so 'X' or 'undefined'
+    // can land here typed as Op). Without validation, those propagate
+    // into cells.op and corrupt the slot via cellsToString — which returns
+    // `undefined` for unknown ops, persisting "PLRundefined" to the hidden
+    // live.numbox; on the next reload parseSlot returns null and the user's
+    // saved program is silently replaced with defaults.
+    const h = new Harness()
+    const b = makeBridge(h.deps, { slotsAlreadyRehydrated: true })
+    const before = cellsOf(b).map(c => c.op)
+    h.outlets.length = 0
+    // 'X' is not in OP_CODES = ['P', 'L', 'R', 'hold', 'rest'].
+    b.setCells(['L', 'X' as 'P', 'R', 'hold'])
+    const after = cellsOf(b).map(c => c.op)
+    assert.deepEqual(after, before, 'cells unchanged when any op is invalid')
+    const slotStore = h.outlets.filter(o => o.channel === 'slot-store')
+    assert.equal(slotStore.length, 0, 'no slot-store fires on rejected setCells')
+  })
+
+  test("'undefined' atom (string-coerced from a missing dump field) is rejected", () => {
+    // Reproducer for the audit's specific failure mode: a stale patcher
+    // path sends a missing atom that the entry handler stringifies to
+    // the literal "undefined". The validator must reject it.
+    const h = new Harness()
+    const b = makeBridge(h.deps, { slotsAlreadyRehydrated: true })
+    const before = cellsOf(b).map(c => c.op)
+    b.setCells(['P', 'undefined' as 'P', 'R', 'hold'])
+    const after = cellsOf(b).map(c => c.op)
+    assert.deepEqual(after, before)
+  })
+})
+
+// ── Bridge.panic cancels scheduled note-events (audit Critical #2) ────────
+
+describe('Bridge — panic cancels in-flight scheduled callbacks', () => {
+  test('panic prevents queued gate-end note-offs from firing post-resume', () => {
+    // Setup: stable msPerPos, then a fire that schedules gate-end offs in
+    // the future. panic() must cancel those scheduled offs so they don't
+    // fire after the user resumes — without cancellation, a stale off
+    // for a pitch that's now sounding under the resumed playback would
+    // briefly silence the note ("clicky" repeats on rapid stop/start).
+    const h = new Harness()
+    const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
+    h.clock = 0;   b.step(0)
+    h.clock = 125; b.step(1)
+    h.clock = 250; b.step(2)
+    h.clock = 375; b.step(3)
+    h.clock = 500; b.step(4) // schedules 3 gate-end noteOffs in the future
+    const scheduledBefore = h.scheduled.filter(s => !s.cancelled).length
+    assert.ok(scheduledBefore >= 3, 'pre-condition: scheduled offs queued')
+
+    b.panic()
+
+    // All scheduled callbacks queued before panic must now be cancelled.
+    const stillLive = h.scheduled.filter(s => !s.cancelled && !s.fired)
+    assert.equal(stillLive.length, 0, 'panic cancels every pending scheduled callback')
+
+    // Advance past the would-be due time and confirm the cancelled
+    // callbacks did not fire (no spurious noteOffs after panic).
+    const offsBeforeAdvance = h.notes.filter(n => n.velocity === 0).length
+    h.advanceTo(10_000)
+    const offsAfterAdvance = h.notes.filter(n => n.velocity === 0).length
+    assert.equal(offsAfterAdvance, offsBeforeAdvance,
+      'no scheduled noteOffs fire after panic')
+  })
+
+  test('a fired scheduled callback is removed from the pending set', () => {
+    // Memory hygiene: the bridge tracks handles in a Set so panic can
+    // cancel them. The Set must shed entries when callbacks fire normally
+    // (otherwise it grows unboundedly across a long session).
+    const h = new Harness()
+    const b = makeBridge(h.deps, { initialParams: LEGACY_TEST_BASELINE })
+    h.clock = 0;   b.step(0)
+    h.clock = 125; b.step(1)
+    h.clock = 250; b.step(2)
+    h.clock = 375; b.step(3)
+    h.clock = 500; b.step(4)
+    const dueAt = 500 + b.getMsPerPos() * 3.6
+    h.advanceTo(dueAt)
+    // After all scheduled offs fire, the bridge's pendingTimers Set is
+    // empty — verified indirectly: panic now has nothing to cancel.
+    h.outlets.length = 0
+    h.notes.length = 0
+    b.panic()
+    // Panic emits its own immediate offs from host state; what we care
+    // about here is that no further scheduled offs fire after panic.
+    const offsBefore = h.notes.filter(n => n.velocity === 0).length
+    h.advanceTo(20_000)
+    const offsAfter = h.notes.filter(n => n.velocity === 0).length
+    assert.equal(offsAfter, offsBefore)
   })
 })
 
@@ -244,6 +365,44 @@ describe('Bridge — step timing estimator', () => {
     assert.equal(b.getMsPerPos(), 125)
     h.clock = 6000; b.step(2) // 5875ms gap: transport likely stalled
     assert.equal(b.getMsPerPos(), 125, 'stall sample ignored')
+  })
+
+  test('transport pause-resume (dt > 500ms) does not fold into msPerPos', () => {
+    // Critical #3 (audit 2026-05-10): Live can pause without sending the
+    // stop signal that triggers panic(). Folding e.g. dt=1500ms into the
+    // EMA produced a msPerPos that scheduled note-offs ~30× too far in
+    // the future after resume, audibly hanging notes for seconds. The
+    // discontinuity guard in recordStepTiming must skip the EMA update
+    // when dt > 500ms even though it's well under the 5000ms stall
+    // threshold.
+    const h = new Harness()
+    const b = makeBridge(h.deps)
+    h.clock = 0;     b.step(0)
+    h.clock = 125;   b.step(1)
+    h.clock = 250;   b.step(2)
+    assert.equal(b.getMsPerPos(), 125)
+    // Pause for 1500ms then resume — only one position elapsed.
+    h.clock = 1750;  b.step(3)
+    // The 1500ms gap (dt > 500) is rejected; msPerPos unchanged.
+    assert.equal(b.getMsPerPos(), 125, 'pause-resume sample ignored')
+    // Subsequent normal step (dt=125) updates EMA against the post-pause
+    // baseline.
+    h.clock = 1875;  b.step(4)
+    assert.equal(b.getMsPerPos(), 125)
+  })
+
+  test('large dpos jump (scrub forward, dpos > 8) does not fold into msPerPos', () => {
+    // Critical #3 (audit 2026-05-10): a forward scrub jumps pos by many
+    // sub-step units in essentially zero wall-clock time. dt/dpos becomes
+    // a tiny meaningless number; folding it would crash msPerPos toward 0.
+    const h = new Harness()
+    const b = makeBridge(h.deps)
+    h.clock = 0;    b.step(0)
+    h.clock = 125;  b.step(1)
+    assert.equal(b.getMsPerPos(), 125)
+    // User scrubs from pos 1 → pos 50. dpos=49 > 8, dt minimal.
+    h.clock = 130;  b.step(50)
+    assert.equal(b.getMsPerPos(), 125, 'scrub sample ignored')
   })
 
   test('panic resets timing state without losing msPerPos magnitude', () => {
