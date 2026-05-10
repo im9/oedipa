@@ -127,12 +127,33 @@ void AnchorsView::rebuildRows()
         Row r;
         r.stepEditor = std::make_unique<juce::TextEditor>();
         r.stepEditor->setInputRestrictions(5, "0123456789");
-        r.stepEditor->setText(juce::String(anchors[(std::size_t) i].step), juce::dontSendNotification);
+        // Colour + font BEFORE setText: juce::TextEditor stores colour
+        // per-character at insertion time, so setText with a stale default
+        // colour would lock the digits to whatever the LookAndFeel_V4
+        // default textColour is (a near-white in the V4 dark scheme — the
+        // origin of the "white digits on cream" rendering reported on the
+        // anchor row 2026-05-11). Setting colours first, then setFont,
+        // then setText keeps the per-character colour in sync with the
+        // theme.
         r.stepEditor->setColour(juce::TextEditor::backgroundColourId, theme::bg);
-        r.stepEditor->setColour(juce::TextEditor::textColourId, theme::fg);
-        r.stepEditor->setColour(juce::TextEditor::outlineColourId, theme::salmon.withAlpha(0.6f));
-        r.stepEditor->setColour(juce::TextEditor::focusedOutlineColourId, theme::salmon);
+        r.stepEditor->setColour(juce::TextEditor::textColourId,       theme::fg);
+        // Outline demoted from salmon to the rail's standard subtle border:
+        // baseline rendering shouldn't read as "highlighted/active" — that
+        // accent is reserved for the future "anchor at current playhead"
+        // state. Mirrors VoicingView's ComboBox outlineColourId which uses
+        // the same lzBorderMid token.
+        r.stepEditor->setColour(juce::TextEditor::outlineColourId,        theme::lzBorderMid);
+        r.stepEditor->setColour(juce::TextEditor::focusedOutlineColourId, theme::lzBorderStrong);
         r.stepEditor->setFont(theme::dataFont(theme::fsMd, false));
+        r.stepEditor->setText(juce::String(anchors[(std::size_t) i].step), juce::dontSendNotification);
+        // Force the per-character colour storage to theme::fg regardless
+        // of the colour that was active at insertion time. juce::TextEditor
+        // stores font + colour per character at insertion; if anything in
+        // the construction order leaves the stored colour stale (LookAndFeel
+        // default, race with caret recreation, format-specific wrapper
+        // ordering — VST3/CLAP rendered the digits white where AU rendered
+        // them dark, 2026-05-11), this rewrites every glyph to fg.
+        r.stepEditor->applyColourToAllText(theme::fg, true);
         const int idx = i;
         // SafePointer guards the editor pointer against the rebuildRows
         // path: removeAnchor / writeStep call setAnchors → next timer tick
@@ -157,7 +178,12 @@ void AnchorsView::rebuildRows()
         r.chordLabel->setText(chordLabelFor(anchors[(std::size_t) i].rootPc,
                                             anchors[(std::size_t) i].quality),
                               juce::dontSendNotification);
-        r.chordLabel->setColour(juce::Label::textColourId, theme::salmon);
+        // Chord label is data-equivalent to the step number (step = "when",
+        // chord = "what"); render in the same fg-token. salmon was an
+        // accent-overuse that turned baseline data into highlight, with no
+        // available state to demote into when the playhead actually crosses
+        // the anchor.
+        r.chordLabel->setColour(juce::Label::textColourId, theme::fg);
         r.chordLabel->setFont(theme::dataFont(theme::fsMd, true));
         addAndMakeVisible(*r.chordLabel);
 
