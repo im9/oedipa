@@ -21,14 +21,18 @@ juce::String chordLabelFor(engine::PitchClass rootPc, engine::Quality q)
 }
 
 // Stable hash of the anchor list so the timer can detect "any field
-// changed" — avoids comparing struct-by-struct across rebuilds.
-int anchorVersionOf(const std::vector<engine::Anchor>& as)
+// changed" — avoids comparing struct-by-struct across rebuilds. 64-bit
+// width: with the previous int (32-bit), the multiplier-and-add chain
+// could collide for distinct anchor lists at the size-hash bit budget,
+// allowing a real mutation to look like no-change and freeze the rebuild
+// until something else perturbed the size guard.
+std::uint64_t anchorVersionOf(const std::vector<engine::Anchor>& as)
 {
-    int h = (int) as.size() * 1000003;
+    std::uint64_t h = (std::uint64_t) as.size() * 1000003ULL;
     for (const auto& a : as) {
-        h = h * 33 + a.step;
-        h = h * 33 + (int) a.rootPc;
-        h = h * 33 + (a.quality == engine::Quality::Minor ? 1 : 0);
+        h = h * 33ULL + (std::uint64_t) (std::uint32_t) a.step;
+        h = h * 33ULL + (std::uint64_t) (std::uint32_t) a.rootPc;
+        h = h * 33ULL + (a.quality == engine::Quality::Minor ? 1ULL : 0ULL);
     }
     return h;
 }
@@ -92,7 +96,7 @@ void AnchorsView::resized()
 void AnchorsView::timerCallback()
 {
     const auto& anchors = processor_.getAnchors();
-    const int v = anchorVersionOf(anchors);
+    const std::uint64_t v = anchorVersionOf(anchors);
     if (v == lastVersion_ && anchors.size() == lastAnchorCount_) return;
     lastVersion_ = v;
     lastAnchorCount_ = anchors.size();
@@ -130,11 +134,22 @@ void AnchorsView::rebuildRows()
         r.stepEditor->setColour(juce::TextEditor::focusedOutlineColourId, theme::salmon);
         r.stepEditor->setFont(theme::dataFont(theme::fsMd, false));
         const int idx = i;
-        r.stepEditor->onReturnKey = [this, idx, te = r.stepEditor.get()] {
-            writeStep(idx, te->getText().getIntValue());
+        // SafePointer guards the editor pointer against the rebuildRows
+        // path: removeAnchor / writeStep call setAnchors → next timer tick
+        // detects the version change and runs rebuildRows, destroying the
+        // current TextEditor instances. A focus-lost event dispatched
+        // during that destruction window would otherwise dereference a
+        // freed editor via the captured raw pointer.
+        juce::Component::SafePointer<juce::TextEditor> safeEditor{r.stepEditor.get()};
+        r.stepEditor->onReturnKey = [this, idx, safeEditor] {
+            if (auto* te = safeEditor.getComponent()) {
+                writeStep(idx, te->getText().getIntValue());
+            }
         };
-        r.stepEditor->onFocusLost = [this, idx, te = r.stepEditor.get()] {
-            writeStep(idx, te->getText().getIntValue());
+        r.stepEditor->onFocusLost = [this, idx, safeEditor] {
+            if (auto* te = safeEditor.getComponent()) {
+                writeStep(idx, te->getText().getIntValue());
+            }
         };
         addAndMakeVisible(*r.stepEditor);
 

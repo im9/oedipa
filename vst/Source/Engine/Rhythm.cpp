@@ -13,9 +13,6 @@ constexpr std::array<bool, 8> kSyncopatedPattern{
     true, false, true, false, false, true, false, true
 };
 
-constexpr int kTuringLengthMin = 2;
-constexpr int kTuringLengthMax = 32;
-
 }  // namespace
 
 bool gatingFires(RhythmPreset mode, int subStepIdx)
@@ -58,14 +55,24 @@ int fireIntervalSubsteps(RhythmPreset mode, int stepsPerTransform)
 
 TuringRhythmState makeTuringState(int length, std::uint32_t seed)
 {
+    // Construct with a placeholder rng (Mulberry32 has no default ctor);
+    // resetTuringState immediately overwrites it with Mulberry32{seed}.
+    TuringRhythmState state{ {}, Mulberry32{0u} };
+    resetTuringState(state, length, seed);
+    return state;
+}
+
+void resetTuringState(TuringRhythmState& state, int length, std::uint32_t seed)
+{
     const int len = std::clamp(length, kTuringLengthMin, kTuringLengthMax);
-    Mulberry32 rng{seed};
-    std::vector<int> reg;
-    reg.reserve((std::size_t) len);
+    state.rng = Mulberry32{seed};
+    // resize() reallocates only when len > capacity. Audio-thread callers
+    // pre-reserve to kTuringLengthMax once at warmup (PluginProcessor
+    // constructor) so this is alloc-free for any in-range len.
+    state.reg.resize((std::size_t) len);
     for (int i = 0; i < len; ++i) {
-        reg.push_back(rng.next() < 0.5f ? 1 : 0);
+        state.reg[(std::size_t) i] = state.rng.next() < 0.5f ? 1 : 0;
     }
-    return TuringRhythmState{std::move(reg), std::move(rng)};
 }
 
 bool turingFires(TuringRhythmState& state, float lock)

@@ -45,7 +45,9 @@ private:
     plugin::OedipaProcessor& processor_;
     std::vector<Row> rows_;
     std::size_t lastAnchorCount_ = 0;
-    int lastVersion_ = -1;
+    // Sentinel that no real hash will reach: hash chain accumulates non-
+    // negative summands so the high bit stays 0 in normal use.
+    std::uint64_t lastVersion_ = (std::uint64_t) -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnchorsView)
 };
