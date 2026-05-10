@@ -227,9 +227,27 @@ export class Host {
 
   setCellField(idx: number, field: CellNumericField, value: number): void {
     if (idx < 0 || idx >= this.params.cells.length) return
-    if (Number.isNaN(value)) return
+    if (!Number.isFinite(value)) return
+    // Clamp each field to its documented range. Without this, a patcher
+    // numbox accidentally exposed beyond [0, 1] (or a stale dump path)
+    // could land e.g. gate=2.0 — which the dispatcher then translates
+    // into a gate-end note-off scheduled past the next note-on for the
+    // same pitch, producing a stuck note. Negative gate is even worse:
+    // the dispatcher's `dp <= 0` short-circuit emits the off immediately,
+    // so the cell's note-on arrives with no matching off.
+    let clamped: number
+    switch (field) {
+      case 'velocity':    clamped = Math.max(0, Math.min(1, value)); break
+      case 'gate':        clamped = Math.max(0, Math.min(1, value)); break
+      case 'probability': clamped = Math.max(0, Math.min(1, value)); break
+      // Concept §Traversal: timing is the per-cell forward offset as a
+      // fraction of cell duration. Inboil pins it to 0..+0.5 (ADR 005);
+      // negative timing would push the fire EARLIER than the cell head
+      // which has no defined semantics under the current scheduler.
+      case 'timing':      clamped = Math.max(0, Math.min(0.5, value)); break
+    }
     const cells = this.params.cells.slice()
-    cells[idx] = { ...cells[idx]!, [field]: value }
+    cells[idx] = { ...cells[idx]!, [field]: clamped }
     this.params = { ...this.params, cells }
   }
 
@@ -423,9 +441,14 @@ export class Host {
     if (this.params.triggerMode === 1) {
       this.walkerActive = this.inputHeld.size > 0
     }
-    // Reseed the turing register so a transport-restart reproduces the
-    // same stochastic stream — same contract as arpRng (reset on
-    // pendingPosReset path in step()).
+    // Reseed BOTH stochastic streams so a cold-start replay (no MIDI
+    // input held → recomputeStartChord doesn't set pendingPosReset, so
+    // step()'s reset path doesn't fire) still reproduces. Without the
+    // arpRng reseed here, transportStart preserves the prior run's
+    // arp='random' stream position — violating the documented "transport
+    // restart reproduces the exact ARP-random stream" contract that the
+    // pendingPosReset path was added for (audit Medium, 2026-05-10).
+    this.arpRng = mulberry32(this.params.seed >>> 0)
     this.turingState = makeTuringState(this.params.turingLength, this.params.turingSeed)
     return this.recomputeStartChord()
   }

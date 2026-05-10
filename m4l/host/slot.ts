@@ -110,6 +110,13 @@ export function parseSlot(s: string): Slot | null {
   if (typeof s !== 'string' || s.length === 0) return null
   const parts = s.split('|')
   const cellsStr = parts[0]!
+  // Reject zero-length cells (audit High #7, 2026-05-10). A pasted
+  // program string with `|s=0|j=0|c=C` (cells token elided) parses
+  // syntactically but loads as a slot with no active cells; the
+  // engine's activeCells() returns [] and the device goes silent
+  // with no diagnostic. stringToCells happens to return [] (truthy
+  // null check below), so this guard is the sole rejection point.
+  if (cellsStr.length === 0) return null
   if (stringToCells(cellsStr) === null) return null
 
   const fields: Record<string, string> = {}

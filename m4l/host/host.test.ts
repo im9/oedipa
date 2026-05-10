@@ -249,6 +249,7 @@ describe('Host.step — Phase 2 per-cell scheduling (ADR 005)', () => {
       const handoff2 = events2.filter(e => e.type === 'noteOff' && (e.delayPos ?? 0) === 0)
       assert.equal(handoff2.length, 3, 'next step emits legato handoff for gate=1.0 prior')
     })
+
   })
 
   describe('per-cell velocity', () => {
@@ -535,6 +536,38 @@ describe('Host.setCellField', () => {
     const ons = events.filter((e): e is Extract<NoteEvent, { type: 'noteOn' }> => e.type === 'noteOn')
     assert.equal(ons.length, 3)
     for (const e of ons) assert.equal(e.velocity, 100, 'cells unchanged → default vel=1.0')
+  })
+
+  test('clamps each field to its documented range (audit High #1, 2026-05-10)', () => {
+    // A patcher numbox accidentally exposed beyond [0, 1] (or a stale
+    // dump path) could otherwise land out-of-range expression values
+    // that the dispatcher mis-translates — most dangerously, gate < 0
+    // makes the dispatcher emit the gate-end off BEFORE the cell's
+    // note-on, producing a stuck note that survives panic.
+    const host = makeHost(baseParams())
+
+    host.setCellField(0, 'velocity',     5.0)
+    host.setCellField(0, 'gate',        -1.0)
+    host.setCellField(0, 'probability',  9.9)
+    host.setCellField(0, 'timing',      -0.5)
+    const cellsHi = (host as unknown as { params: { cells: Array<{ velocity: number; gate: number; probability: number; timing: number }> } }).params.cells
+    assert.equal(cellsHi[0]!.velocity,    1.0,  'velocity clamps to [0, 1]')
+    assert.equal(cellsHi[0]!.gate,        0.0,  'gate clamps to [0, 1] — negative collapses to 0')
+    assert.equal(cellsHi[0]!.probability, 1.0,  'probability clamps to [0, 1]')
+    assert.equal(cellsHi[0]!.timing,      0.0,  'timing clamps to [0, 0.5] — negative collapses to 0')
+
+    host.setCellField(0, 'timing', 0.99)
+    const cellsAfter = (host as unknown as { params: { cells: Array<{ timing: number }> } }).params.cells
+    assert.equal(cellsAfter[0]!.timing, 0.5, 'timing upper bound is 0.5 (concept §Traversal)')
+  })
+
+  test('rejects Infinity/-Infinity (Number.isFinite guard)', () => {
+    const host = makeHost(baseParams())
+    const before = (host as unknown as { params: { cells: Array<{ velocity: number }> } }).params.cells[0]!.velocity
+    host.setCellField(0, 'velocity', Infinity)
+    host.setCellField(0, 'velocity', -Infinity)
+    const after = (host as unknown as { params: { cells: Array<{ velocity: number }> } }).params.cells[0]!.velocity
+    assert.equal(after, before, 'non-finite values do not mutate the cell')
   })
 
   test('preserves the cell op and other fields on a single-field update', () => {

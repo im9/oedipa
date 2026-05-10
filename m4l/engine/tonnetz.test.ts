@@ -274,6 +274,24 @@ test('findTriadInHeldNotes', async (t) => {
   }
 })
 
+test('findTriadInHeldNotes — caps input at 12 notes (audit High #3, 2026-05-10)', () => {
+  // Sustain-pedal pile-up can stack 20-30 notes; at that input size the
+  // O(N³) search costs ~27 000 iterations per noteIn. Cap at 12 — beyond
+  // that, treat as "not a recognisable held chord" and return null so
+  // the caller leaves startChord alone.
+  const c_major = [60, 64, 67]
+  // 12 notes — exactly at the cap, search runs.
+  const at_cap = [...c_major, 50, 52, 53, 55, 57, 58, 59, 61, 62]
+  assert.ok(at_cap.length === 12)
+  const inCap = findTriadInHeldNotes(at_cap)
+  assert.ok(inCap !== null, 'at-cap input still searches')
+  // 13 notes — over the cap, search bails.
+  const over_cap = [...at_cap, 65]
+  assert.ok(over_cap.length === 13)
+  assert.equal(findTriadInHeldNotes(over_cap), null,
+    'over-cap input returns null without searching')
+})
+
 test('gatingFires (Phase 7 Step 4 within-cell predicate, inboil-aligned)', async (t) => {
   for (const tc of vectors.gating_fires.cases) {
     await t.test(`${tc.preset} idx=${tc.subStepIdx} → ${tc.fires}`, () => {
