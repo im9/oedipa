@@ -181,15 +181,28 @@ private:
     engine::SlotBank bank{};
     std::vector<engine::Anchor> anchors{};
 
-    // Lock-free anchor snapshot for the audio thread. Editor mutations
-    // (setAnchors / addAnchorAtNextStep / setStateInformation) update
-    // `anchors` and then `publishAnchors()` swaps a fresh shared_ptr<const
-    // vector<Anchor>> here via std::atomic_store. populateAudioWalkState
-    // reads it via std::atomic_load — no realloc race against editor
-    // push_back, no mutex on the audio thread (CLAUDE.md §"Audio plugin
-    // discipline"). The shared_ptr keeps the snapshot alive for the
-    // lifetime of any in-flight load.
-    std::shared_ptr<const std::vector<engine::Anchor>> audioAnchorsPtr;
+    // Triple-buffered anchor snapshot for the audio thread. SPSC: message
+    // thread is the sole writer (publishAnchors), audio thread is the sole
+    // reader (populateAudioWalkState). The previous design used
+    // `std::atomic_load`/`std::atomic_store` on a `std::shared_ptr`, which
+    // (a) is deprecated in C++20 and removed in C++26 and (b) is lock-based
+    // on libc++ (`__sp_mut` is a pthread_mutex), violating CLAUDE.md
+    // §"Audio plugin discipline".
+    //
+    // Slot rotation: each publish picks a slot that is neither the current
+    // published nor the previous published — guaranteed to exist with 3
+    // slots. The audio thread reads `audioAnchorPublished_` (acquire),
+    // then reads `audioAnchorSnaps_[slot]`. The msg thread cannot write
+    // to the slot the audio thread is currently reading because that slot
+    // is excluded from the next-write pick. The theoretical race window
+    // (3 publishes between audio load and read-completion) is ruled out
+    // by physics: audio reads complete in microseconds, msg-thread
+    // publishes are at user-input rate (≤ ~10 Hz).
+    std::array<std::vector<engine::Anchor>, 3> audioAnchorSnaps_;
+    std::atomic<int> audioAnchorPublished_{0};
+    // Message-thread-only history. Excluded from the next write pick so
+    // the audio thread's in-flight read is never overwritten.
+    int prevPublishedSlot_ = -1;
 
     // Defangs auto-save recursion during applySlot / setStateInformation:
     // listener fires from APVTS writes are no-ops while this is true.
@@ -245,6 +258,33 @@ private:
     // catch-up loop. Lets a RATE change take effect at the next sub-step
     // boundary rather than waiting for the old cell to finish.
     std::atomic<bool>                cellStateDirty{false};
+    // Set by `parameterChanged` when turingLength / turingSeed change.
+    // The actual register rebuild runs on the audio thread (drained at the
+    // top of handleWalkerMidi) via engine::resetTuringState — in-place,
+    // no realloc since `turingState.reg` is reserved to kTuringLengthMax
+    // in the constructor. Defers the work off the message-thread parameter
+    // listener path AND keeps it off any caller of parameterChanged that
+    // is itself the audio thread (host automation through processBlock):
+    // the rebuild is no-alloc either way, so realtime safety is preserved.
+    std::atomic<bool>                turingDirty{false};
+    // Set by `setStateInformation` after rewriting the live state. The
+    // audio thread checks this at the top of handleWalkerMidi and runs a
+    // panic + walker reset before resuming. Without it, a host that
+    // restores state mid-playback (Bitwig live-replace, Logic session
+    // reload during a render) would leave `held` referencing the prior
+    // chord and `currentCellEvent` referencing pre-restore cells, causing
+    // dangling note-ons and miscued chord changes until the next transport
+    // stop.
+    std::atomic<bool>                walkerPanicRequested_{false};
+    // Defers `arpRng` reseed off whichever thread `parameterChanged` is
+    // dispatched on. Without this, a host that writes `seed` automation
+    // through processBlock would call parameterChanged on the audio
+    // thread (OK in isolation), but if the host writes from the message
+    // thread instead, the audio thread's `arpRng.next()` calls race
+    // with the parameterChanged-driven `arpRng = Mulberry32{...}`. The
+    // dirty flag funnels the reseed through the audio thread's drain at
+    // the top of handleWalkerMidi — same pattern as `turingDirty`.
+    std::atomic<bool>                seedDirty_{false};
 
     // Preview MIDI (lattice tap / long-press audition). Lock-free hand-off:
     // the editor stores `pendingPreviewChord`, then flips
@@ -299,6 +339,14 @@ private:
     juce::MidiBuffer pendingMidi_;
     juce::int64      pendingFireSampleAbs_{-1};
     juce::int64      audioBlockStartSample_{0};
+    // Scratch MidiBuffer for the input-filter pass at the top of
+    // processBlock (drops region/keyboard notes + sysex, keeps CC etc.).
+    // Pre-reserved in prepareToPlay so the per-block addEvent loop is
+    // alloc-free. Without this scratch the previous pattern constructed
+    // a stack-local juce::MidiBuffer every block, allocating once any
+    // CC / pitch-bend / aftertouch event was present (sustain pedal
+    // alone trips it on every block during a held note).
+    juce::MidiBuffer keptScratch_;
     // Companion to pendingMidi_: the held set the queued fire WILL leave
     // sounding once it drains. `held` itself is left alone while pending
     // is in flight so an interim panic (transport stop, scrub) sends

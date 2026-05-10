@@ -44,10 +44,16 @@ private:
     juce::ComboBox rhythmCombo_;
     juce::ComboBox arpCombo_;
 
-    juce::AudioProcessorValueTreeState::ComboBoxAttachment voiceAtt_;
-    juce::AudioProcessorValueTreeState::ComboBoxAttachment chordAtt_;
-    juce::AudioProcessorValueTreeState::ComboBoxAttachment rhythmAtt_;
-    juce::AudioProcessorValueTreeState::ComboBoxAttachment arpAtt_;
+    // Constructed in the body AFTER the combos have been populated. The
+    // attachment's initial sync on construction reads APVTS and calls
+    // setSelectedId / setSelectedItemIndex on the combo — if the combo
+    // is empty at that moment, the sync fails to land on the right item
+    // and any later automation race can leave the combo desynchronized.
+    using ComboAtt = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    std::unique_ptr<ComboAtt> voiceAtt_;
+    std::unique_ptr<ComboAtt> chordAtt_;
+    std::unique_ptr<ComboAtt> rhythmAtt_;
+    std::unique_ptr<ComboAtt> arpAtt_;
 
     juce::Slider lenSlider_  { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::Slider lockSlider_ { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };

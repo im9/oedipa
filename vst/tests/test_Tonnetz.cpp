@@ -151,7 +151,7 @@ TEST_CASE("seventh — maj7 (+11) / min7 (+10) appended above root", "[tonnetz][
             for (const auto& v : c.at("voiced")) voiced.push_back(v.get<int>());
             const auto triad = triadFromJson(c.at("triad"));
             const auto id = identifyTriad(triad);
-            const auto out = addSeventh(voiced, id.quality);
+            const auto out = addSeventh(voiced, id.quality, triad[0]);
             std::vector<int> expected;
             for (const auto& v : c.at("expected")) expected.push_back(v.get<int>());
             CHECK(out == expected);

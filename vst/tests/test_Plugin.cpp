@@ -949,7 +949,43 @@ TEST_CASE("APVTS per-cell velocity — scales the output noteOn velocity", "[plu
 
     CHECK(v100 > v050);
     CHECK(v050 > v010);
-    CHECK(v010 >= 1);  // velocity 0 is conventionally a noteOff; clamp to ≥ 1.
+    CHECK(v010 >= 1);  // 0.1 * 127 ≈ 13 → still audible.
+}
+
+TEST_CASE("Per-cell velocity — cellVel == 0 emits no note-on (silent expression cell)", "[plugin][cells][velocity-zero]")
+{
+    // Cell::velocity is documented as 0..1 with default 1.0; velocity=0 is
+    // a soft-mute the user reaches for to silence one cell of a program
+    // without breaking the rhythmic cycle. Previously cellVel=0 → vel=1
+    // floor (the std::clamp in handleWalkerMidi rounded 0 → 0 → clamped
+    // to 1), producing an audible pp note where the user expected
+    // silence. The fix: short-circuit before the clamp so heldTarget
+    // stays empty and no noteOn is emitted — but the legato handoff
+    // noteOff for any prior chord still emits.
+    OedipaProcessor p;
+    auto& apvts = p.getApvts();
+    *paramAs<juce::AudioParameterInt>(apvts, pid::stepsPerTransform) = 1;
+    *paramAs<juce::AudioParameterInt>(apvts, pid::length)            = 1;
+    *paramAs<juce::AudioParameterFloat>(apvts, pid::outputLevel)     = 1.0f;
+    p.setCell(0, oedipa::engine::Cell{oedipa::engine::Op::P, 0.0f, 1.0f, 1.0f, 0.0f});
+
+    FakePlayHead playHead;
+    p.setPlayHead(&playHead);
+    p.prepareToPlay(44100.0, 512);
+
+    // Pump init fire (synthetic init event with default vel=1.0).
+    attackNotesAt(p, playHead, 0.0);
+    // First cell-boundary fire — cells[0] applies, cellVel=0 → silent.
+    const auto notes = attackNotesAt(p, playHead, 0.25);
+    CHECK(notes.empty());
+
+    // The held bookkeeping must reflect "nothing currently sounding"
+    // (heldTarget left empty), so a subsequent transport stop's panic
+    // doesn't emit note-offs for never-on'd notes.
+    CHECK(p.getHeldForTest().empty());
+
+    p.releaseResources();
+    p.setPlayHead(nullptr);
 }
 
 TEST_CASE("Bus config — pure MIDI fx, no audio buses (ADR 009 2026-05-08)",

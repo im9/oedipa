@@ -19,6 +19,12 @@ namespace engine {
 enum class RhythmPreset { All, Legato, Onbeat, Offbeat, Syncopated, Turing };
 enum class ArpMode      { Off, Up, Down, UpDown, Random };
 
+// Turing register length is clamped to this range — exposed so callers can
+// reserve `TuringRhythmState::reg` capacity to the max once and then reset
+// in-place without per-rebuild reallocation (audio-thread RT-safety).
+inline constexpr int kTuringLengthMin = 2;
+inline constexpr int kTuringLengthMax = 32;
+
 // Within-cell tick gating for the static presets. `subStepIdx` is a
 // sub-step index inside the current cell (head = 0). Pure: no PRNG, no
 // state. `Turing` is intentionally excluded — its gating is stateful and
@@ -51,6 +57,14 @@ struct TuringRhythmState
 // same PRNG used by the walker, so the stochastic stream is seed-coherent
 // across rhythm + arp + walker).
 TuringRhythmState makeTuringState(int length, std::uint32_t seed);
+
+// In-place reset variant. Same shape and contract as makeTuringState, but
+// reuses `state.reg`'s storage when its capacity ≥ length. Callers that
+// need to rebuild the register from the audio thread (or in response to
+// parameter automation) reserve once at warmup (`reg.reserve(kTuringLengthMax)`)
+// and then call this — no per-rebuild heap allocation, no realloc race
+// against an audio-thread reader. See PluginProcessor's `turingDirty` flag.
+void resetTuringState(TuringRhythmState& state, int length, std::uint32_t seed);
 
 // Compute fires-this-step bool, then advance the register one tick.
 // `lock` ∈ [0, 1]: 1.0 = frozen loop (lastBit carries over), 0.0 = fully

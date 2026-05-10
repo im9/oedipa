@@ -71,11 +71,11 @@ std::vector<MidiNote> applyVoicing(Triad triad, Voicing mode)
     throw std::invalid_argument("applyVoicing: unknown mode");
 }
 
-std::vector<MidiNote> addSeventh(const std::vector<MidiNote>& notes, Quality quality)
+std::vector<MidiNote> addSeventh(const std::vector<MidiNote>& notes, Quality quality, MidiNote root)
 {
     if (notes.empty()) throw std::invalid_argument("addSeventh: empty notes");
     auto out = notes;
-    out.push_back(notes.front() + (quality == Quality::Major ? 11 : 10));
+    out.push_back(root + (quality == Quality::Major ? 11 : 10));
     return out;
 }
 

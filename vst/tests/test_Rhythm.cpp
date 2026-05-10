@@ -82,6 +82,58 @@ TEST_CASE("turingFires — register evolves deterministically with seed", "[rhyt
     }
 }
 
+TEST_CASE("resetTuringState — in-place reset is parity-equal to makeTuringState", "[rhythm][turing][reset]")
+{
+    // Audio-thread RT-safety: the processor reserves reg capacity to
+    // kTuringLengthMax at warmup and rebuilds in place. The rebuild MUST
+    // produce the same register + rng stream as the one-shot constructor;
+    // otherwise the seed-coherent fire-stream contract breaks.
+    auto fresh = makeTuringState(8, 42u);
+
+    TuringRhythmState reused{ {}, Mulberry32{0u} };
+    reused.reg.reserve((std::size_t) kTuringLengthMax);
+    resetTuringState(reused, 8, 42u);
+
+    REQUIRE(reused.reg.size() == fresh.reg.size());
+    for (std::size_t i = 0; i < fresh.reg.size(); ++i) {
+        CHECK(reused.reg[i] == fresh.reg[i]);
+    }
+    // RNG stream parity: subsequent turingFires draws should match.
+    for (int i = 0; i < 64; ++i) {
+        CHECK(turingFires(reused, 0.6f) == turingFires(fresh, 0.6f));
+    }
+}
+
+TEST_CASE("resetTuringState — alloc-free after capacity reserve", "[rhythm][turing][reset][rt-safety]")
+{
+    // Confirms the audio-thread contract: when reg.capacity() >= max,
+    // resetTuringState across the full length range never grows capacity.
+    TuringRhythmState s{ {}, Mulberry32{0u} };
+    s.reg.reserve((std::size_t) kTuringLengthMax);
+    const auto cap0 = s.reg.capacity();
+    REQUIRE(cap0 >= (std::size_t) kTuringLengthMax);
+
+    for (int len : {2, 4, 8, 16, 31, 32}) {
+        resetTuringState(s, len, 7u);
+        CHECK(s.reg.size() == (std::size_t) len);
+        // Capacity must not have grown — the alloc-free guarantee is
+        // what makes this safe to call from the audio thread.
+        CHECK(s.reg.capacity() == cap0);
+    }
+}
+
+TEST_CASE("resetTuringState — clamps length to [kTuringLengthMin, kTuringLengthMax]", "[rhythm][turing][reset][clamp]")
+{
+    TuringRhythmState s{ {}, Mulberry32{0u} };
+    s.reg.reserve((std::size_t) kTuringLengthMax);
+
+    resetTuringState(s, 0, 0u);
+    CHECK(s.reg.size() == (std::size_t) kTuringLengthMin);
+
+    resetTuringState(s, 9999, 0u);
+    CHECK(s.reg.size() == (std::size_t) kTuringLengthMax);
+}
+
 TEST_CASE("turingFires — different seeds diverge", "[rhythm][turing][seed]")
 {
     auto a = makeTuringState(8, 1u);

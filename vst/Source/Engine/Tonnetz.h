@@ -47,8 +47,11 @@ Triad applyTransform(Triad triad, Transform op);
 std::vector<MidiNote> applyVoicing(Triad triad, Voicing mode);
 
 // Append a 7th above the root: +11 for major (maj7), +10 for minor (min7).
-// `notes[0]` is the root MIDI value (true for all three voicings).
-std::vector<MidiNote> addSeventh(const std::vector<MidiNote>& notes, Quality quality);
+// `root` is the root MIDI note — explicit so the function does not depend
+// on the convention that voicing index 0 is the root. (close / spread /
+// drop2 all keep root at index 0, but a future inversion voicing would
+// silently emit the wrong 7th if addSeventh assumed `notes.front()`.)
+std::vector<MidiNote> addSeventh(const std::vector<MidiNote>& notes, Quality quality, MidiNote root);
 
 }  // namespace engine
 }  // namespace oedipa

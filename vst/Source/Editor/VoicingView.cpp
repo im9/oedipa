@@ -39,10 +39,6 @@ void styleSlider(juce::Slider& s)
 
 VoicingView::VoicingView(plugin::OedipaProcessor& p)
     : processor_(p),
-      voiceAtt_  (p.getApvts(), plugin::pid::voicing,      voiceCombo_),
-      chordAtt_  (p.getApvts(), plugin::pid::chordQuality, chordCombo_),
-      rhythmAtt_ (p.getApvts(), plugin::pid::rhythm,       rhythmCombo_),
-      arpAtt_    (p.getApvts(), plugin::pid::arp,          arpCombo_),
       lenAtt_    (p.getApvts(), plugin::pid::turingLength, lenSlider_),
       lockAtt_   (p.getApvts(), plugin::pid::turingLock,   lockSlider_)
 {
@@ -51,19 +47,17 @@ VoicingView::VoicingView(plugin::OedipaProcessor& p)
     populate(rhythmCombo_, plugin::rhythmChoices);
     populate(arpCombo_,    plugin::arpChoices);
 
-    // ComboBoxAttachment was constructed (init list) BEFORE populate, so its
-    // initial sync ran on an empty combo and left no selection. Manually
-    // pull the APVTS choice index now that items exist; subsequent attachment
-    // round-tripping handles all later edits in either direction.
-    auto& apvts = processor_.getApvts();
-    auto syncChoice = [&apvts](juce::ComboBox& c, const char* pid) {
-        const int idx = (int) *apvts.getRawParameterValue(pid);
-        c.setSelectedItemIndex(idx, juce::dontSendNotification);
-    };
-    syncChoice(voiceCombo_,  plugin::pid::voicing);
-    syncChoice(chordCombo_,  plugin::pid::chordQuality);
-    syncChoice(rhythmCombo_, plugin::pid::rhythm);
-    syncChoice(arpCombo_,    plugin::pid::arp);
+    // Construct combo attachments AFTER populate. The attachment's initial
+    // sync reads APVTS and applies the selection; with items present, that
+    // sync lands correctly and the attachment's internal baseline stays
+    // coherent with the combo's actual state. Previously these were in
+    // the init list (before populate), so the initial sync ran against
+    // an empty combo and a manual syncChoice() patched it up — fragile
+    // under host automation arriving in the gap between the two.
+    voiceAtt_  = std::make_unique<ComboAtt>(p.getApvts(), plugin::pid::voicing,      voiceCombo_);
+    chordAtt_  = std::make_unique<ComboAtt>(p.getApvts(), plugin::pid::chordQuality, chordCombo_);
+    rhythmAtt_ = std::make_unique<ComboAtt>(p.getApvts(), plugin::pid::rhythm,       rhythmCombo_);
+    arpAtt_    = std::make_unique<ComboAtt>(p.getApvts(), plugin::pid::arp,          arpCombo_);
 
     for (auto* c : { &voiceCombo_, &chordCombo_, &rhythmCombo_, &arpCombo_ }) {
         styleCombo(*c);

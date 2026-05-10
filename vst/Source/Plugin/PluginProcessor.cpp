@@ -103,6 +103,12 @@ OedipaProcessor::OedipaProcessor()
     arpRng            = engine::Mulberry32{(std::uint32_t) seed0};
     lastSeedForArpRng = seed0;
     turingState       = engine::makeTuringState(tLen0, (std::uint32_t) tSed0);
+    // Reserve to the max length once — every subsequent rebuild runs
+    // through engine::resetTuringState which resizes in place. Without
+    // this, the audio-thread reset path (drained from handleWalkerMidi
+    // when `turingDirty` is set) would realloc whenever the user grew
+    // turingLength past the previous cap.
+    turingState.reg.reserve((std::size_t) engine::kTuringLengthMax);
     lastTuringLength  = tLen0;
     lastTuringSeed    = tSed0;
 
@@ -220,24 +226,26 @@ void OedipaProcessor::parameterChanged(const juce::String& parameterID, float)
         syncActiveSlot();
     }
     // Seed change reseeds the ARP rng so the random-arp stream tracks the
-    // user-visible seed. Same contract m4l host.ts:179-181 enforces.
+    // user-visible seed. Same contract m4l host.ts:179-181 enforces. The
+    // actual reseed runs on the audio thread (drained at the top of
+    // handleWalkerMidi) so message-thread parameter automation can't race
+    // with the audio thread's `arpRng.next()` calls.
     if (parameterID == pid::seed) {
-        const int seedNow = (int) *apvts.getRawParameterValue(pid::seed);
-        if (seedNow != lastSeedForArpRng) {
-            arpRng = engine::Mulberry32{(std::uint32_t) seedNow};
-            lastSeedForArpRng = seedNow;
-        }
+        seedDirty_.store(true, std::memory_order_release);
     }
     // Turing register init is a function of (length, seed); rebuild on any
     // change. Lock is read live in turingFires, no rebuild needed.
+    //
+    // RT-safety: APVTS may invoke this listener on the audio thread when a
+    // host writes automation through processBlock (Logic / Bitwig do this
+    // for any automation lane). The previous in-listener rebuild called
+    // engine::makeTuringState which constructed a fresh std::vector<int>
+    // — heap allocation on the audio thread, exactly the class of bug that
+    // produced the 2026-05-08 AU click. Defer instead: just signal dirty
+    // and let handleWalkerMidi's drain do the in-place reset (no realloc
+    // since reg.capacity() == kTuringLengthMax from the constructor).
     if (parameterID == pid::turingLength || parameterID == pid::turingSeed) {
-        const int tLen = (int) *apvts.getRawParameterValue(pid::turingLength);
-        const int tSed = (int) *apvts.getRawParameterValue(pid::turingSeed);
-        if (tLen != lastTuringLength || tSed != lastTuringSeed) {
-            turingState = engine::makeTuringState(tLen, (std::uint32_t) tSed);
-            lastTuringLength = tLen;
-            lastTuringSeed   = tSed;
-        }
+        turingDirty.store(true, std::memory_order_release);
     }
     // RATE change: invalidate the cached cell event so the next sub-step
     // re-pulls a fresh chord from the walker at the new spt boundary.
@@ -276,6 +284,14 @@ void OedipaProcessor::prepareToPlay(double newSampleRate, int)
     pendingHeld_.reserve(8);
     pendingFireSampleAbs_ = -1;
     audioBlockStartSample_ = 0;
+
+    // Input-filter scratch: pre-allocate so the per-block addEvent loop
+    // in processBlock doesn't realloc on the audio thread. 2048 bytes is
+    // a generous baseline; juce::MidiBuffer::ensureSize is a hint, so if
+    // a host hands us a larger buffer the underlying juce::Array<uint8>
+    // grows once and stabilises after warmup.
+    keptScratch_.clear();
+    keptScratch_.ensureSize(2048);
 }
 
 void OedipaProcessor::releaseResources() {}
@@ -310,25 +326,29 @@ void OedipaProcessor::populateAudioWalkState()
     // Audio-thread: refreshes the reused audioWalkState_ scratch in place.
     // After prepareToPlay's reserves, push_back loops below do not
     // reallocate (capacity ≥ kCellCount cells, ≥ 32 anchors). The
-    // anchors source is the lock-free shared_ptr snapshot — atomic_load
-    // is wait-free on every supported platform.
+    // anchors source is the triple-buffered SPSC snapshot — acquire-load
+    // pairs with publishAnchors's release-store, no mutex.
     populateWalkStateCommon(audioWalkState_);
 
-    auto snap = std::atomic_load(&audioAnchorsPtr);
+    const int slot = audioAnchorPublished_.load(std::memory_order_acquire);
+    const auto& snap = audioAnchorSnaps_[(std::size_t) slot];
     audioWalkState_.anchors.clear();
-    if (snap) {
-        for (const auto& a : *snap) audioWalkState_.anchors.push_back(a);
-    }
+    for (const auto& a : snap) audioWalkState_.anchors.push_back(a);
 }
 
 void OedipaProcessor::publishAnchors()
 {
-    // Atomic-store a fresh shared_ptr<const vector> snapshot. The audio
-    // thread's atomic_load in populateAudioWalkState picks it up on the
-    // next block. Old snapshots stay alive while the audio thread holds
-    // a reference, so there's no race on the underlying vector.
-    auto fresh = std::make_shared<const std::vector<engine::Anchor>>(anchors);
-    std::atomic_store(&audioAnchorsPtr, fresh);
+    // Pick a slot that is neither the currently published nor the previous
+    // published. With 3 slots and 2 to avoid, exactly one remains — the
+    // audio thread cannot be reading it (it can only be reading current
+    // or previous-current). Then release-store the new published index;
+    // the audio thread's acquire-load picks it up on the next block.
+    const int published = audioAnchorPublished_.load(std::memory_order_relaxed);
+    int slot = 0;
+    while (slot == published || slot == prevPublishedSlot_) ++slot;
+    audioAnchorSnaps_[(std::size_t) slot] = anchors;
+    prevPublishedSlot_ = published;
+    audioAnchorPublished_.store(slot, std::memory_order_release);
 }
 
 void OedipaProcessor::setAnchors(std::vector<engine::Anchor> value)
@@ -339,12 +359,11 @@ void OedipaProcessor::setAnchors(std::vector<engine::Anchor> value)
 
 const std::vector<engine::Anchor>& OedipaProcessor::getAudioAnchorsForTest() const
 {
-    // Returns a reference into the currently-loaded shared_ptr's vector.
-    // Safe within the test scope: until publishAnchors() runs again, the
-    // shared_ptr is alive; the pointed-to vector is `const` so no mutation.
-    auto snap = std::atomic_load(&audioAnchorsPtr);
-    static const std::vector<engine::Anchor> kEmpty;
-    return snap ? *snap : kEmpty;
+    // Returns a reference into the currently-published triple-buffer slot.
+    // Safe within the test scope: tests don't call publishAnchors during
+    // the same access, so the slot's contents are stable.
+    const int slot = audioAnchorPublished_.load(std::memory_order_acquire);
+    return audioAnchorSnaps_[(std::size_t) slot];
 }
 
 void OedipaProcessor::emitPanic(juce::MidiBuffer& midi, int sampleOffset)
@@ -371,7 +390,7 @@ void OedipaProcessor::emitChord(juce::MidiBuffer& midi,
     auto voiced = engine::applyVoicing(chord, voicing);
     if (seventh) {
         const auto id = engine::identifyTriad(chord);
-        voiced = engine::addSeventh(voiced, id.quality);
+        voiced = engine::addSeventh(voiced, id.quality, chord[0]);
     }
 
     const auto vel = (juce::uint8) std::clamp((int) std::round(velocity * 127.0f), 1, 127);
@@ -401,13 +420,18 @@ void OedipaProcessor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBu
     // (CC, sustain pedal, pitch-bend, channel pressure) still pass
     // through to the synth.
     {
-        juce::MidiBuffer kept;
+        // keptScratch_ is a member buffer; clear() preserves capacity so
+        // the addEvent loop is alloc-free after the first warmup block.
+        // After swapWith, midi holds the filtered events (downstream uses
+        // it normally) and keptScratch_ holds whatever the host originally
+        // handed in — that gets dropped on the next block's clear().
+        keptScratch_.clear();
         for (const auto meta : midi) {
             const auto m = meta.getMessage();
             if (m.isNoteOn() || m.isNoteOff() || m.isSysEx()) continue;
-            kept.addEvent(m, meta.samplePosition);
+            keptScratch_.addEvent(m, meta.samplePosition);
         }
-        midi.swapWith(kept);
+        midi.swapWith(keptScratch_);
     }
 
     handlePreviewMidi(midi, audio.getNumSamples());
@@ -526,7 +550,11 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi, int blockSamples)
         fireIdxThisCell = 0;
         const int seedNow = (int) *apvts.getRawParameterValue(pid::seed);
         arpRng = engine::Mulberry32{(std::uint32_t) seedNow};
-        turingState = engine::makeTuringState(lastTuringLength, (std::uint32_t) lastTuringSeed);
+        // In-place reset (alloc-free; reg capacity reserved at warmup).
+        // The bare `makeTuringState` form previously used here allocated a
+        // fresh std::vector<int> on the audio thread on every loop wrap /
+        // user scrub.
+        engine::resetTuringState(turingState, lastTuringLength, (std::uint32_t) lastTuringSeed);
     }
 
     // Drain a queued cell-timing fire whose absolute sample falls inside
@@ -556,6 +584,57 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi, int blockSamples)
     if (cellStateDirty.exchange(false, std::memory_order_acquire)) {
         currentCellEvent.reset();
         fireIdxThisCell = 0;
+    }
+
+    // Drain a setStateInformation panic request: a host that restored
+    // state mid-playback (Bitwig live-replace, Logic mid-render reload)
+    // signals via this flag. We emit note-offs for the prior chord and
+    // reset every walker bookkeeping field so the next sub-step boundary
+    // re-runs the init path against the freshly-restored cells/anchors/
+    // startChord. Drains BEFORE the turingDirty / cellStateDirty drains
+    // so the panic-reset of turingState/arpRng below isn't undone by a
+    // listener's deferred rebuild.
+    if (walkerPanicRequested_.exchange(false, std::memory_order_acquire)) {
+        if (! held.empty()) emitPanic(midi, 0);
+        cancelPending();
+        lastSubStep = -1;
+        currentCellEvent.reset();
+        fireIdxThisCell = 0;
+        const int seedNow = (int) *apvts.getRawParameterValue(pid::seed);
+        arpRng = engine::Mulberry32{(std::uint32_t) seedNow};
+        const int tLen = (int) *apvts.getRawParameterValue(pid::turingLength);
+        const int tSed = (int) *apvts.getRawParameterValue(pid::turingSeed);
+        engine::resetTuringState(turingState, tLen, (std::uint32_t) tSed);
+        lastTuringLength = tLen;
+        lastTuringSeed   = tSed;
+        lastSeedForArpRng = seedNow;
+    }
+
+    // Drain a deferred seed reseed scheduled by parameterChanged. Mirrors
+    // the turing dirty pattern; the acquire-load pairs with the
+    // release-store in parameterChanged.
+    if (seedDirty_.exchange(false, std::memory_order_acquire)) {
+        const int seedNow = (int) *apvts.getRawParameterValue(pid::seed);
+        if (seedNow != lastSeedForArpRng) {
+            arpRng = engine::Mulberry32{(std::uint32_t) seedNow};
+            lastSeedForArpRng = seedNow;
+        }
+    }
+
+    // Drain a deferred turing rebuild scheduled by parameterChanged. The
+    // acquire-load pairs with the release-store in parameterChanged so
+    // the latest APVTS turingLength / turingSeed values are visible here.
+    // resetTuringState resizes turingState.reg in place; capacity was
+    // reserved to kTuringLengthMax in the constructor, so this is alloc-
+    // free on the audio thread.
+    if (turingDirty.exchange(false, std::memory_order_acquire)) {
+        const int tLen = (int) *apvts.getRawParameterValue(pid::turingLength);
+        const int tSed = (int) *apvts.getRawParameterValue(pid::turingSeed);
+        if (tLen != lastTuringLength || tSed != lastTuringSeed) {
+            engine::resetTuringState(turingState, tLen, (std::uint32_t) tSed);
+            lastTuringLength = tLen;
+            lastTuringSeed   = tSed;
+        }
     }
 
     // Transport-resume from non-zero ppq (Logic resumes at the stopped
@@ -666,7 +745,7 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi, int blockSamples)
         auto voiced = engine::applyVoicing(currentCellEvent->chord, voicing);
         if (seventh) {
             const auto id = engine::identifyTriad(currentCellEvent->chord);
-            voiced = engine::addSeventh(voiced, id.quality);
+            voiced = engine::addSeventh(voiced, id.quality, currentCellEvent->chord[0]);
         }
 
         // ARP picker: nullopt = full chord, otherwise pick a single voiced
@@ -676,6 +755,13 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi, int blockSamples)
                                               fireIdxThisCell, arpRng);
 
         const float velNorm = std::clamp(cellVel * outLvl, 0.0f, 1.0f);
+        // Silent-expression short-circuit. Without it, velNorm == 0 still
+        // emits a vel=1 note-on (the lower clamp bound), producing an
+        // audible pp from a cell the user set to VEL=0 expecting silence.
+        // The handoff note-offs for any prior chord still emit; only the
+        // new note-on is suppressed so the next cell sees `held` empty
+        // (matches m4l's effective behaviour for cellVel==0 cells).
+        const bool silentEmit = velNorm * 127.0f < 0.5f;
         const auto vel = (juce::uint8) std::clamp((int) std::round(velNorm * 127.0f), 1, 127);
 
         // cell.timing — concept §Traversal: 0..+0.5 forward step-length
@@ -711,6 +797,12 @@ void OedipaProcessor::handleWalkerMidi(juce::MidiBuffer& midi, int blockSamples)
                 target.addEvent(juce::MidiMessage::noteOff(ch, note), offset);
             }
             heldTarget.clear();
+            if (silentEmit) {
+                // Silent expression cell: handoff offs already emitted,
+                // skip the new note-ons so heldTarget stays empty and the
+                // user hears the gap they asked for.
+                return;
+            }
             if (pickIdx) {
                 const int n = std::clamp(voiced[(std::size_t) *pickIdx], 0, 127);
                 target.addEvent(juce::MidiMessage::noteOn(channel, n, vel), offset);
@@ -967,6 +1059,12 @@ void OedipaProcessor::setStateInformation(const void* data, int sizeInBytes)
     publishAnchors();
 
     suppressAutoSave = false;
+
+    // Signal the audio thread to panic + reset walker state on its next
+    // block. Restoring mid-playback otherwise leaves `held` pointing at
+    // the prior chord and `currentCellEvent` referencing pre-restore
+    // cells; the next note-off would dangle until transport stop.
+    walkerPanicRequested_.store(true, std::memory_order_release);
 }
 
 }  // namespace plugin
