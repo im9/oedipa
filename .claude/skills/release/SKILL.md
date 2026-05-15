@@ -29,6 +29,16 @@ The release asset is target-specific:
   built via `make release-vst`. See
   [ADR 009](../../../docs/ai/adr/archive/009-vst-distribution.md).
 
+> **⚠️ vst paid pivot in effect (2026-05-11).** Next vst release will be
+> distributed via a paid platform (TBD), not as a free GH Releases asset.
+> Before running `/release vst`, confirm with the user that the paid
+> platform is decided and the publish step is intentional. **HALT and ask
+> if paid platform is undecided** — do not auto-publish the dmg to GH
+> Releases as a free download. The build / sign / notarize / dmg steps
+> via `make release-vst` are unchanged; only the publish destination
+> moves. Existing `vst-v0.1.0` / `v0.1.1` / `v0.1.2` releases are being
+> stripped of their dmg assets (tags + notes retained for source history).
+
 ## Pre-flight checks (do these BEFORE creating the tag)
 
 Tags are durable. Once pushed, a release with downloads is harder
