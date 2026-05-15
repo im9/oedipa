@@ -113,7 +113,7 @@ Setup: `git clone --recursive` to fetch the JUCE submodule.
 
 - MIDI effect: receives MIDI input, outputs transformed/generated MIDI
 - Tonnetz lattice for chord navigation — visual + interactive
-- Label: im9. Free distribution
+- Label: im9. m4l free, vst paid (v1.0 in prep)
 
 ## Mandatory Workflow
 

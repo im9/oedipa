@@ -38,10 +38,11 @@ Full musical model: [`docs/ai/concept.md`](docs/ai/concept.md).
 frozen `Oedipa.amxd` ships via [GitHub Releases](../../releases?q=m4l)
 and runs on any Live 12 install with Max for Live.
 
-`vst/` AU + VST3 + CLAP ship as a signed and notarized macOS `.dmg`
-via [GitHub Releases](../../releases?q=vst). Primary hosts: Logic Pro
-(AU MIDI FX) and Bitwig Studio (CLAP / VST3 MIDI fx). See [DAW
-support](#daw-support) below for the host compatibility matrix.
+`vst/` AU + VST3 + CLAP — v1 paid release in preparation; distribution
+platform will be announced. Source is public and self-build is supported
+(see [Build](#build)). Primary hosts: Logic Pro (AU MIDI FX) and Bitwig
+Studio (CLAP / VST3 MIDI fx). See [DAW support](#daw-support) below
+for the host compatibility matrix.
 
 `app/` (iOS) is planned — see [Targets](#targets).
 
@@ -55,8 +56,9 @@ Click a triangle on the lattice to set the starting chord; press play.
 
 ### VST3 / AU / CLAP (vst)
 
-Download `Oedipa.dmg` from the latest [release](../../releases?q=vst) and
-mount it. Drag the bundles into:
+The v1 paid release is in preparation; distribution platform will be
+announced. Until then, build from source (see [Build](#build)) and
+install the resulting bundles into:
 
 - `Oedipa.component` → `~/Library/Audio/Plug-Ins/Components/`
 - `Oedipa.vst3` → `~/Library/Audio/Plug-Ins/VST3/`
@@ -75,9 +77,6 @@ See [DAW support](#daw-support) for per-host compatibility. Reaper /
 Studio One are best-effort; Ableton Live uses the [Max for Live
 target](m4l/) instead.
 
-Building from source is only needed if you want to modify Oedipa —
-see [Build](#build) below.
-
 ## Targets
 
 Oedipa is developed in parallel across multiple platforms that share the
@@ -86,8 +85,8 @@ musical concept but differ in UI and integration.
 | Target | Status | Notes |
 |---|---|---|
 | [Max for Live](m4l/) | Released | Max for Live device. Current primary target. |
-| [Audio Unit](vst/) | Released | macOS, bundled in the vst/ `.dmg`. C++17 / JUCE. |
-| [VST3](vst/) | Released | macOS, bundled in the vst/ `.dmg`. Same codebase as the AU. |
+| [Audio Unit](vst/) | v1 in prep | macOS, C++17 / JUCE. Self-build via `make build`; paid release TBA. |
+| [VST3](vst/) | v1 in prep | macOS. Same codebase as the AU. Self-build via `make build`; paid release TBA. |
 | [iOS](app/) | Planned | AUv3 + standalone, JUCE. Touch-based exploration. |
 
 Musical logic is shared as a specification, not as code. Each target is a
@@ -97,8 +96,8 @@ against [`docs/ai/tonnetz-test-vectors.json`](docs/ai/tonnetz-test-vectors.json)
 ## DAW support
 
 macOS only for v1 (per ADR 008). Windows / Linux distribution is
-deferred. The vst/ `.dmg` ships AU and VST3 bundles together; the table
-below covers per-host compatibility on macOS.
+deferred. The vst/ build produces AU, VST3, and CLAP bundles together;
+the table below covers per-host compatibility on macOS.
 
 | DAW | Format | Status | Notes |
 |---|---|---|---|
