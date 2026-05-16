@@ -41,14 +41,14 @@ void OedipaEditor::paint(juce::Graphics& g)
 {
     g.fillAll(theme::bg);
 
-    // Header row: TONNETZ title, divider below. The × dismiss from
+    // Header row: Oedipa title, divider below. The × dismiss from
     // inboil's TonnetzSheet doesn't apply — the host owns plugin window
     // lifecycle in VST/AU; an explicit × would either be a no-op
     // (confusing) or call host-internal close (unsupported).
     const int hh = theme::headerHeight;
     g.setColour(theme::fg);
     g.setFont(theme::dataFont(theme::fsLg, true));
-    g.drawText("TONNETZ", theme::railPad, 0,
+    g.drawText("Oedipa", theme::railPad, 0,
                getWidth() - theme::railPad * 2, hh,
                juce::Justification::centredLeft);
 

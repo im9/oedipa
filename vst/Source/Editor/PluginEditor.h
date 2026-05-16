@@ -1,6 +1,6 @@
 // Top-level plugin editor (ADR 008 §Phase 5).
 //
-// Layout: header row (TONNETZ title + 1px divider below) above a
+// Layout: header row (Oedipa title + 1px divider below) above a
 // 2-column body — lattice on the left (flex), right rail (280px fixed)
 // on the right.
 
