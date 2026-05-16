@@ -120,6 +120,13 @@ time. If older, halt and remind:
 > Requires `DEVELOPER_TEAM_ID` env var + `oedipa-notary` keychain
 > profile. See README §Distribution → §VST3 / AU.
 
+Also verify `vst/CMakeLists.txt`'s `project(Oedipa VERSION X.Y.Z)`
+matches the version about to be tagged — the plist version the
+plugin reports to the host (and the `v…` label drawn in the editor
+header) is sourced from this line. If it doesn't match, bump first
+via the Drafting Step 1.5 below; the dmg must be rebuilt after the
+bump so the binary carries the right version.
+
 Manual host smoke (Logic AU MIDI FX + Bitwig VST3 MIDI fx) is
 recommended before tagging. The dmg's `xcrun stapler validate` is
 a cheap final check:
@@ -144,6 +151,32 @@ propose `<target>-v0.1.0`.
 
 Show the proposed version to the user and **confirm before
 proceeding**. The user can override.
+
+### Step 1.5 — Bump version metadata (vst only)
+
+The plist version reported to the DAW and the `v…` label drawn in
+the editor header both come from `project(Oedipa VERSION X.Y.Z)` at
+the top of `vst/CMakeLists.txt`. If it doesn't already match the
+version confirmed in Step 1, bump it now:
+
+```bash
+# In vst/CMakeLists.txt, line 2:
+# project(Oedipa VERSION <old>) → project(Oedipa VERSION <new>)
+```
+
+Then commit the bump and push to main BEFORE rebuilding the dmg:
+
+```bash
+git add vst/CMakeLists.txt
+git commit -m "chore(vst): bump version to X.Y.Z"
+git push origin main
+```
+
+Re-run `make release-vst` so the dmg carries the bumped version,
+then re-run Check 4 to confirm the dmg mtime is fresh.
+
+For m4l this step is skipped — m4l version metadata isn't
+in-tree (the freeze captures whatever is on disk).
 
 ### Step 2 — Draft release notes
 

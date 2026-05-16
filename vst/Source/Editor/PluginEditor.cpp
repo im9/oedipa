@@ -41,16 +41,23 @@ void OedipaEditor::paint(juce::Graphics& g)
 {
     g.fillAll(theme::bg);
 
-    // Header row: Oedipa title, divider below. The × dismiss from
-    // inboil's TonnetzSheet doesn't apply — the host owns plugin window
-    // lifecycle in VST/AU; an explicit × would either be a no-op
-    // (confusing) or call host-internal close (unsupported).
+    // Header row: Oedipa title (left) + version (right), divider below.
+    // The × dismiss from inboil's TonnetzSheet doesn't apply — the host
+    // owns plugin window lifecycle in VST/AU; an explicit × would either
+    // be a no-op (confusing) or call host-internal close (unsupported).
     const int hh = theme::headerHeight;
     g.setColour(theme::fg);
     g.setFont(theme::dataFont(theme::fsLg, true));
     g.drawText("Oedipa", theme::railPad, 0,
                getWidth() - theme::railPad * 2, hh,
                juce::Justification::centredLeft);
+
+    g.setFont(theme::dataFont(theme::fsSm, false));
+    g.setColour(theme::fg.withAlpha(0.4f));
+    g.drawText("v" OEDIPA_VERSION_STRING,
+               theme::railPad, 0,
+               getWidth() - theme::railPad * 2, hh,
+               juce::Justification::centredRight);
 
     g.setColour(theme::lzBorder);
     g.drawLine(0.0f, (float) hh, (float) getWidth(), (float) hh, 1.0f);

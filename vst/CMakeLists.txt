@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(Oedipa VERSION 0.1.0)
+project(Oedipa VERSION 0.1.3)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -114,6 +114,7 @@ target_compile_definitions(Oedipa PRIVATE
     JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1
     JUCE_USE_CURL=0
     JUCE_WEB_BROWSER=0
+    OEDIPA_VERSION_STRING="${PROJECT_VERSION}"
 )
 
 # --- CLAP wrapper (ADR 010) ---------------------------------------------------
@@ -158,6 +159,11 @@ target_compile_definitions(oedipa_plugin_core PUBLIC
     JUCE_USE_CURL=0
     JUCE_WEB_BROWSER=0
     JUCE_STANDALONE_APPLICATION=0
+    # Exposed to PluginEditor so the editor header can render the build
+    # version (mirrors the plist version reported to the host). Source
+    # of truth is project(Oedipa VERSION ...) at the top of this file;
+    # the release skill bumps both in lockstep.
+    OEDIPA_VERSION_STRING="${PROJECT_VERSION}"
 )
 
 # --- Tests --------------------------------------------------------------------
