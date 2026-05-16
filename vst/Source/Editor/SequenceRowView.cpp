@@ -72,9 +72,9 @@ SequenceRowView::SequenceRowView(plugin::OedipaProcessor& p, engine::SequenceDra
         auto& b = pills_[(std::size_t) i];
         b.setLookAndFeel(&pillLAF());
         b.setColour(juce::TextButton::buttonColourId,    theme::bg);
-        b.setColour(juce::TextButton::buttonOnColourId,  theme::oliveBg);
+        b.setColour(juce::TextButton::buttonOnColourId,  theme::olive);
         b.setColour(juce::TextButton::textColourOffId,   theme::olive);
-        b.setColour(juce::TextButton::textColourOnId,    theme::olive);
+        b.setColour(juce::TextButton::textColourOnId,    theme::bg);
         b.setClickingTogglesState(false);
         b.onClick = [this, i] { onPillClicked(i); };
         // Seed the label from current state. Without this, timerCallback's
@@ -153,14 +153,9 @@ void SequenceRowView::paint(juce::Graphics& g)
                theme::rowHeight,
                juce::Justification::centredLeft);
 
-    // Selected-pill highlight (olive frame around the pill the drawer
-    // is currently focused on).
-    const int sel = drawer_.selectedCell();
-    if (sel >= 0 && sel < (int) pills_.size() && pills_[(std::size_t) sel].isVisible()) {
-        const auto r = pills_[(std::size_t) sel].getBounds().expanded(1);
-        g.setColour(theme::olive);
-        g.drawRect(r, 1);
-    }
+    // Drawer-focused pill: the active state (solid olive fill + light
+    // text) is set via the button's toggle / onColour pair, matching the
+    // SLOTS row. No extra paint() outline.
 }
 
 void SequenceRowView::resized()
@@ -175,10 +170,16 @@ void SequenceRowView::resized()
 
     const int pillsAreaX = theme::groupPadX + labelW;
     const int controlsRightW = 24 + 24;  // +/- buttons
-    const int pillsAreaW = getWidth() - pillsAreaX - controlsRightW - theme::groupPadX;
+    const int controlsGap = 8;            // breathing room between pills and −
+    const int pillsAreaW = getWidth() - pillsAreaX - controlsGap - controlsRightW - theme::groupPadX;
 
     const int pillGap = 2;
-    const int pillW = std::max(16, (pillsAreaW - pillGap * (len - 1)) / std::max(1, len));
+    // Cap pillW so short sequences (length=1..3) don't stretch a lone pill
+    // across the full pills area. 32px keeps cells visually close to their
+    // packed-tight width at length=8 (~16px) while staying readable.
+    const int pillMaxW = 32;
+    const int pillW = std::clamp((pillsAreaW - pillGap * (len - 1)) / std::max(1, len),
+                                 16, pillMaxW);
 
     int x = pillsAreaX;
     for (int i = 0; i < (int) pills_.size(); ++i) {
