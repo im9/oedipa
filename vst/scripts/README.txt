@@ -81,4 +81,4 @@ v0.1.0     Initial release.
 License
 -------
 
-MIT — https://github.com/im9/oedipa/blob/main/LICENSE
+Proprietary, source-available — https://github.com/im9/oedipa/blob/main/vst/LICENSE
