@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a versioned per-target release of Oedipa. m4l publishes to GitHub Releases (tag + asset + notes); vst is local-only since the paid pivot (CMakeLists VERSION bump + signed/notarized dmg + drafted listing notes, no tag, no GH release). Verifies repo state, bumps semver, drafts notes from the per-target commit log, and runs the publish flow with explicit user approval at each step.
+description: Cut a versioned per-target release of Oedipa. m4l publishes to GitHub Releases (tag + asset + notes); vst is local-only since the paid pivot (CMakeLists VERSION bump + signed/notarized dmg in dist/, no tag, no GH release — upload to Polar happens out of band). Verifies repo state, bumps semver, drafts notes from the per-target commit log (m4l only), and runs the publish flow with explicit user approval at each step.
 argument-hint: "<m4l|vst> [major|minor|patch]"
 allowed-tools: Read, Write, Edit, Bash(git *), Bash(gh *), Bash(stat *), Bash(ls *), Bash(rm /tmp/oedipa-*)
 ---
@@ -32,12 +32,13 @@ The release asset is target-specific:
   (out of band, not GitHub). See
   [ADR 009](../../../docs/ai/adr/archive/009-vst-distribution.md).
 
-> **⚠️ vst paid pivot (2026-05-11).** vst does not publish to GitHub.
-> No tag is created, no GH release is created, no asset is uploaded.
-> `/release vst` ends locally: a signed/notarized/stapled
-> `dist/Oedipa.dmg` + a CMakeLists VERSION bump committed to main + a
-> drafted notes file for the paid platform's listing copy. Uploading the
-> dmg to the paid platform happens out of band, outside this skill.
+> **⚠️ vst paid pivot (2026-05-11; Polar selected 2026-05-16).** vst does
+> not publish to GitHub. No tag is created, no GH release is created, no
+> asset is uploaded. `/release vst` ends locally at Step 1.5: a
+> signed/notarized/stapled `dist/Oedipa.dmg` in `dist/` + a CMakeLists
+> VERSION bump committed to main. Uploading the dmg to Polar and writing
+> the listing copy happens out of band, outside this skill — the skill
+> does not draft release notes for vst.
 >
 > Existing `vst-v0.1.0` / `v0.1.1` / `v0.1.2` tags remain in the repo as
 > source history; their GH release entries (which previously carried the
@@ -123,7 +124,7 @@ git log -1 --format=%ct -- vst/Source/ \
 time. If older, halt and remind:
 
 > Run `make release-vst` to rebuild + sign + notarize + dmg.
-> Requires `DEVELOPER_TEAM_ID` env var + `oedipa-notary` keychain
+> Requires `DEVELOPER_TEAM_ID` env var + `im9-notary` keychain
 > profile. See README §Distribution → §VST3 / AU.
 
 Also verify `vst/CMakeLists.txt`'s `project(Oedipa VERSION X.Y.Z)`
@@ -191,32 +192,29 @@ git push origin main
 Re-run `make release-vst` so the dmg carries the bumped version,
 then re-run Check 4 to confirm the dmg mtime is fresh.
 
+**vst stops here.** After Check 4 passes against the rebuilt dmg, the
+skill is done — Steps 2-5 are m4l-only. Hand the dmg off to Polar +
+write the listing copy out of band.
+
 For m4l this step is skipped — m4l version metadata isn't
 in-tree (the freeze captures whatever is on disk).
 
-### Step 2 — Draft release notes
+### Step 2 — Draft release notes (m4l only)
 
-Compute the previous-release boundary and generate the changelog
-from the commit log between it and HEAD.
+For **vst**, skip this step — the skill does not draft listing copy
+for Polar. Write the Polar product / release description out of band.
 
-For **m4l**, the previous boundary is the highest `m4l-v*` tag:
+For **m4l**, compute the previous-release boundary (highest `m4l-v*`
+tag) and generate the changelog from the commit log between it and
+HEAD:
 
 ```bash
 PREV=$(git tag -l 'm4l-v*' | sort -V | tail -1)
 git log "${PREV:-}"..HEAD --pretty=format:'- %s' -- m4l/
 ```
 
-For **vst**, no tags exist going forward, so the boundary is the
-most recent commit that bumped `vst/CMakeLists.txt`'s
-`project(Oedipa VERSION …)` line:
-
-```bash
-PREV=$(git log -1 --pretty=format:%H --grep='bump version' -- vst/CMakeLists.txt)
-git log "${PREV:-}"..HEAD --pretty=format:'- %s' -- vst/
-```
-
-If `$PREV` is empty (first release for this target), use the
-project root as the lower bound.
+If `$PREV` is empty (first m4l release), use the project root as the
+lower bound.
 
 Categorize commits by their `type:` prefix into sections:
 
@@ -229,26 +227,20 @@ Drop the `Co-Authored-By` lines and trailing housekeeping noise.
 Keep the section short — release notes are for users, not
 contributors; detailed history is in `git log`.
 
-For the very first release of a target, use a project-intro template
+For the very first m4l release, use a project-intro template
 ("What it does" / "Install" / "Requirements") instead of a changelog.
 
-Write the draft to `/tmp/oedipa-<target>-vX.Y.Z-notes.md` and show
-it to the user. **Wait for explicit "ok" or edit instructions**
-before continuing.
-
-Consumption:
-
-- **m4l** — the file is fed to `gh release create --notes-file` in
-  Step 3.
-- **vst** — the file is the source copy for the paid-platform
-  listing description. Paste it into the platform's release-notes
-  field manually; this skill does no further GH-side work for vst.
+Write the draft to `/tmp/oedipa-m4l-vX.Y.Z-notes.md` and show it to
+the user. **Wait for explicit "ok" or edit instructions** before
+continuing. The file is fed to `gh release create --notes-file` in
+Step 3.
 
 ### Step 3 — Tag, push, create release (m4l only)
 
 For **vst**, skip this step entirely — see the paid-pivot block at
-the top. vst's flow ends after Step 2 with the dmg + drafted notes
-file in place locally; upload happens out of band.
+the top. vst's flow already ended at Step 1.5 with the dmg in
+`dist/` and the CMakeLists bump committed; Polar upload happens out
+of band.
 
 ```bash
 TAG=m4l-vX.Y.Z
@@ -276,14 +268,11 @@ Confirm:
 
 Show the release URL to the user.
 
-### Step 5 — Cleanup
+### Step 5 — Cleanup (m4l only)
 
 ```bash
-rm "/tmp/oedipa-<target>-vX.Y.Z-notes.md"
+rm "/tmp/oedipa-m4l-vX.Y.Z-notes.md"
 ```
-
-For vst, do this only after confirming the notes have been pasted
-into the paid-platform listing.
 
 ## Rules
 
@@ -308,8 +297,8 @@ into the paid-platform listing.
   overwrite. Force-deleting a tag that was already pushed is messy
   and breaks anyone who pulled it.
 - **Notes via `--notes-file`, not `--notes`** (m4l). The temp-file
-  flow lets the user edit before publish. For vst the same file is
-  the source copy for the paid-platform listing.
+  flow lets the user edit before publish. vst has no notes-drafting
+  step — write the Polar listing copy out of band.
 - **Halt on any pre-flight failure.** Don't release past a red
   gate.
 - **Halt on any user-confirmation gate.** Steps 1 (version) and 2
