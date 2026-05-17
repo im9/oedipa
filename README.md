@@ -179,4 +179,13 @@ only when the relevant area is being touched.
 
 ## License
 
-[MIT](LICENSE). Free distribution under the `im9` label.
+Licensed per target:
+
+- `m4l/` — [MIT](m4l/LICENSE). Free to use, modify, and redistribute.
+- `vst/` — [Proprietary, source-available](vst/LICENSE). Read, self-build,
+  and personal non-commercial use are permitted. Redistribution and
+  commercial use require permission from im9. Binaries are sold by im9.
+- `docs/` — [MIT](docs/LICENSE). Shared design notes and ADRs.
+
+Third-party components under `vst/JUCE/`, `vst/clap-juce-extensions/`, and
+the CMake `_deps/` tree retain their own licenses.
