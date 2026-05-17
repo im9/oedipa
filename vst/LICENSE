@@ -1,0 +1,39 @@
+Oedipa VST License
+Copyright (c) 2026 im9. All rights reserved.
+
+This source code is proprietary. It is published in this repository to allow
+inspection, self-build for personal use, and contributions.
+
+Permitted:
+
+- Read and study the source code.
+- Build the software from source and use the resulting binaries for your own
+  personal, non-commercial use.
+- Submit changes back to this repository as pull requests. Such contributions
+  are licensed to the copyright holder under the same terms as this license.
+
+Not permitted without prior written permission from im9:
+
+- Redistribution of this source code, in whole or in part, in original or
+  modified form, in any medium.
+- Redistribution of binaries built from this source code, in original or
+  modified form, in any medium.
+- Any commercial use of this software or any derivative work, including but
+  not limited to sale, paid distribution, bundling with paid products, or
+  use as part of a paid service.
+- Removal or alteration of copyright, trademark, or attribution notices.
+
+Third-party components included or fetched by the build system (including
+JUCE under vst/JUCE/, CLAP under vst/clap-juce-extensions/, and dependencies
+fetched into the CMake _deps/ tree such as Catch2 and nlohmann_json) are
+licensed under their own respective terms; this license does not override
+them. The "Software" in this license refers only to the original code
+authored by im9 in this repository's vst/ directory.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
