@@ -160,9 +160,10 @@ a `README.txt` + an `INSTALL.txt` into `dist/Oedipa.dmg`, and signs
 Required environment:
 
 - `DEVELOPER_TEAM_ID` — Apple Developer Team ID
-- `NOTARY_PROFILE` — keychain profile name (default `oedipa-notary`)
+- `NOTARY_PROFILE` — keychain profile name (default `im9-notary`,
+  shared across im9 plugins)
 
-One-time setup: run `xcrun notarytool store-credentials oedipa-notary
+One-time setup: run `xcrun notarytool store-credentials im9-notary
 --apple-id <id> --team-id <team> --password <app-specific>` to register
 the notarization credentials in the keychain.
 

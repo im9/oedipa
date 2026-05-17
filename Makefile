@@ -15,8 +15,8 @@ release-m4l:
 	@echo "            $(CURDIR)/dist/Oedipa.amxd"
 
 # Requires DEVELOPER_TEAM_ID env var (Apple Developer team identifier);
-# notary keychain profile defaults to oedipa-notary, override with
-# NOTARY_PROFILE.
+# notary keychain profile defaults to im9-notary (shared across im9
+# plugins), override with NOTARY_PROFILE.
 release-vst:
 	cd vst && $(MAKE) build
 	cd vst && ./scripts/codesign.sh

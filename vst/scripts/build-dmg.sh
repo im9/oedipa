@@ -14,7 +14,7 @@ if [[ -z "${DEVELOPER_TEAM_ID:-}" ]]; then
   exit 1
 fi
 
-NOTARY_PROFILE="${NOTARY_PROFILE:-oedipa-notary}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-im9-notary}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARTEFACTS_DIR="$SCRIPT_DIR/../build/Oedipa_artefacts/Release"
