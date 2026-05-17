@@ -61,4 +61,4 @@ FL Studio          Not supported. FL has no MIDI fx routing on any
 License
 -------
 
-MIT — https://github.com/im9/oedipa/blob/main/LICENSE
+Proprietary, source-available — https://github.com/im9/oedipa/blob/main/vst/LICENSE
