@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a versioned per-target release of Oedipa. m4l publishes to GitHub Releases (tag + asset + notes); vst is local-only since the paid pivot (CMakeLists VERSION bump + `make release-vst` to produce signed/notarized dmg AND pkg in dist/, no tag, no GH release — upload to Polar happens out of band). Verifies repo state, bumps semver, runs the build (vst), drafts notes (m4l), and walks each step with explicit user approval. `none` bump (vst only) keeps the current version and regenerates artifacts — for doc-only fixes to bundled files.
+description: Cut a versioned per-target release of Oedipa. m4l publishes to GitHub Releases (tag + asset + notes); vst is local-only since the paid pivot (CMakeLists VERSION bump + `make release-vst` to produce signed/notarized dmg AND pkg in dist/, no tag, no GH release — upload to the paid distribution platform happens out of band). Verifies repo state, bumps semver, runs the build (vst), drafts notes (m4l), and walks each step with explicit user approval. `none` bump (vst only) keeps the current version and regenerates artifacts — for doc-only fixes to bundled files.
 argument-hint: "<m4l|vst> [major|minor|patch|none]"
 allowed-tools: Read, Write, Edit, Bash(git *), Bash(gh *), Bash(stat *), Bash(ls *), Bash(rm /tmp/oedipa-*), Bash(make release-vst), Bash(xcrun stapler validate *)
 ---
@@ -213,15 +213,17 @@ succeed on both. If either check fails, halt — something went wrong
 in build or notarization.
 
 Manual host smoke (Logic AU MIDI FX + Bitwig VST3 MIDI fx) is
-recommended before handing the artifacts off to Polar.
+recommended before handing the artifacts off.
 
 **vst stops here.** Steps 2-5 are m4l-only. Upload both artifacts to
-Polar and write the listing copy out of band.
+the paid distribution platform and write the listing copy out of
+band — the skill does not interact with the platform directly.
 
 ### Step 2 — Draft release notes (m4l only)
 
-For **vst**, skip this step — the skill does not draft listing copy
-for Polar. Write the Polar product / release description out of band.
+For **vst**, skip this step — the skill does not draft listing copy.
+Write the product / release description for the paid distribution
+platform out of band.
 
 For **m4l**, compute the previous-release boundary (highest `m4l-v*`
 tag) and generate the changelog from the commit log between it and
@@ -258,8 +260,8 @@ Step 3.
 
 For **vst**, skip this step entirely — see the paid-pivot block at
 the top. vst's flow already ended at Step 1.6 with both artifacts in
-`dist/` and (when bumping) the CMakeLists bump committed; Polar
-upload happens out of band.
+`dist/` and (when bumping) the CMakeLists bump committed; paid-
+platform upload happens out of band.
 
 ```bash
 TAG=m4l-vX.Y.Z
@@ -328,7 +330,7 @@ rm "/tmp/oedipa-m4l-vX.Y.Z-notes.md"
   and breaks anyone who pulled it.
 - **Notes via `--notes-file`, not `--notes`** (m4l). The temp-file
   flow lets the user edit before publish. vst has no notes-drafting
-  step — write the Polar listing copy out of band.
+  step — write the paid-platform listing copy out of band.
 - **Halt on any pre-flight failure.** Don't release past a red
   gate.
 - **Halt on any user-confirmation gate.** Steps 1 (version) and 2
