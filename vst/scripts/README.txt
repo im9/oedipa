@@ -1,5 +1,5 @@
 Oedipa — Tonnetz-based chord exploration MIDI effect
-im9 / Free distribution
+im9 / Proprietary, source-available
 
 
 About
