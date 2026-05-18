@@ -17,8 +17,13 @@ release-m4l:
 # Requires DEVELOPER_TEAM_ID env var (Apple Developer team identifier);
 # notary keychain profile defaults to im9-notary (shared across im9
 # plugins), override with NOTARY_PROFILE.
+#
+# Produces both dist/Oedipa.dmg (drag-to-install fallback) and
+# dist/Oedipa.pkg (recommended installer with VST3/AU/CLAP per-format
+# choices) — Polar ships both so end users can pick.
 release-vst:
 	cd vst && $(MAKE) build
 	cd vst && ./scripts/codesign.sh
 	cd vst && ./scripts/notarize.sh
 	cd vst && ./scripts/build-dmg.sh
+	cd vst && ./scripts/build-pkg.sh

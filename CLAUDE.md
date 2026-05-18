@@ -227,6 +227,45 @@ which is exactly how the AU click investigation (2026-05-06 → 05-08) burned
 two days before the cause was traced to a `juce::FileLogger` call inside
 `processBlock` (recorded in ADR 008 §2026-05-08 revision).
 
+## Distribution (vst paid)
+
+The vst target ships two macOS artifacts in lockstep: a signed pkg
+installer (recommended) and a signed dmg (drag-to-install fallback for
+users who want a non-standard path). Both produced by `make release-vst`
+from the repo root, both signed + notarized + stapled, both uploaded to
+the paid platform out of band — see ADR 009.
+
+- `dist/Oedipa.pkg` — distribution pkg wrapping per-format component
+  pkgs (`fm.im9.oedipa.{vst3,au,clap}`). System-wide install only
+  (`<domains enable_localSystem="true"/>`, no per-user choice — the
+  two-domain UI shows a confusing "Change Install Location..."
+  back-loop button). The customize step lets the user deselect
+  individual formats. Welcome / license / conclusion screens are
+  localized en + ja under `vst/scripts/pkg-resources/{en,ja}.lproj/`.
+- `dist/Oedipa.dmg` — drag-to-install, no UI flow. Power users place
+  bundles in custom paths from here.
+
+Signing certs (both under the same Apple Developer Program / TEAMID):
+- Bundles signed with **Developer ID Application** by `codesign.sh`
+- pkg signed with **Developer ID Installer** by `build-pkg.sh` via
+  `productsign` (the dmg outer also uses Developer ID Application in
+  `build-dmg.sh`)
+
+**Gotcha (empirical 2026-05-18)**: `productbuild --resources` silently
+drops the entire Resources directory from the output pkg if any
+`<welcome>` / `<license>` / `<conclusion>` `file=` attribute in
+`distribution.xml` omits the file extension. Use `file="welcome.txt"`
+etc. — the man page suggests no-extension works for localized resources,
+but empirically it doesn't.
+
+**Cross-project mirroring**: sister im9 vst plugins (stencil, pointsman,
+future) follow this same pattern. To onboard a new plugin: copy
+`build-pkg.sh` + `distribution.xml` + `pkg-resources/` and adjust plugin
+name / identifiers (`fm.im9.<plugin>.{vst3,au,clap}`). The
+`Makefile`-level `release-<target>` orchestration and the env var
+contract (`DEVELOPER_TEAM_ID` + `NOTARY_PROFILE=im9-notary`) are the
+same across plugins.
+
 ## Conventions
 
 - All in English
