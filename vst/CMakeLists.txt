@@ -56,7 +56,7 @@ target_compile_features(oedipa_engine PUBLIC cxx_std_17)
 # --- Plugin -------------------------------------------------------------------
 juce_add_plugin(Oedipa
     COMPANY_NAME "im9"
-    BUNDLE_ID "com.im9.oedipa"
+    BUNDLE_ID "fm.im9.oedipa"
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
     IS_MIDI_EFFECT TRUE
@@ -121,7 +121,7 @@ target_compile_definitions(Oedipa PRIVATE
 # clap-juce-extensions creates the Oedipa_CLAP target from the existing
 # Oedipa plugin target, producing Oedipa.clap alongside VST3 / AU / Standalone.
 clap_juce_extensions_plugin(TARGET Oedipa
-    CLAP_ID "com.im9.oedipa"
+    CLAP_ID "fm.im9.oedipa"
     CLAP_FEATURES note-effect utility
     CLAP_MANUAL_URL "https://github.com/im9/oedipa"
     CLAP_SUPPORT_URL "https://github.com/im9/oedipa/issues"
