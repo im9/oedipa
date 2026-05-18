@@ -152,16 +152,39 @@ distribution path conventions and the freeze rationale.
 ### VST3 / AU (vst)
 
 `make release-vst` builds the AU + VST3 + CLAP bundles in Release
-mode, signs them with the Developer ID, submits to Apple
-notarization, staples the tickets, packages all three bundles +
-a `README.txt` + an `INSTALL.txt` into `dist/Oedipa.dmg`, and signs
-+ notarizes + staples the dmg itself.
+mode, signs them with the Developer ID Application identity, submits
+each bundle to Apple notarization, staples the tickets, and then
+produces **two** distributable artifacts in lockstep:
+
+- `dist/Oedipa.pkg` — signed installer (recommended). Wraps the three
+  bundles into a single distribution pkg with a customize step
+  (per-format checkboxes) and welcome / license / conclusion screens
+  localized in English + Japanese. Installs system-wide to
+  `/Library/Audio/Plug-Ins/{VST3,Components,CLAP}` after the user
+  enters their admin password. Outer pkg signed with the Developer ID
+  Installer identity (separate cert from the bundle-signing Application
+  identity, under the same TEAMID).
+- `dist/Oedipa.dmg` — drag-to-install (fallback). Contains the three
+  bundles + `INSTALL.txt` + `README.txt`. For users who want to place
+  the bundles in a non-standard path.
+
+Both artifacts are signed, notarized, and stapled. Both are uploaded
+to the paid platform out of band.
 
 Required environment:
 
 - `DEVELOPER_TEAM_ID` — Apple Developer Team ID
 - `NOTARY_PROFILE` — keychain profile name (default `im9-notary`,
   shared across im9 plugins)
+
+Required certs in the keychain (both issued by the Apple Developer
+portal under the same TEAMID, no extra fee beyond the Developer
+Program membership):
+
+- **Developer ID Application** — signs the plug-in bundles and the
+  dmg outer
+- **Developer ID Installer** — signs the pkg outer (used by
+  `productsign` in `vst/scripts/build-pkg.sh`)
 
 One-time setup: run `xcrun notarytool store-credentials im9-notary
 --apple-id <id> --team-id <team> --password <app-specific>` to register

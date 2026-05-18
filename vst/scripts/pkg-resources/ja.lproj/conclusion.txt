@@ -1,0 +1,15 @@
+インストールが完了しました。
+
+Oedipa はシステム全体で利用可能になりました。各 DAW での読み込み場所:
+
+    Logic Pro       ソフトウェア音源トラックの AU MIDI FX スロット
+    Bitwig Studio   音源の前段の Note FX スロット (VST3 / CLAP)
+    Reaper          任意の MIDI / FX チェーンに VST3 / CLAP
+    Studio One      MIDI fx スロットに VST3
+
+ブラウザに Oedipa が表示されない場合は、DAW のプラグインを再スキャンするか、DAW を再起動してください。
+
+プロジェクト: https://github.com/im9/oedipa
+サポート: https://github.com/im9/oedipa/issues
+
+Oedipa をご利用いただきありがとうございます。

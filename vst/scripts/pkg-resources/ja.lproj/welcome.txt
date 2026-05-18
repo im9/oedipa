@@ -1,0 +1,13 @@
+Oedipa インストーラへようこそ。
+
+Oedipa は im9 による Tonnetz ベースのコード探索 MIDI エフェクトです。本インストーラは Oedipa プラグイン (VST3 / AU / CLAP) を Mac の システム共通の Audio Plug-Ins フォルダに配置します。これによりこのマシン上のすべての DAW から Oedipa が利用可能になります。
+
+    /Library/Audio/Plug-Ins/VST3/Oedipa.vst3
+    /Library/Audio/Plug-Ins/Components/Oedipa.component
+    /Library/Audio/Plug-Ins/CLAP/Oedipa.clap
+
+インストール前に管理者パスワードの入力を求められます。
+
+任意のフォルダに自分で配置したい場合は、本インストーラを終了し、代わりに Oedipa.dmg をご利用ください。dmg ならバンドルを好きな場所にドラッグして配置できます。
+
+このあとの「カスタマイズ」ステップで、不要なプラグインフォーマットの選択を解除できます (例: Logic だけで使うので CLAP は不要、など)。デフォルトでは 3 形式とも選択されています。
