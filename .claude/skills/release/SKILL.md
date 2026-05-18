@@ -1,15 +1,16 @@
 ---
 name: release
-description: Cut a versioned per-target release of Oedipa. m4l publishes to GitHub Releases (tag + asset + notes); vst is local-only since the paid pivot (CMakeLists VERSION bump + signed/notarized dmg AND pkg in dist/, no tag, no GH release — upload to Polar happens out of band). Verifies repo state, bumps semver, drafts notes from the per-target commit log (m4l only), and runs the publish flow with explicit user approval at each step.
-argument-hint: "<m4l|vst> [major|minor|patch]"
-allowed-tools: Read, Write, Edit, Bash(git *), Bash(gh *), Bash(stat *), Bash(ls *), Bash(rm /tmp/oedipa-*)
+description: Cut a versioned per-target release of Oedipa. m4l publishes to GitHub Releases (tag + asset + notes); vst is local-only since the paid pivot (CMakeLists VERSION bump + `make release-vst` to produce signed/notarized dmg AND pkg in dist/, no tag, no GH release — upload to Polar happens out of band). Verifies repo state, bumps semver, runs the build (vst), drafts notes (m4l), and walks each step with explicit user approval. `none` bump (vst only) keeps the current version and regenerates artifacts — for doc-only fixes to bundled files.
+argument-hint: "<m4l|vst> [major|minor|patch|none]"
+allowed-tools: Read, Write, Edit, Bash(git *), Bash(gh *), Bash(stat *), Bash(ls *), Bash(rm /tmp/oedipa-*), Bash(make release-vst), Bash(xcrun stapler validate *)
 ---
 
 # Release Oedipa
 
 Cut a versioned per-target release. The first $ARGUMENT selects the
 target (`m4l` or `vst`); the second is the bump (`major` / `minor` /
-`patch`, default `patch`).
+`patch` / `none`, default `patch`). `none` is vst-only — keep the
+current version and regenerate artifacts only.
 
 m4l publishes to GitHub Releases with tags namespaced as
 `m4l-vX.Y.Z`. vst is local-only since the paid pivot — no tag, no GH
@@ -36,12 +37,13 @@ The release asset is target-specific:
 
 > **⚠️ vst paid pivot (2026-05-11; Polar selected 2026-05-16).** vst does
 > not publish to GitHub. No tag is created, no GH release is created, no
-> asset is uploaded. `/release vst` ends locally at Step 1.5: a
+> asset is uploaded. `/release vst` ends locally at Step 1.6: a
 > signed/notarized/stapled `dist/Oedipa.pkg` **and** `dist/Oedipa.dmg`
-> in `dist/` + a CMakeLists VERSION bump committed to main. Uploading
-> both artifacts to Polar and writing the listing copy happens out of
-> band, outside this skill — the skill does not draft release notes for
-> vst.
+> in `dist/` + (when bumping) a CMakeLists VERSION bump committed to
+> main. The build itself (`make release-vst`) runs inside the skill at
+> Step 1.6. Uploading both artifacts to Polar and writing the listing
+> copy happens out of band, outside this skill — the skill does not
+> draft release notes for vst.
 >
 > Existing `vst-v0.1.0` / `v0.1.1` / `v0.1.2` tags remain in the repo as
 > source history; their GH release entries (which previously carried the
@@ -82,12 +84,13 @@ The most recent completed run for the current HEAD SHA must have
 ask. Don't ship distribution artifacts past a red gate — chasing
 "probably just CI flake" has historically masked real regressions.
 
-### Check 4 — Asset exists and reflects current target source
+### Check 4 — Asset reflects current source (m4l only)
 
-The asset is gitignored, so it lives only on the build machine.
-Verify per target.
-
-#### m4l target
+For **m4l**, the asset is produced by manual Max freeze (no CLI
+freeze available), so this is a pre-flight gate — the user has to
+have done the freeze before the skill runs. For **vst**, skip this
+check; the build is run by the skill itself in Step 1.6, and the
+artifact freshness check moves there too.
 
 ```bash
 ls -la dist/Oedipa.amxd
@@ -112,58 +115,31 @@ Live track is recommended before tagging** — drag `dist/Oedipa.amxd`
 onto a new MIDI track, confirm it loads, plays, slot rehydrate
 works. CI does not (and cannot) cover this.
 
-#### vst target
-
-```bash
-ls -la dist/Oedipa.pkg dist/Oedipa.dmg
-stat -f '%m' dist/Oedipa.pkg                        # mtime as epoch
-stat -f '%m' dist/Oedipa.dmg                        # mtime as epoch
-git log -1 --format=%ct -- vst/Source/ \
-                            vst/CMakeLists.txt \
-                            vst/scripts/ \
-                            vst/tests/                   # latest vst-source commit time
-```
-
-Both `dist/Oedipa.pkg` AND `dist/Oedipa.dmg` mtimes must be **>=** the
-latest vst-source commit time. If either is older, halt and remind:
-
-> Run `make release-vst` to rebuild + sign + notarize + dmg + pkg.
-> Requires `DEVELOPER_TEAM_ID` env var + `im9-notary` keychain
-> profile + `Developer ID Application` and `Developer ID Installer`
-> certs in the login keychain. See README §Distribution → §VST3 / AU.
-
-Also verify `vst/CMakeLists.txt`'s `project(Oedipa VERSION X.Y.Z)`
-matches the version about to ship — the plist version the plugin
-reports to the host (and the `v…` label drawn in the editor header)
-is sourced from this line. If it doesn't match, bump first via the
-Drafting Step 1.5 below; both artifacts must be rebuilt after the
-bump so the binary carries the right version.
-
-Manual host smoke (Logic AU MIDI FX + Bitwig VST3 MIDI fx) is
-recommended before handing the artifacts off. `xcrun stapler validate`
-on both is a cheap final check:
-
-```bash
-xcrun stapler validate dist/Oedipa.pkg
-xcrun stapler validate dist/Oedipa.dmg
-```
-
 ## Drafting
 
 After pre-flight passes:
 
 ### Step 1 — Determine next version
 
+The second $ARGUMENT is the bump (default `patch`). `none` is
+**vst-only** and means "keep the current version, just regenerate
+artifacts" — useful when only bundled docs / readmes change and the
+plug-in binary doesn't actually need a new version.
+
 For **m4l**, parse the highest `m4l-v*` tag and bump per the second
-$ARGUMENT (default `patch`):
+$ARGUMENT:
 
 ```bash
 git tag -l 'm4l-v*' | sort -V | tail -1
 ```
 
+(`none` is rejected for m4l — m4l version metadata isn't in-tree, so
+re-freezing at the same version would just produce a duplicate tag,
+which the skill blocks.)
+
 For **vst**, no tags are created anymore — the in-tree
 `project(Oedipa VERSION X.Y.Z)` line in `vst/CMakeLists.txt` is the
-authoritative previous version. Bump from there:
+authoritative previous version. Bump from there, or keep with `none`:
 
 ```bash
 grep '^project(Oedipa VERSION' vst/CMakeLists.txt
@@ -175,35 +151,72 @@ If no prior version exists for this target, propose `m4l-v0.1.0` /
 Show the proposed version to the user and **confirm before
 proceeding**. The user can override.
 
-### Step 1.5 — Bump version metadata (vst only)
+### Step 1.5 — Bump version metadata (vst only; skipped on `none`)
 
-The plist version reported to the DAW and the `v…` label drawn in
-the editor header both come from `project(Oedipa VERSION X.Y.Z)` at
-the top of `vst/CMakeLists.txt`. If it doesn't already match the
-version confirmed in Step 1, bump it now:
+If Step 1 resolved to a new version (bump): edit
+`vst/CMakeLists.txt` so `project(Oedipa VERSION X.Y.Z)` matches the
+target version, commit, and push to main BEFORE the build runs in
+Step 1.6. The plist version reported to the DAW and the `v…` label
+drawn in the editor header both come from this line.
 
 ```bash
 # In vst/CMakeLists.txt, line 2:
 # project(Oedipa VERSION <old>) → project(Oedipa VERSION <new>)
-```
-
-Then commit the bump and push to main BEFORE rebuilding the dmg:
-
-```bash
 git add vst/CMakeLists.txt
 git commit -m "chore(vst): bump version to X.Y.Z"
 git push origin main
 ```
 
-Re-run `make release-vst` so both the dmg and the pkg carry the
-bumped version, then re-run Check 4 to confirm both mtimes are fresh.
-
-**vst stops here.** After Check 4 passes against the rebuilt dmg + pkg,
-the skill is done — Steps 2-5 are m4l-only. Hand both artifacts off to
-Polar + write the listing copy out of band.
+If Step 1 was `none` (regen at same version): skip this step
+entirely — nothing to commit, nothing to push. Proceed to Step 1.6
+so the build picks up whatever other source changes triggered the
+regen (e.g. bundled README / INSTALL.txt fixes).
 
 For m4l this step is skipped — m4l version metadata isn't
 in-tree (the freeze captures whatever is on disk).
+
+### Step 1.6 — Build and verify (vst only)
+
+Run `make release-vst` to produce both artifacts (codesign + notarize
++ staple + dmg + pkg are wrapped in the script chain):
+
+```bash
+make release-vst
+```
+
+This takes a few minutes — notarization is the long leg (waits on
+Apple's service). Requires `DEVELOPER_TEAM_ID` env var +
+`im9-notary` keychain profile + `Developer ID Application` and
+`Developer ID Installer` certs in the login keychain. If
+`make release-vst` fails, halt and surface the error; do not retry
+blindly — notarization rejections, expired certs, and missing env
+all need investigation before re-run.
+
+After build, verify both artifacts are present, fresh, and have a
+stapled notarization ticket:
+
+```bash
+ls -la dist/Oedipa.pkg dist/Oedipa.dmg
+stat -f '%m' dist/Oedipa.pkg                        # mtime as epoch
+stat -f '%m' dist/Oedipa.dmg                        # mtime as epoch
+git log -1 --format=%ct -- vst/Source/ \
+                            vst/CMakeLists.txt \
+                            vst/scripts/ \
+                            vst/tests/              # latest vst-source commit time
+xcrun stapler validate dist/Oedipa.pkg
+xcrun stapler validate dist/Oedipa.dmg
+```
+
+Both `dist/Oedipa.pkg` AND `dist/Oedipa.dmg` mtimes must be **>=**
+the latest vst-source commit time, and `stapler validate` must
+succeed on both. If either check fails, halt — something went wrong
+in build or notarization.
+
+Manual host smoke (Logic AU MIDI FX + Bitwig VST3 MIDI fx) is
+recommended before handing the artifacts off to Polar.
+
+**vst stops here.** Steps 2-5 are m4l-only. Upload both artifacts to
+Polar and write the listing copy out of band.
 
 ### Step 2 — Draft release notes (m4l only)
 
@@ -244,9 +257,9 @@ Step 3.
 ### Step 3 — Tag, push, create release (m4l only)
 
 For **vst**, skip this step entirely — see the paid-pivot block at
-the top. vst's flow already ended at Step 1.5 with the dmg in
-`dist/` and the CMakeLists bump committed; Polar upload happens out
-of band.
+the top. vst's flow already ended at Step 1.6 with both artifacts in
+`dist/` and (when bumping) the CMakeLists bump committed; Polar
+upload happens out of band.
 
 ```bash
 TAG=m4l-vX.Y.Z
@@ -292,15 +305,23 @@ rm "/tmp/oedipa-m4l-vX.Y.Z-notes.md"
   handed off to the paid platform out of band.
 - **vst version source of record = CMakeLists.** Since vst has no
   tags going forward, `project(Oedipa VERSION X.Y.Z)` in
-  `vst/CMakeLists.txt` is the single authoritative version. Bump it
-  on every vst release (Step 1.5) and commit before building the
-  dmg.
+  `vst/CMakeLists.txt` is the single authoritative version. Bump at
+  Step 1.5 (skipped on `none`) and commit + push before Step 1.6
+  builds the artifacts.
 - **Manual Freeze required for m4l.** Max has no CLI freeze; this
   skill does not automate it.
-- **`make release-vst` required for vst.** Both the dmg and the pkg
-  are built + signed + notarized + stapled by the script chain
-  (`codesign.sh` → `notarize.sh` → `build-dmg.sh` → `build-pkg.sh`).
-  This skill does not re-run them.
+- **`make release-vst` runs inside the skill (Step 1.6).** Both the
+  dmg and the pkg are built + signed + notarized + stapled by the
+  script chain (`codesign.sh` → `notarize.sh` → `build-dmg.sh` →
+  `build-pkg.sh`). The skill invokes it after Step 1.5 — the user
+  doesn't run it manually. Requires `DEVELOPER_TEAM_ID` +
+  `im9-notary` keychain profile + signing certs in the login
+  keychain (see ADR 009).
+- **`none` bump is vst-only.** A vst regen at the same version is
+  for doc-only fixes (bundled README / INSTALL.txt) where the
+  plug-in binary doesn't need a version change. Step 1.5 is skipped;
+  Step 1.6 still rebuilds artifacts so the new bundled files land in
+  dmg + pkg.
 - **Tag once, never re-tag (m4l).** If an `m4l-v*` tag for the
   proposed version already exists, bump again rather than
   overwrite. Force-deleting a tag that was already pushed is messy
