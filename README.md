@@ -44,6 +44,8 @@ platform will be announced. Source is public and self-build is supported
 Studio (CLAP / VST3 MIDI fx). See [DAW support](#daw-support) below
 for the host compatibility matrix.
 
+![Oedipa VST plug-in window: Tonnetz lattice on the left, parameter sidebar on the right](docs/img/vst.png)
+
 `app/` (iOS) is planned — see [Targets](#targets).
 
 ## Install
