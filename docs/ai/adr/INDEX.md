@@ -27,6 +27,7 @@ only when relevant to the current task.
 | #   | Title | Status | Notes |
 |-----|-------|--------|-------|
 | 001 | [Tonnetz Engine Interface](archive/001-tonnetz-engine-interface.md) | Implemented | Pure-function API; P/L/R semantics, voicing, walk state, shared test vectors. Reference impl in m4l |
+| 011 | [Oedipa v1.0](011-oedipa-v1.md) | Proposed | v1.0 scope + 4-phase roadmap (Phase 0 im9 vst aesthetic direction → Phase 1 spec → Phase 2 implementation → Phase 3 release); engine vocabulary additions (N/S/H, aug/dim, inversion, per-cell offset, cell-leave mutation, Euclidean rhythm); m4l separate-window UI for vst-parity. 5 open questions including 9/11/13 extensions yes/no. |
 
 ## M4L
 
