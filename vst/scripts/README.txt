@@ -1,4 +1,4 @@
-Oedipa — Tonnetz-based chord exploration MIDI effect
+Oedipa __VERSION__ — Tonnetz-based chord exploration MIDI effect
 im9 / Proprietary, source-available
 
 

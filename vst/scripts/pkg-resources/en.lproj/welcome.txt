@@ -1,4 +1,4 @@
-Welcome to the Oedipa installer.
+Welcome to the Oedipa __VERSION__ installer.
 
 Oedipa is a Tonnetz-based chord-exploration MIDI effect by im9. This installer places the Oedipa plug-in (VST3, AU, and CLAP formats) into the system-wide Audio Plug-Ins folders, so any DAW on this Mac can find it:
 
