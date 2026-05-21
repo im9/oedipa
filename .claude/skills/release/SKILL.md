@@ -155,14 +155,25 @@ proceeding**. The user can override.
 
 If Step 1 resolved to a new version (bump): edit
 `vst/CMakeLists.txt` so `project(Oedipa VERSION X.Y.Z)` matches the
-target version, commit, and push to main BEFORE the build runs in
-Step 1.6. The plist version reported to the DAW and the `v…` label
-drawn in the editor header both come from this line.
+target version. Also prompt the user to add a Changelog entry to
+`vst/scripts/README.txt` describing what changed in this release —
+that file ships inside the dmg and is the only user-visible
+changelog (vst has no GH release notes since the paid pivot). Wait
+for the user to write the entry; do not auto-generate from `git log`.
+
+Then commit and push to main BEFORE the build runs in Step 1.6. The
+plist version reported to the DAW and the `v…` label drawn in the
+editor header both come from the CMakeLists line; the `__VERSION__`
+placeholder in welcome / conclusion / INSTALL / README files is
+substituted at build time by `build-pkg.sh` / `build-dmg.sh` (do not
+hard-code the version in those files).
 
 ```bash
 # In vst/CMakeLists.txt, line 2:
 # project(Oedipa VERSION <old>) → project(Oedipa VERSION <new>)
-git add vst/CMakeLists.txt
+# Then add a Changelog entry to vst/scripts/README.txt (user writes
+# the prose; pause until they confirm).
+git add vst/CMakeLists.txt vst/scripts/README.txt
 git commit -m "chore(vst): bump version to X.Y.Z"
 git push origin main
 ```

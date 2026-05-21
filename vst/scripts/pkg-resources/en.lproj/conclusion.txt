@@ -1,4 +1,4 @@
-Installation complete.
+Oedipa __VERSION__ — installation complete.
 
 Oedipa is now available system-wide. Where to find it:
 

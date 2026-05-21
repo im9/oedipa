@@ -97,10 +97,19 @@ pkgbuild --root "$STAGING/clap" \
 DIST_XML="$STAGING/distribution.xml"
 sed "s/__VERSION__/$VERSION/g" "$DIST_XML_TEMPLATE" > "$DIST_XML"
 
+# Stage pkg-resources to a temp tree so __VERSION__ in the welcome /
+# conclusion screens (both en + ja lproj) can be substituted. Same token
+# convention as distribution.xml above. Single source of truth =
+# CMakeLists.
+STAGED_RESOURCES="$STAGING/pkg-resources"
+cp -R "$PKG_RESOURCES" "$STAGED_RESOURCES"
+find "$STAGED_RESOURCES" -type f -name '*.txt' -exec \
+  sed -i '' "s/__VERSION__/v$VERSION/g" {} +
+
 echo "Assembling distribution pkg"
 productbuild --distribution "$DIST_XML" \
              --package-path "$STAGING" \
-             --resources "$PKG_RESOURCES" \
+             --resources "$STAGED_RESOURCES" \
              "$STAGING/Oedipa-unsigned.pkg"
 
 # productsign auto-selects the "Developer ID Installer" identity that

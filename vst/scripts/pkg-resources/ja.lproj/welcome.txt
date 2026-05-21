@@ -1,4 +1,4 @@
-Oedipa インストーラへようこそ。
+Oedipa __VERSION__ インストーラへようこそ。
 
 Oedipa は im9 による Tonnetz ベースのコード探索 MIDI エフェクトです。本インストーラは Oedipa プラグイン (VST3 / AU / CLAP) を Mac の システム共通の Audio Plug-Ins フォルダに配置します。これによりこのマシン上のすべての DAW から Oedipa が利用可能になります。
 

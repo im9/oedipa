@@ -17,11 +17,23 @@ fi
 NOTARY_PROFILE="${NOTARY_PROFILE:-im9-notary}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ARTEFACTS_DIR="$SCRIPT_DIR/../build/Oedipa_artefacts/Release"
-DIST_DIR="$SCRIPT_DIR/../../dist"
+VST_DIR="$SCRIPT_DIR/.."
+ARTEFACTS_DIR="$VST_DIR/build/Oedipa_artefacts/Release"
+DIST_DIR="$VST_DIR/../dist"
 DMG_PATH="$DIST_DIR/Oedipa.dmg"
 INSTALL_TXT="$SCRIPT_DIR/INSTALL.txt"
 README_TXT="$SCRIPT_DIR/README.txt"
+
+# Parse version from CMakeLists.txt (single source of truth — same line
+# build-pkg.sh reads; substituted into the __VERSION__ token in
+# INSTALL.txt and README.txt headers when staging).
+VERSION="$(grep -E '^project\(Oedipa VERSION' "$VST_DIR/CMakeLists.txt" \
+  | sed -E 's/.*VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+if [[ -z "$VERSION" ]]; then
+  echo "error: could not parse version from $VST_DIR/CMakeLists.txt" >&2
+  exit 1
+fi
+echo "Version: $VERSION"
 
 AU_BUNDLE="$ARTEFACTS_DIR/AU/Oedipa.component"
 VST3_BUNDLE="$ARTEFACTS_DIR/VST3/Oedipa.vst3"
@@ -51,8 +63,10 @@ echo "Staging dmg contents in $STAGING"
 cp -R "$AU_BUNDLE" "$STAGING/"
 cp -R "$VST3_BUNDLE" "$STAGING/"
 cp -R "$CLAP_BUNDLE" "$STAGING/"
-cp "$INSTALL_TXT" "$STAGING/"
-cp "$README_TXT" "$STAGING/"
+# Substitute __VERSION__ in the header of each doc when staging. Source
+# files keep the placeholder so the in-tree text is version-agnostic.
+sed "s/__VERSION__/v$VERSION/g" "$INSTALL_TXT" > "$STAGING/INSTALL.txt"
+sed "s/__VERSION__/v$VERSION/g" "$README_TXT"  > "$STAGING/README.txt"
 
 echo "Creating $DMG_PATH (HFS+, UDZO compressed)"
 rm -f "$DMG_PATH"
