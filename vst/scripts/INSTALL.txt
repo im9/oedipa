@@ -34,10 +34,6 @@ Reaper             VST3 in any FX chain, or CLAP via the FX chain
                    (CLAP load verified 2026-05-09). Best-effort,
                    not formally tested for v1.
 
-Studio One         VST3 in MIDI fx slot. Best-effort, not formally
-                   tested for v1. The CLAP build is also produced
-                   but has not been verified in Studio One.
-
 Ableton Live       Use the Max for Live device (m4l target) instead.
                    Live does not accept third-party VST3 / AU plug-
                    ins in its MIDI Effect rack and does not host
@@ -49,6 +45,14 @@ Cubase / Nuendo    Not supported. The VST3 spec has no MIDI Effect
                    Instrument with two-track MIDI-out routing works
                    mechanically but conflicts with the "MIDI fx,
                    not synth" identity Oedipa is built on.
+
+Studio One         Not supported. Studio One's Note FX slot accepts
+                   only PreSonus's own bundled MIDI plug-ins; third-
+                   party VST3 / CLAP are rejected by host policy
+                   (unchanged through Studio One 6 / 7). The multi-
+                   track MIDI-routing workaround exists but conflicts
+                   with the "MIDI fx, not synth" identity, like the
+                   Cubase case above.
 
 FL Studio          Not supported. FL has no MIDI fx routing on any
                    plug-in surface: VST3 is rejected categorically
