@@ -46,7 +46,7 @@
     <choice id="fm.im9.oedipa.vst3"
             visible="true"
             title="VST3"
-            description="Oedipa VST3 plug-in. Works in Bitwig Studio, Reaper, Studio One, and other VST3 hosts that allow plug-ins in MIDI / note-fx slots.">
+            description="Oedipa VST3 plug-in. Works in Bitwig Studio, Reaper, and other VST3 hosts that allow plug-ins in MIDI / note-fx slots.">
         <pkg-ref id="fm.im9.oedipa.vst3"/>
     </choice>
     <choice id="fm.im9.oedipa.au"

@@ -75,9 +75,8 @@ FX* slot, then route the track through a synth or sampler.
 **Bitwig Studio** — load as a *CLAP* or *VST3* note effect in front
 of an instrument. CLAP is Bitwig's native plug-in format.
 
-See [DAW support](#daw-support) for per-host compatibility. Reaper /
-Studio One are best-effort; Ableton Live uses the [Max for Live
-target](m4l/) instead.
+See [DAW support](#daw-support) for per-host compatibility. Reaper is
+best-effort; Ableton Live uses the [Max for Live target](m4l/) instead.
 
 ## Targets
 
@@ -106,9 +105,9 @@ the table below covers per-host compatibility on macOS.
 | Logic Pro | AU | ✅ Primary | AU MIDI FX slot on a software-instrument track. (Logic does not host CLAP.) |
 | Bitwig Studio | VST3 / CLAP | ✅ Primary | Note FX slot in front of an instrument. CLAP is Bitwig's native plug-in format. VST3 verified click-free 2026-05-08; CLAP load verified 2026-05-09. |
 | Reaper | VST3 / CLAP | ⚠️ Best-effort | VST3 in any FX chain; CLAP load verified 2026-05-09. Not formally tested for v1. |
-| Studio One | VST3 | ⚠️ Best-effort | VST3 in MIDI fx slot. Not formally tested for v1. CLAP build is also produced but has not been verified in Studio One. |
 | Ableton Live | — | Use m4l/ | Live does not accept third-party VST3 / AU plug-ins in its MIDI Effect rack (host design, not a format limitation) and does not host CLAP. The [Max for Live device](m4l/) is the supported path. |
 | Cubase / Nuendo | — | ❌ Out of scope | The VST3 spec has no "MIDI Effect" sub-category and Cubase rejects third-party VST3 in its MIDI Inserts slot (Steinberg policy). Loading Oedipa as an Instrument with two-track MIDI-out routing works mechanically, but conflicts with the "MIDI fx, not synth" identity Oedipa is built on. The instrument-disguise topology was rejected for v1; revisit only if the Cubase ecosystem opens its MIDI Inserts to third-party VST3. |
+| Studio One | — | ❌ Out of scope | Studio One's Note FX slot accepts only PreSonus's own bundled MIDI plug-ins; third-party VST3 (and CLAP) are rejected by host policy, unchanged through Studio One 6 / 7 (PreSonus KB / forum). A multi-track MIDI-routing workaround exists (run Oedipa on a separate track and route its MIDI output to an instrument track) but it conflicts with the "MIDI fx, not synth" identity Oedipa is built on — the same instrument-disguise topology rejected for Cubase. Revisit only if PreSonus opens Note FX to third-party plug-ins. |
 | FL Studio | — | ❌ Out of scope | FL has no MIDI fx routing on any plug-in surface: VST3 is rejected categorically (channel slot accepts only instruments, mixer hosts only audio fx, no MIDI fx slot exists), and the CLAP build loads but FL's CLAP host does not bridge `note-effect` plug-ins to FL's internal note bus (verified empirically 2026-05-09, ADR 010 Phase 5). Reconsider only if FL adds a native MIDI fx track concept or CLAP `note-effect` routing in its host bridge. |
 
 ## Origin
