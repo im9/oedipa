@@ -89,12 +89,16 @@ the entry into `oedipa-host.mjs`).
 the npm version conflicts with the injected one. See
 `m4l/oedipa-host.entry.mjs` header comment.
 
-**Distribution (release builds).** `make release` (from repo root) runs
-build + bake and prepares `dist/`. The baked dev `.amxd` references
-sibling JS on disk, so it only loads on the build machine. To ship: open
-`m4l/Oedipa.amxd` in Max → click the **snowflake (Freeze)** button in the
-patcher toolbar (inlines every referenced JS) → *File → Save As*
-`dist/Oedipa.amxd`. The frozen file is self-contained and works on any
+**Distribution (release builds).** `make release-m4l VERSION=X.Y.Z`
+(from repo root) builds + bakes the dev `m4l/Oedipa.amxd` and copies
+it to `m4l/Oedipa-vX.Y.Z.amxd` (un-frozen staging file, gitignored).
+The baked dev `.amxd` references sibling JS on disk, so it only loads
+on the build machine. To ship: open `m4l/Oedipa-vX.Y.Z.amxd` in Max →
+click the **snowflake (Freeze)** button in the patcher toolbar
+(inlines every referenced JS) → *File → Save As* → navigate to
+`dist/` (the default filename `Oedipa-vX.Y.Z.amxd` is already
+correct; just confirm the location). `dist/` only ever holds frozen /
+shipped artefacts. The frozen file is self-contained and works on any
 Live install. See ADR 007.
 
 ### vst/
@@ -235,15 +239,20 @@ users who want a non-standard path). Both produced by `make release-vst`
 from the repo root, both signed + notarized + stapled, both uploaded to
 the paid platform out of band — see ADR 009.
 
-- `dist/Oedipa.pkg` — distribution pkg wrapping per-format component
-  pkgs (`fm.im9.oedipa.{vst3,au,clap}`). System-wide install only
-  (`<domains enable_localSystem="true"/>`, no per-user choice — the
-  two-domain UI shows a confusing "Change Install Location..."
+Both filenames embed the version (parsed by `build-pkg.sh` /
+`build-dmg.sh` from `vst/CMakeLists.txt` — single source of truth).
+The dmg's mount-time `volname` also carries the version (`Oedipa
+vX.Y.Z`) so the Finder shows which build is mounted.
+
+- `dist/Oedipa-vX.Y.Z.pkg` — distribution pkg wrapping per-format
+  component pkgs (`fm.im9.oedipa.{vst3,au,clap}`). System-wide install
+  only (`<domains enable_localSystem="true"/>`, no per-user choice —
+  the two-domain UI shows a confusing "Change Install Location..."
   back-loop button). The customize step lets the user deselect
   individual formats. Welcome / license / conclusion screens are
   localized en + ja under `vst/scripts/pkg-resources/{en,ja}.lproj/`.
-- `dist/Oedipa.dmg` — drag-to-install, no UI flow. Power users place
-  bundles in custom paths from here.
+- `dist/Oedipa-vX.Y.Z.dmg` — drag-to-install, no UI flow. Power users
+  place bundles in custom paths from here.
 
 Signing certs (both under the same Apple Developer Program / TEAMID):
 - Bundles signed with **Developer ID Application** by `codesign.sh`

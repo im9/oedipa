@@ -2,7 +2,7 @@
 name: release
 description: Cut a versioned per-target release of Oedipa. m4l publishes to GitHub Releases (tag + asset + notes); vst is local-only since the paid pivot (CMakeLists VERSION bump + `make release-vst` to produce signed/notarized dmg AND pkg in dist/, no tag, no GH release — upload to the paid distribution platform happens out of band). Verifies repo state, bumps semver, runs the build (vst), drafts notes (m4l), and walks each step with explicit user approval. `none` bump (vst only) keeps the current version and regenerates artifacts — for doc-only fixes to bundled files.
 argument-hint: "<m4l|vst> [major|minor|patch|none]"
-allowed-tools: Read, Write, Edit, Bash(git *), Bash(gh *), Bash(stat *), Bash(ls *), Bash(rm /tmp/oedipa-*), Bash(make release-vst), Bash(xcrun stapler validate *)
+allowed-tools: Read, Write, Edit, Bash(git *), Bash(gh *), Bash(stat *), Bash(ls *), Bash(rm /tmp/oedipa-*), Bash(make release-vst), Bash(make release-m4l*), Bash(xcrun stapler validate *)
 ---
 
 # Release Oedipa
@@ -23,14 +23,22 @@ as historical. The first per-target release of m4l is `m4l-v0.1.1`
 (or later); vst's `vst-v0.1.0` / `v0.1.1` / `v0.1.2` tags remain in
 the repo as source history with no GH release entries.
 
-The release asset is target-specific:
+The release asset is target-specific, and the filename always
+embeds the version (`-vX.Y.Z`) so multiple builds can coexist in
+`dist/` and the Save As default name in Max already carries the
+version. `dist/` only ever holds frozen / signed-and-notarized
+artefacts.
 
-- **m4l** → `dist/Oedipa.amxd` — frozen `.amxd`. Manual freeze in
-  Max required (snowflake button → *File → Save As*). See
+- **m4l** → `dist/Oedipa-vX.Y.Z.amxd` — frozen `.amxd`. The skill
+  bakes + stages an un-frozen versioned copy at
+  `m4l/Oedipa-vX.Y.Z.amxd` (gitignored) in Step 1.6; the user opens
+  that file in Max, Freezes, and Save-As's into `dist/` (default
+  filename is already correct). See
   [ADR 007](../../../docs/ai/adr/archive/007-m4l-distribution.md).
-- **vst** → `dist/Oedipa.pkg` (recommended installer) **and**
-  `dist/Oedipa.dmg` (drag-to-install fallback) — both signed /
-  notarized / stapled, built in lockstep by `make release-vst`.
+- **vst** → `dist/Oedipa-vX.Y.Z.pkg` (recommended installer) **and**
+  `dist/Oedipa-vX.Y.Z.dmg` (drag-to-install fallback) — both signed /
+  notarized / stapled, built in lockstep by `make release-vst`. The
+  build scripts read the version from `vst/CMakeLists.txt`.
   Distribution is via the paid platform (out of band, not GitHub).
   Both artifacts are uploaded. See
   [ADR 009](../../../docs/ai/adr/archive/009-vst-distribution.md).
@@ -38,12 +46,12 @@ The release asset is target-specific:
 > **⚠️ vst paid pivot (2026-05-11; Polar selected 2026-05-16).** vst does
 > not publish to GitHub. No tag is created, no GH release is created, no
 > asset is uploaded. `/release vst` ends locally at Step 1.6: a
-> signed/notarized/stapled `dist/Oedipa.pkg` **and** `dist/Oedipa.dmg`
-> in `dist/` + (when bumping) a CMakeLists VERSION bump committed to
-> main. The build itself (`make release-vst`) runs inside the skill at
-> Step 1.6. Uploading both artifacts to Polar and writing the listing
-> copy happens out of band, outside this skill — the skill does not
-> draft release notes for vst.
+> signed/notarized/stapled `dist/Oedipa-vX.Y.Z.pkg` **and**
+> `dist/Oedipa-vX.Y.Z.dmg` in `dist/` + (when bumping) a CMakeLists
+> VERSION bump committed to main. The build itself (`make release-vst`)
+> runs inside the skill at Step 1.6. Uploading both artifacts to Polar
+> and writing the listing copy happens out of band, outside this skill —
+> the skill does not draft release notes for vst.
 >
 > Existing `vst-v0.1.0` / `v0.1.1` / `v0.1.2` tags remain in the repo as
 > source history; their GH release entries (which previously carried the
@@ -84,36 +92,11 @@ The most recent completed run for the current HEAD SHA must have
 ask. Don't ship distribution artifacts past a red gate — chasing
 "probably just CI flake" has historically masked real regressions.
 
-### Check 4 — Asset reflects current source (m4l only)
-
-For **m4l**, the asset is produced by manual Max freeze (no CLI
-freeze available), so this is a pre-flight gate — the user has to
-have done the freeze before the skill runs. For **vst**, skip this
-check; the build is run by the skill itself in Step 1.6, and the
-artifact freshness check moves there too.
-
-```bash
-ls -la dist/Oedipa.amxd
-stat -f '%m' dist/Oedipa.amxd                       # mtime as epoch
-git log -1 --format=%ct -- m4l/Oedipa.maxpat \
-                            m4l/cellstrip-renderer.js \
-                            m4l/lattice-renderer.js \
-                            m4l/separator-renderer.js \
-                            m4l/oedipa-host.entry.mjs \
-                            m4l/engine m4l/host          # latest m4l-source commit time
-```
-
-`dist/Oedipa.amxd` mtime must be **>=** the latest m4l-source
-commit time. If older, halt and remind:
-
-> Open `m4l/Oedipa.amxd` in Max → click the snowflake (Freeze)
-> button in the patcher toolbar → *File → Save As*
-> `dist/Oedipa.amxd`.
-
-Even when the mtime check passes, **manual smoke test in a fresh
-Live track is recommended before tagging** — drag `dist/Oedipa.amxd`
-onto a new MIDI track, confirm it loads, plays, slot rehydrate
-works. CI does not (and cannot) cover this.
+(For **m4l**, the asset freshness gate now lives in Step 1.6 — the
+bake + stage + freeze flow runs after Step 1 picks the version, so
+the dist filename `dist/Oedipa-vX.Y.Z.amxd` isn't known yet at
+pre-flight time. For **vst**, the build is run by the skill itself
+in Step 1.6 and the artifact freshness check lives there too.)
 
 ## Drafting
 
@@ -186,10 +169,11 @@ regen (e.g. bundled README / INSTALL.txt fixes).
 For m4l this step is skipped — m4l version metadata isn't
 in-tree (the freeze captures whatever is on disk).
 
-### Step 1.6 — Build and verify (vst only)
+### Step 1.6 — Build / stage and verify (target-specific)
 
-Run `make release-vst` to produce both artifacts (codesign + notarize
-+ staple + dmg + pkg are wrapped in the script chain):
+For **vst**, run `make release-vst` to produce both artifacts
+(codesign + notarize + staple + dmg + pkg are wrapped in the script
+chain):
 
 ```bash
 make release-vst
@@ -204,24 +188,25 @@ blindly — notarization rejections, expired certs, and missing env
 all need investigation before re-run.
 
 After build, verify both artifacts are present, fresh, and have a
-stapled notarization ticket:
+stapled notarization ticket (filenames carry the version parsed by
+the build scripts from `vst/CMakeLists.txt`):
 
 ```bash
-ls -la dist/Oedipa.pkg dist/Oedipa.dmg
-stat -f '%m' dist/Oedipa.pkg                        # mtime as epoch
-stat -f '%m' dist/Oedipa.dmg                        # mtime as epoch
+ls -la dist/Oedipa-vX.Y.Z.pkg dist/Oedipa-vX.Y.Z.dmg
+stat -f '%m' dist/Oedipa-vX.Y.Z.pkg                 # mtime as epoch
+stat -f '%m' dist/Oedipa-vX.Y.Z.dmg                 # mtime as epoch
 git log -1 --format=%ct -- vst/Source/ \
                             vst/CMakeLists.txt \
                             vst/scripts/ \
                             vst/tests/              # latest vst-source commit time
-xcrun stapler validate dist/Oedipa.pkg
-xcrun stapler validate dist/Oedipa.dmg
+xcrun stapler validate dist/Oedipa-vX.Y.Z.pkg
+xcrun stapler validate dist/Oedipa-vX.Y.Z.dmg
 ```
 
-Both `dist/Oedipa.pkg` AND `dist/Oedipa.dmg` mtimes must be **>=**
-the latest vst-source commit time, and `stapler validate` must
-succeed on both. If either check fails, halt — something went wrong
-in build or notarization.
+Both `dist/Oedipa-vX.Y.Z.pkg` AND `dist/Oedipa-vX.Y.Z.dmg` mtimes
+must be **>=** the latest vst-source commit time, and `stapler
+validate` must succeed on both. If either check fails, halt —
+something went wrong in build or notarization.
 
 Manual host smoke (Logic AU MIDI FX + Bitwig VST3 MIDI fx) is
 recommended before handing the artifacts off.
@@ -229,6 +214,49 @@ recommended before handing the artifacts off.
 **vst stops here.** Steps 2-5 are m4l-only. Upload both artifacts to
 the paid distribution platform and write the listing copy out of
 band — the skill does not interact with the platform directly.
+
+---
+
+For **m4l**, run `make release-m4l` with the version from Step 1
+to bake the host bundle and stage a versioned, un-frozen copy of
+the baked `.amxd` next to the source bake target. `dist/` is for
+frozen artefacts only — the un-frozen staging file lives in `m4l/`
+(gitignored as `m4l/Oedipa-v*.amxd`) so the Save As dialog opens
+with the versioned filename pre-filled when the user freezes.
+
+```bash
+make release-m4l VERSION=X.Y.Z
+```
+
+Output: `m4l/Oedipa-vX.Y.Z.amxd` (un-frozen). Then prompt the user:
+
+> Open `m4l/Oedipa-vX.Y.Z.amxd` in Max → click the snowflake
+> (Freeze) button in the patcher toolbar → *File → Save As* →
+> navigate to `dist/` and save (the default filename
+> `Oedipa-vX.Y.Z.amxd` is already correct — just confirm the
+> location).
+
+**Wait for the user to confirm freeze + Save As is complete**
+before continuing. Then verify the saved `.amxd` exists in `dist/`
+and its mtime is fresher than the latest m4l-source commit:
+
+```bash
+stat -f '%m' dist/Oedipa-vX.Y.Z.amxd                # mtime as epoch
+git log -1 --format=%ct -- m4l/Oedipa.maxpat \
+                            m4l/cellstrip-renderer.js \
+                            m4l/lattice-renderer.js \
+                            m4l/separator-renderer.js \
+                            m4l/oedipa-host.entry.mjs \
+                            m4l/engine m4l/host      # latest m4l-source commit time
+```
+
+If `dist/Oedipa-vX.Y.Z.amxd` is missing or older, halt and re-prompt
+— the user didn't actually Save As into `dist/`.
+
+**Manual smoke test in a fresh Live track is recommended before
+tagging** — drag `dist/Oedipa-vX.Y.Z.amxd` onto a new MIDI track,
+confirm it loads, plays, slot rehydrate works. CI does not (and
+cannot) cover this.
 
 ### Step 2 — Draft release notes (m4l only)
 
@@ -276,7 +304,7 @@ platform upload happens out of band.
 
 ```bash
 TAG=m4l-vX.Y.Z
-ASSET=dist/Oedipa.amxd
+ASSET=dist/Oedipa-vX.Y.Z.amxd
 TITLE="Oedipa m4l vX.Y.Z"
 
 git tag "$TAG"
@@ -294,7 +322,7 @@ gh release view "$TAG" --json name,tagName,assets,url
 
 Confirm:
 
-- `assets[0].name` is `Oedipa.amxd`.
+- `assets[0].name` is `Oedipa-vX.Y.Z.amxd`.
 - `assets[0].size` > 0 and matches the local file's size.
 - The release URL is reachable.
 
@@ -308,10 +336,21 @@ rm "/tmp/oedipa-m4l-vX.Y.Z-notes.md"
 
 ## Rules
 
-- **Asset is target-specific.** m4l → `dist/Oedipa.amxd` (frozen);
-  vst → both `dist/Oedipa.pkg` (signed/notarized/stapled installer)
-  and `dist/Oedipa.dmg` (signed/notarized/stapled drag-to-install).
-  Never mix.
+- **Asset is target-specific.** m4l → `dist/Oedipa-vX.Y.Z.amxd`
+  (frozen); vst → both `dist/Oedipa-vX.Y.Z.pkg`
+  (signed/notarized/stapled installer) and `dist/Oedipa-vX.Y.Z.dmg`
+  (signed/notarized/stapled drag-to-install). Never mix.
+- **Filenames embed the version.** vst build scripts read the
+  version from `vst/CMakeLists.txt` (single source of truth). m4l's
+  `make release-m4l` takes `VERSION=X.Y.Z` from the skill (m4l
+  version metadata isn't in-tree) and copies the baked `.amxd` to
+  `m4l/Oedipa-vX.Y.Z.amxd` (un-frozen, gitignored). The user opens
+  that in Max, Freezes, and Save-As's into `dist/` — the Save As
+  dialog pre-fills the versioned filename, so they just confirm.
+- **`dist/` is for frozen / shipped artefacts only.** Un-frozen
+  staging files live in `m4l/` (gitignored) for m4l, and signed +
+  notarized bundles + dmg + pkg land directly in `dist/` for vst.
+  Never write un-frozen `.amxd` into `dist/`.
 - **m4l publishes to GitHub; vst does not.** m4l tags `m4l-vX.Y.Z`,
   creates a GH release, attaches the `.amxd`. vst skips Step 3/4
   entirely — no tag, no GH release, no asset upload. vst's dmg is

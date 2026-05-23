@@ -35,7 +35,7 @@ Full musical model: [`docs/ai/concept.md`](docs/ai/concept.md).
 ## Status
 
 `m4l/` is feature-complete for v1 and packaged for distribution. The
-frozen `Oedipa.amxd` ships via [GitHub Releases](../../releases?q=m4l)
+frozen `.amxd` ships via [GitHub Releases](../../releases?q=m4l)
 and runs on any Live 12 install with Max for Live.
 
 `vst/` AU + VST3 + CLAP — v1 paid release in preparation; distribution
@@ -52,9 +52,10 @@ for the host compatibility matrix.
 
 ### Max for Live (m4l)
 
-Download `Oedipa.amxd` from the latest [release](../../releases?q=m4l), drag
-it onto a MIDI track in Ableton Live, and put an instrument after it.
-Click a triangle on the lattice to set the starting chord; press play.
+Download the `Oedipa-vX.Y.Z.amxd` asset from the latest
+[release](../../releases?q=m4l), drag it onto a MIDI track in Ableton
+Live, and put an instrument after it. Click a triangle on the lattice
+to set the starting chord; press play.
 
 ### VST3 / AU / CLAP (vst)
 
@@ -139,14 +140,18 @@ release-vst`; the per-target subsections below cover each in detail.
 
 ### Max for Live (m4l)
 
-`make release-m4l` builds the engine + host packages and bakes a dev
-`m4l/Oedipa.amxd`. To produce the distributable file, open that
-`.amxd` in Max → click the **snowflake (Freeze)** button in the
-patcher toolbar → *File → Save As* `dist/Oedipa.amxd`. The frozen
-`.amxd` inlines every referenced JS file and runs on any Live
-install.
+`make release-m4l VERSION=X.Y.Z` builds the engine + host packages,
+bakes a dev `m4l/Oedipa.amxd`, and copies it to
+`m4l/Oedipa-vX.Y.Z.amxd` (un-frozen staging file, gitignored). Open
+that file in Max → click the **snowflake (Freeze)** button in the
+patcher toolbar → *File → Save As* → navigate to `dist/` and save
+(the default filename `Oedipa-vX.Y.Z.amxd` is already correct, just
+confirm the location). The frozen `.amxd` inlines every referenced
+JS file and runs on any Live install.
 
-Freeze is a manual step in Max — there is no CLI equivalent. See
+`dist/` only ever holds frozen / shipped artefacts; the un-frozen
+staging copy stays in `m4l/`. Freeze is a manual step in Max —
+there is no CLI equivalent. See
 [ADR 007](docs/ai/adr/archive/007-m4l-distribution.md) for the full
 distribution path conventions and the freeze rationale.
 
@@ -157,17 +162,20 @@ mode, signs them with the Developer ID Application identity, submits
 each bundle to Apple notarization, staples the tickets, and then
 produces **two** distributable artifacts in lockstep:
 
-- `dist/Oedipa.pkg` — signed installer (recommended). Wraps the three
-  bundles into a single distribution pkg with a customize step
-  (per-format checkboxes) and welcome / license / conclusion screens
-  localized in English + Japanese. Installs system-wide to
+- `dist/Oedipa-vX.Y.Z.pkg` — signed installer (recommended). Wraps
+  the three bundles into a single distribution pkg with a customize
+  step (per-format checkboxes) and welcome / license / conclusion
+  screens localized in English + Japanese. Installs system-wide to
   `/Library/Audio/Plug-Ins/{VST3,Components,CLAP}` after the user
   enters their admin password. Outer pkg signed with the Developer ID
   Installer identity (separate cert from the bundle-signing Application
   identity, under the same TEAMID).
-- `dist/Oedipa.dmg` — drag-to-install (fallback). Contains the three
-  bundles + `INSTALL.txt` + `README.txt`. For users who want to place
-  the bundles in a non-standard path.
+- `dist/Oedipa-vX.Y.Z.dmg` — drag-to-install (fallback). Contains the
+  three bundles + `INSTALL.txt` + `README.txt`. For users who want to
+  place the bundles in a non-standard path.
+
+Version is parsed by the build scripts from `vst/CMakeLists.txt`
+(`project(Oedipa VERSION X.Y.Z)`).
 
 Both artifacts are signed, notarized, and stapled. Both are uploaded
 to the paid platform out of band.
