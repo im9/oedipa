@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build dist/Oedipa.pkg installer from already-signed-notarized-and-stapled
-# AU + VST3 + CLAP bundles. Companion to build-dmg.sh; both produced by
+# Build dist/Oedipa-v<version>.pkg installer from already-signed-
+# notarized-and-stapled AU + VST3 + CLAP bundles (version parsed from
+# vst/CMakeLists.txt). Companion to build-dmg.sh; both produced by
 # `make release-vst`. Run after codesign.sh + notarize.sh.
 #
 # The pkg itself is also signed (Developer ID Installer), notarized, and
@@ -20,9 +21,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VST_DIR="$SCRIPT_DIR/.."
 ARTEFACTS_DIR="$VST_DIR/build/Oedipa_artefacts/Release"
 DIST_DIR="$VST_DIR/../dist"
-PKG_PATH="$DIST_DIR/Oedipa.pkg"
 DIST_XML_TEMPLATE="$SCRIPT_DIR/distribution.xml"
 PKG_RESOURCES="$SCRIPT_DIR/pkg-resources"
+
+# Parse version from CMakeLists.txt (single source of truth, same line
+# the release skill bumps). Used for pkgbuild --version, distribution.xml
+# / pkg-resources __VERSION__ substitution, and embedded in the output
+# filename.
+VERSION="$(grep -E '^project\(Oedipa VERSION' "$VST_DIR/CMakeLists.txt" \
+  | sed -E 's/.*VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+if [[ -z "$VERSION" ]]; then
+  echo "error: could not parse version from $VST_DIR/CMakeLists.txt" >&2
+  exit 1
+fi
+echo "Version: $VERSION"
+
+PKG_PATH="$DIST_DIR/Oedipa-v$VERSION.pkg"
 
 AU_BUNDLE="$ARTEFACTS_DIR/AU/Oedipa.component"
 VST3_BUNDLE="$ARTEFACTS_DIR/VST3/Oedipa.vst3"
@@ -45,16 +59,6 @@ if [[ ! -d "$PKG_RESOURCES" ]]; then
   echo "error: pkg-resources/ not found at $PKG_RESOURCES" >&2
   exit 1
 fi
-
-# Parse version from CMakeLists.txt (single source of truth, same line
-# the release skill bumps).
-VERSION="$(grep -E '^project\(Oedipa VERSION' "$VST_DIR/CMakeLists.txt" \
-  | sed -E 's/.*VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
-if [[ -z "$VERSION" ]]; then
-  echo "error: could not parse version from $VST_DIR/CMakeLists.txt" >&2
-  exit 1
-fi
-echo "Version: $VERSION"
 
 mkdir -p "$DIST_DIR"
 STAGING="$(mktemp -d -t oedipa-pkg)"

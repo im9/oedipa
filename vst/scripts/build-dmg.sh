@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build dist/Oedipa.dmg from already-signed-and-stapled AU + VST3 + CLAP
-# bundles. ADR 009 Phase 4; CLAP added in ADR 010 Phase 7. Run after
+# Build dist/Oedipa-v<version>.dmg from already-signed-and-stapled AU
+# + VST3 + CLAP bundles (version parsed from vst/CMakeLists.txt).
+# ADR 009 Phase 4; CLAP added in ADR 010 Phase 7. Run after
 # codesign.sh + notarize.sh.
 #
 # The dmg itself is also signed, notarized, and stapled — belt-and-braces
@@ -20,13 +21,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VST_DIR="$SCRIPT_DIR/.."
 ARTEFACTS_DIR="$VST_DIR/build/Oedipa_artefacts/Release"
 DIST_DIR="$VST_DIR/../dist"
-DMG_PATH="$DIST_DIR/Oedipa.dmg"
 INSTALL_TXT="$SCRIPT_DIR/INSTALL.txt"
 README_TXT="$SCRIPT_DIR/README.txt"
 
 # Parse version from CMakeLists.txt (single source of truth — same line
 # build-pkg.sh reads; substituted into the __VERSION__ token in
-# INSTALL.txt and README.txt headers when staging).
+# INSTALL.txt and README.txt headers when staging, and embedded in the
+# output filename + dmg volume name).
 VERSION="$(grep -E '^project\(Oedipa VERSION' "$VST_DIR/CMakeLists.txt" \
   | sed -E 's/.*VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
 if [[ -z "$VERSION" ]]; then
@@ -34,6 +35,8 @@ if [[ -z "$VERSION" ]]; then
   exit 1
 fi
 echo "Version: $VERSION"
+
+DMG_PATH="$DIST_DIR/Oedipa-v$VERSION.dmg"
 
 AU_BUNDLE="$ARTEFACTS_DIR/AU/Oedipa.component"
 VST3_BUNDLE="$ARTEFACTS_DIR/VST3/Oedipa.vst3"
@@ -71,7 +74,7 @@ sed "s/__VERSION__/v$VERSION/g" "$README_TXT"  > "$STAGING/README.txt"
 echo "Creating $DMG_PATH (HFS+, UDZO compressed)"
 rm -f "$DMG_PATH"
 hdiutil create \
-  -volname "Oedipa" \
+  -volname "Oedipa v$VERSION" \
   -srcfolder "$STAGING" \
   -format UDZO \
   -fs HFS+ \

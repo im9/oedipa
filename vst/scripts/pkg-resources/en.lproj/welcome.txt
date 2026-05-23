@@ -8,6 +8,6 @@ Oedipa is a Tonnetz-based chord-exploration MIDI effect by im9. This installer p
 
 You will be asked for your administrator password before installation.
 
-If you would rather place the bundles in a custom location, quit this installer and use the Oedipa.dmg distribution instead — it lets you drag the bundles wherever you want.
+If you would rather place the bundles in a custom location, quit this installer and use the Oedipa-__VERSION__.dmg distribution instead — it lets you drag the bundles wherever you want.
 
 In the Customize step you can deselect any plug-in format you do not need (for example, skip CLAP on a Logic-only setup). All three are selected by default.

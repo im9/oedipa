@@ -20,6 +20,12 @@ m4l/oedipa-host.mjs
 # Ableton Live project folder (auto-created when m4l/ is added as a Live Project)
 m4l/Oedipa Project/
 
+# Versioned un-frozen .amxd staged by `make release-m4l VERSION=X.Y.Z`.
+# Ephemeral release helper — the user opens it in Max, Freezes, and
+# Save-As's into dist/. m4l/Oedipa.amxd (the unversioned dev bake target)
+# stays committed.
+m4l/Oedipa-v*.amxd
+
 # Release artifacts (frozen .amxd, future VST builds, etc.)
 /dist/
 
