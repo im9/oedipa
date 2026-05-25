@@ -47,6 +47,12 @@ only when relevant to the current task.
 | 009 | [VST Distribution — Signing, Notarization, and Release Flow](archive/009-vst-distribution.md) | Implemented | Developer ID signing + hardened runtime; `xcrun notarytool` (app-specific password local; API-key CI workflow deferred for v1); staple bundles + `.dmg`; `dist/Oedipa.dmg` drag-install with `.component` + `.vst3` + `INSTALL.txt` + `README.txt`; per-target tag scheme `<target>-vX.Y.Z` (legacy `v0.1.0` retained); `macos-latest` `vst-test.yml` on `vst/**` push/PR; root Makefile orchestrates `release-vst`. First release `vst-v0.1.0` shipped 2026-05-08. |
 | 010 | [VST CLAP Support](archive/010-vst-clap-support.md) | Implemented | `clap-juce-extensions` wrapper → `Oedipa.clap` alongside VST3/AU; `note-effect` feature; minimal scope (no note expressions / poly mod); Bitwig + Reaper CLAP loads verified, FL Studio empirical negative (host-limit, out of scope), Studio One best-effort; `.clap` joins `dist/Oedipa.dmg` + GitHub Releases. Shipped `vst-v0.1.1` 2026-05-09. |
 
+## Cross-target features
+
+| #   | Title | Status | Notes |
+|-----|-------|--------|-------|
+| 011 | [Modulation Outputs + m4l UI Shell Alignment](011-modulation-outputs.md) | Proposed | Bundled: (A) m4l UI moves from strip to floating editor window mirroring vst editor (strip becomes Open + chord + slot + Level only; partial supersession of ADR 003/005/006 widget placement). (B) Up to 4 MIDI CC streams from Tonnetz geometry (centroid X / Y, voice-leading delta, triangle orientation) with per-stream CC#/ch/mode (step/smooth/spike)/range; MMA-default CCs (74/10/91/71). Ships v0.2.0 in m4l + vst lockstep with a Juno-106 demo video. |
+
 ## iOS
 
 | #   | Title | Status | Notes |
