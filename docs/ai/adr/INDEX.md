@@ -51,7 +51,7 @@ only when relevant to the current task.
 
 | #   | Title | Status | Notes |
 |-----|-------|--------|-------|
-| 011 | [Modulation Outputs + m4l UI Shell Alignment](011-modulation-outputs.md) | Proposed | Bundled: (A) m4l UI moves from strip to floating editor window mirroring vst editor (strip becomes Open + chord + slot + Level only; partial supersession of ADR 003/005/006 widget placement). (B) Up to 4 MIDI CC streams from Tonnetz geometry (centroid X / Y, voice-leading delta, triangle orientation) with per-stream CC#/ch/mode (step/smooth/spike)/range; MMA-default CCs (74/10/91/71). Ships v0.2.0 in m4l + vst lockstep with a Juno-106 demo video. |
+| 011 | [m4l UI Shell Alignment + Gate Sequencer](011-shell-and-gate.md) | Proposed | Bundled: (A) m4l UI moves from strip to floating editor window mirroring vst editor (strip becomes Open + chord + slot + Level only; partial supersession of ADR 003/005/006 widget placement). (B) 16-step on/off gate sequencer at `rate × multiplier` with configurable loop length and per-slot pattern; cell strip and gate are two independent axes (chord progression vs. rhythm pattern); default all-on for v0.1.x parity. Ships v0.2.0 in m4l + vst lockstep with a techno-style demo video. Original §B (mod-output CC streams from Tonnetz geometry) deferred to a future ADR. |
 
 ## iOS
 
