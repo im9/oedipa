@@ -52,6 +52,7 @@ only when relevant to the current task.
 | #   | Title | Status | Notes |
 |-----|-------|--------|-------|
 | 011 | [m4l UI Shell Alignment + Gate Sequencer](011-shell-and-gate.md) | Proposed | Bundled: (A) m4l UI moves from strip to floating editor window mirroring vst editor (strip becomes Open + chord + slot + Level only; partial supersession of ADR 003/005/006 widget placement). (B) 16-step on/off gate sequencer at `rate × multiplier` with configurable loop length and per-slot pattern; cell strip and gate are two independent axes (chord progression vs. rhythm pattern); default all-on for v0.1.x parity. Ships v0.2.0 in m4l + vst lockstep with a techno-style demo video. Original §B (mod-output CC streams from Tonnetz geometry) deferred to a future ADR. |
+| 012 | [Multi-part Rendering](012-multi-part-rendering.md) | Proposed | **Stub**: Walker's Tonnetz position becomes a shared fact rendered by N parts in parallel, each with its own renderer (pad / arp / bass / top / programmable), MIDI channel, octave, voicing, subdivision, gate. Target capacity ~12 parts across 4 tracks. Term: "part" (orchestral sense) used to avoid collision with triad "voice" (root/third/fifth). Out of scope for ADR 011 / v0.2.0; lands no earlier than v0.3.0. Strategic context: defends Oedipa's identity as a deep instrument against the Ableton Extensions SDK (one-shot dialog model can't replicate this). May split into 012a/b/c during design phase. |
 
 ## iOS
 
