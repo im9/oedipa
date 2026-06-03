@@ -275,6 +275,68 @@ name / identifiers (`fm.im9.<plugin>.{vst3,au,clap}`). The
 contract (`DEVELOPER_TEAM_ID` + `NOTARY_PROFILE=im9-notary`) are the
 same across plugins.
 
+## Future companion integrations
+
+Notes on external integration possibilities that are **out of scope for
+current ADRs** but worth retaining design context for. These are not
+roadmap commitments — re-evaluate against the active focus before
+acting on any of them.
+
+### Ableton Live Extensions SDK (post-v0.2.0)
+
+Ableton announced a JS/TS Extensions SDK 2026-06 (beta, **Live 12.4.5+
+Suite only**). It does not replace Oedipa — Extensions are modal-dialog
+tools launched from right-click menus, with no real-time MIDI
+signal-chain integration and no callback hook from a m4l device back
+into an Extension. Oedipa's identity (real-time Tonnetz performance) is
+structurally impossible to express as an Extension.
+
+However Extensions can be a useful **compose-time companion**, because
+the SDK exposes:
+- `track.devices` + `device.parameters` + `param.setValue()` — read and
+  write any Live-published parameter, including m4l device params
+- `RackDevice.chains` recursion — reach devices nested in racks
+- `clip.notes` / `track.createMidiClip()` / `track.arrangementClips` —
+  generate or rewrite MIDI clips on any track
+- Full WebView UI inside the modal dialog (canvas / SVG / WebGL all
+  available — same freedom level as the m4l floating window approach
+  in ADR 011, without the Max ES5 constraint)
+
+Candidate Oedipa-companion Extensions (all post-v0.2.0):
+
+- **Bake to clip** — open the Tonnetz UI, navigate, then commit the
+  current performance as a 16-bar MIDI clip on the selected track. The
+  m4l device can write clips via the Live API but it's hacky; an
+  Extension is cleaner.
+- **Apply Tonnetz transform to selected clip** — read a clip's notes,
+  apply P / L / R operations to each chord, write back. Pure batch
+  transformation, well-suited to the Extension one-shot model.
+- **Configure Oedipa from song key** — scan song key + tempo, set
+  anchor / scale parameters on every Oedipa instance across the set in
+  one action.
+- **Preset / state distribution** — JSON preset browser that writes to
+  one or many Oedipa instances at once; lighter than building a full
+  preset manager inside the m4l device.
+
+Constraints to weigh before committing to any of the above:
+- Live 12 Suite + 12.4.5+ only — narrower than the m4l device's
+  audience (any Live 11+ Suite or Standard with Max).
+- Beta SDK — API surface may change; wait for stabilization before
+  taking on maintenance load.
+- Each Extension is a separate distribution / UX / version-management
+  surface.
+- Reaching into Oedipa's published parameter schema couples the
+  Extension to that schema; renaming a m4l param breaks the Extension.
+
+Reference repo with working examples (2026-06-03):
+[`federico-pepe/ableton-live-extensions`](https://github.com/federico-pepe/ableton-live-extensions)
+— see `chroma-flux` for `device.parameters` / `param.setValue()` usage,
+`snake` for canvas-based real-time UI inside a modal dialog,
+`transposer` for `clip.notes` batch read / write.
+
+The same evaluation pattern applies to sister im9 plugins (stencil,
+pointsman) with their own use-case lists.
+
 ## Conventions
 
 - All in English
